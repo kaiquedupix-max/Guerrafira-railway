@@ -82,11 +82,27 @@ async function sendDiscordWebhookLog(opts: {
   payment?: Record<string, unknown> | null;
 }): Promise<void> {
   const client = discordClient();
-  const channelId = process.env.DISCORD_LOG_CHANNEL_ID;
-  if (!client || !channelId) return;
+  const channelId = process.env.DISCORD_LOG_CHANNEL_ID || process.env.LOG_CHANNEL_ID;
 
-  const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel?.isSendable()) return;
+  if (!client) {
+    logger.error("Mercado Pago log não enviado: cliente do Discord ainda não está disponível");
+    return;
+  }
+
+  if (!channelId) {
+    logger.error("Mercado Pago log não enviado: configure DISCORD_LOG_CHANNEL_ID ou LOG_CHANNEL_ID no Railway");
+    return;
+  }
+
+  const channel = await client.channels.fetch(channelId).catch((err) => {
+    logger.error({ err, channelId }, "Mercado Pago log não enviado: falha ao buscar canal do Discord");
+    return null;
+  });
+
+  if (!channel?.isSendable()) {
+    logger.error({ channelId }, "Mercado Pago log não enviado: canal não é enviável ou bot não tem permissão");
+    return;
+  }
 
   const { body, req, dataId, signature, payment } = opts;
   const type = text(body.type, "desconhecido");
@@ -137,7 +153,13 @@ async function sendDiscordWebhookLog(opts: {
   }
 
   embed.addFields({ name: "📦 Payload", value: `\`\`\`json\n${rawJson}\n\`\`\`` });
-  await channel.send({ embeds: [embed] }).catch((err) => logger.error({ err }, "Failed to send Mercado Pago Discord log"));
+
+  try {
+    await channel.send({ embeds: [embed] });
+    logger.info({ channelId, type, action, dataId }, "Mercado Pago Discord log enviado");
+  } catch (err) {
+    logger.error({ err, channelId }, "Falha ao enviar log do Mercado Pago ao Discord");
+  }
 }
 
 async function fetchMpPayment(paymentId: string): Promise<Record<string, unknown> | null> {
@@ -166,14 +188,12 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     "MP webhook received",
   );
 
-  // Registra tentativas inválidas no Discord, mas não processa o pagamento.
   if (signature.configured && !signature.valid) {
     await sendDiscordWebhookLog({ body, req, dataId, signature });
     res.status(401).json({ received: false, error: "invalid_signature" });
     return;
   }
 
-  // Mercado Pago espera 200/201 ao receber corretamente a notificação.
   res.status(200).json({ received: true });
 
   try {
@@ -182,7 +202,6 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     const isPaymentNotification =
       type === "payment" || (typeof action === "string" && action.startsWith("payment."));
 
-    // TODOS os eventos chegam ao Discord. Eventos não-payment param aqui.
     if (!isPaymentNotification || !dataId) {
       await sendDiscordWebhookLog({ body, req, dataId, signature });
       return;
