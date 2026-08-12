@@ -104,7 +104,10 @@ export function parseGatherEvent(type: string, message: string): boolean {
   else if (item === "sulfur.ore") { values.sulfurOreGathered = amount; set.sulfurOreGathered = sql`${playerStatsTable.sulfurOreGathered} + ${amount}`; }
   else if (item === "scrap") { values.scrapGathered = amount; set.scrapGathered = sql`${playerStatsTable.scrapGathered} + ${amount}`; }
 
-  db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set }).catch(err => logger.error({ err }, "recordGather error"));
+  db.insert(playerStatsTable)
+    .values(values as typeof playerStatsTable.$inferInsert)
+    .onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any })
+    .catch(err => logger.error({ err }, "recordGather error"));
   return true;
 }
 
@@ -127,6 +130,9 @@ export function parseCraftEvent(type: string, message: string): boolean {
   if (isGunpowder) { values.gunpowderCrafted = amount; set.gunpowderCrafted = sql`${playerStatsTable.gunpowderCrafted} + ${amount}`; }
   if (isExplosive) { values.explosivesCrafted = amount; set.explosivesCrafted = sql`${playerStatsTable.explosivesCrafted} + ${amount}`; }
 
-  db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set }).catch(err => logger.error({ err }, "recordCraft error"));
+  db.insert(playerStatsTable)
+    .values(values as typeof playerStatsTable.$inferInsert)
+    .onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any })
+    .catch(err => logger.error({ err }, "recordCraft error"));
   return true;
 }
