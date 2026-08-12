@@ -25,7 +25,7 @@ const activeVotes = new Map<string, MapVote>();
 
 export const data = new SlashCommandBuilder()
   .setName("criarmapa")
-  .setDescription("Cria uma votação de mapa exclusiva para os VIPs")
+  .setDescription("Cria uma votação de mapa para VIPs e Boosters")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addAttachmentOption(o => o.setName("imagem1").setDescription("Imagem do Mapa 1").setRequired(true))
   .addStringOption(o => o.setName("link1").setDescription("Link do Mapa 1").setRequired(true))
@@ -43,14 +43,15 @@ export const data = new SlashCommandBuilder()
 function headerEmbed(endsAt: number) {
   return new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle("🗺️ VOTAÇÃO DE MAPA — VIPS")
+    .setTitle("🗺️ VOTAÇÃO DE MAPA — VIPS & BOOSTERS")
     .setDescription(
       "Escolha qual mapa deseja para o próximo wipe.\n\n" +
+      "A votação é liberada para membros **VIP** e para quem estiver **impulsionando o Discord Guerra Fria**.\n\n" +
       "As opções são identificadas automaticamente como **Mapa 1, Mapa 2 e Mapa 3**. " +
       "Clique no botão correspondente para registrar ou alterar seu voto."
     )
     .addFields({ name: "⏳ Encerramento", value: `<t:${Math.floor(endsAt / 1000)}:R>` })
-    .setFooter({ text: "Guerra Fria • Votação exclusiva VIP" })
+    .setFooter({ text: "Guerra Fria • Votação VIP & Booster" })
     .setTimestamp();
 }
 
@@ -125,11 +126,18 @@ export async function handleMapVote(interaction: ButtonInteraction): Promise<voi
     process.env.VIP_OURO_ROLE_ID,
   ].filter(Boolean) as string[];
 
-  const memberRoles = interaction.member && "roles" in interaction.member ? interaction.member.roles : [];
-  const roleIds = Array.isArray(memberRoles) ? memberRoles : [];
+  const member = interaction.guild
+    ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null)
+    : null;
 
-  if (vipRoleIds.length && !vipRoleIds.some(id => roleIds.includes(id))) {
-    await interaction.reply({ content: "❌ Esta votação é exclusiva para membros VIP.", ephemeral: true });
+  const isBooster = Boolean(member?.premiumSince);
+  const hasVipRole = Boolean(member && vipRoleIds.some(id => member.roles.cache.has(id)));
+
+  if (!isBooster && !hasVipRole) {
+    await interaction.reply({
+      content: "❌ Esta votação é exclusiva para membros **VIP** e **Boosters do Discord**.",
+      ephemeral: true,
+    });
     return;
   }
 
@@ -172,7 +180,7 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
     .setTitle("🏁 RESULTADO — VOTAÇÃO DE MAPA")
     .setDescription(result)
     .addFields(...vote.maps.map((m, i) => ({ name: `${i + 1}️⃣ ${m.name}`, value: `**${counts[i]} voto(s)**`, inline: true })))
-    .setFooter({ text: "Guerra Fria • Votação VIP encerrada" })
+    .setFooter({ text: "Guerra Fria • Votação VIP & Booster encerrada" })
     .setTimestamp();
 
   await channel.send({ embeds: [embed] });
