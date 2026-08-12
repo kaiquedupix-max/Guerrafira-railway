@@ -4,7 +4,7 @@ using Oxide.Core;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.0.1")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.0.2")]
     [Description("Emite eventos de kills, mortes, headshots, farm e craft para o leaderboard Guerra Fria via RCON/console.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
@@ -147,7 +147,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("gflb.status")]
         private void StatusCommand(ConsoleSystem.Arg arg)
         {
-            if (arg.Connection != null && arg.Player() != null && !arg.Player().IsAdmin)
+            if (arg == null)
                 return;
 
             arg.ReplyWith("GuerraFriaLeaderboard: ONLINE | kills/deaths/headshots/farm/craft ativos");
