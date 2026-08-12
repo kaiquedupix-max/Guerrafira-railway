@@ -39,6 +39,7 @@ import * as ticketlogsCommand from "./commands/ticketlogs.js";
 import { handleTicketLogSelect } from "./commands/ticketlogs.js";
 import * as darvipCommand from "./commands/darvip.js";
 import * as removervipCommand from "./commands/removervip.js";
+import * as removerboosterCommand from "./commands/removerbooster.js";
 import * as leaderboardCommand from "./commands/leaderboard.js";
 import * as listaplayerCommand from "./commands/listaplayer.js";
 import * as resetleaderboardCommand from "./commands/resetleaderboard.js";
@@ -75,6 +76,7 @@ commands.set(ajudaCommand.data.name, ajudaCommand);
 commands.set(ticketlogsCommand.data.name, ticketlogsCommand);
 commands.set(darvipCommand.data.name, darvipCommand);
 commands.set(removervipCommand.data.name, removervipCommand);
+commands.set(removerboosterCommand.data.name, removerboosterCommand);
 commands.set(leaderboardCommand.data.name, leaderboardCommand);
 commands.set(listaplayerCommand.data.name, listaplayerCommand);
 commands.set(resetleaderboardCommand.data.name, resetleaderboardCommand);
@@ -180,7 +182,7 @@ async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID;
   const guildId = process.env.DISCORD_GUILD_ID;
   if (!clientId) { logger.warn("DISCORD_CLIENT_ID not set"); return; }
-  const commandData = [banirCommand, kickarCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand].map(c => c.data.toJSON());
+  const commandData = [banirCommand, kickarCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand].map(c => c.data.toJSON());
   try {
     if (guildId) {
       const guild = await client.guilds.fetch(guildId);
