@@ -23,6 +23,7 @@ import { buildAutoUnbanEmbed, buildStatusEmbed } from "./utils/embeds.js";
 import { db, modLogsTable } from "@workspace/db";
 import { setDiscordClient } from "./client.js";
 import { startVipExpiryChecker } from "./vip.js";
+import { setupVipStore } from "./vipStore.js";
 import { startSlotManager } from "./slotManager.js";
 import { startLeaderboardChannel } from "./leaderboardChannel.js";
 import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raffle.js";
@@ -102,27 +103,24 @@ export async function startBot(): Promise<void> {
     setupRconEventBridge(c);
     startVipExpiryChecker(c);
     await setupTicketPanel(c);
+    await setupVipStore(c);
     await checkExpiredRaffles(c);
   });
 
-  // ── All interactions ───────────────────────────────────────────────────────
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
-      // Autocomplete
       if (interaction.isAutocomplete()) {
         const cmd = commands.get(interaction.commandName);
         if (cmd?.autocomplete) await cmd.autocomplete(interaction);
         return;
       }
 
-      // Slash commands
       if (interaction.isChatInputCommand()) {
         const cmd = commands.get(interaction.commandName);
         if (cmd) await cmd.execute(interaction);
         return;
       }
 
-      // Buttons
       if (interaction.isButton()) {
         const id = interaction.customId;
 
@@ -141,7 +139,6 @@ export async function startBot(): Promise<void> {
         return;
       }
 
-      // Select menus
       if (interaction.isStringSelectMenu()) {
         if (interaction.customId === "ticket_type_select") {
           await handleTicketTypeSelect(interaction);
@@ -151,7 +148,6 @@ export async function startBot(): Promise<void> {
         return;
       }
 
-      // Modal submissions
       if (interaction.isModalSubmit()) {
         const id = interaction.customId;
         if (id.startsWith("raffle_modal_")) { await handleRaffleModal(interaction); return; }
@@ -171,7 +167,6 @@ export async function startBot(): Promise<void> {
     }
   });
 
-  // ── Discord → RCON chat ────────────────────────────────────────────────────
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return;
     const chatChannelId = process.env.DISCORD_CHAT_CHANNEL_ID;
@@ -181,7 +176,6 @@ export async function startBot(): Promise<void> {
     if (!content) return;
 
     const displayName = msg.member?.displayName ?? msg.author.username;
-    // [Moderação] in red, message in green
     await executeRconCommand(
       `say <color=red>[Moderação]</color> <color=green>${displayName}: ${content}</color>`,
     );
@@ -194,7 +188,6 @@ export async function startBot(): Promise<void> {
   await client.login(token);
 }
 
-// ─── Connect button ───────────────────────────────────────────────────────────
 async function handleConnectButton(interaction: Parameters<typeof handleTicketCreate>[0]): Promise<void> {
   const host     = process.env.RCON_HOST ?? "?";
   const gamePort = process.env.GAME_PORT ?? "28015";
@@ -212,7 +205,6 @@ async function handleConnectButton(interaction: Parameters<typeof handleTicketCr
   });
 }
 
-// ─── Slash command registration ───────────────────────────────────────────────
 async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID;
   const guildId  = process.env.DISCORD_GUILD_ID;
@@ -249,7 +241,6 @@ async function registerSlashCommands(client: Client): Promise<void> {
   }
 }
 
-// ─── RCON event bridge (chat only — kill feed removed) ───────────────────────
 const recentEvents = new Map<string, number>();
 function isDuplicate(type: string, message: string): boolean {
   const key = `${type}:${message.slice(0, 120)}`;
@@ -269,7 +260,6 @@ function setupRconEventBridge(client: Client): void {
       await handleChatEvent(client, message).catch((err) => logger.error({ err }, "Chat event error"));
       return;
     }
-    // Stats tracking — kill / gather / craft events from plugins
     parseKillEvent(type, message);
     parseGatherEvent(type, message);
     parseCraftEvent(type, message);
@@ -352,7 +342,6 @@ async function handleChatEvent(client: Client, raw: string): Promise<void> {
   }
 }
 
-// ─── Player sync ──────────────────────────────────────────────────────────────
 function startRconSync(): void {
   async function sync() {
     try {
@@ -366,7 +355,6 @@ function startRconSync(): void {
   setInterval(() => sync().catch(() => {}), 30_000);
 }
 
-// ─── Ban expiry checker ───────────────────────────────────────────────────────
 function startBanExpiryChecker(client: Client): void {
   async function check() {
     const now = new Date();
@@ -381,49 +369,57 @@ function startBanExpiryChecker(client: Client): void {
     for (const ban of expired) {
       if (unbannedSet.has(ban.steamId)) continue;
       await executeRconCommand(`unban ${ban.steamId}`);
-      await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: `Ban expirado (${ban.banDuration ?? "?"})`, adminId: "SYSTEM", adminName: "Sistema Automático" });
-      const ch = process.env.DISCORD_LOG_CHANNEL_ID ? await client.channels.fetch(process.env.DISCORD_LOG_CHANNEL_ID).catch(() => null) : null;
-      if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed({ playerName: ban.playerName, steamId: ban.steamId, originalReason: ban.reason ?? "—", duration: ban.banDuration ?? "?" })] });
-      logger.info({ steamId: ban.steamId }, "Ban auto-removed");
+      await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminDiscordId: "SYSTEM", adminDiscordTag: "Sistema" });
+      const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
+      if (logChannelId) {
+        const ch = await client.channels.fetch(logChannelId).catch(() => null) as TextChannel | null;
+        if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed(ban.steamId, ban.playerName ?? "Desconhecido")] });
+      }
     }
   }
-  setTimeout(() => check().catch(() => {}), 60_000);
-  setInterval(() => check().catch((err) => logger.error({ err }, "Ban expiry error")), 5 * 60_000);
-}
-
-// ─── Status updater ───────────────────────────────────────────────────────────
-function buildConnectRow(): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("status_connect").setLabel("🎮  Conectar ao Servidor").setStyle(ButtonStyle.Success),
-  );
+  setInterval(() => check().catch((err) => logger.error({ err }, "Ban expiry check error")), 60_000);
 }
 
 function startStatusUpdater(client: Client): void {
+  const channelId = process.env.DISCORD_STATUS_CHANNEL_ID;
+  if (!channelId) return;
+
   let statusMessageId: string | null = null;
 
   async function update() {
-    const channelId = process.env.DISCORD_STATUS_CHANNEL_ID;
-    if (!channelId) return;
-    const ch = await client.channels.fetch(channelId).catch(() => null);
-    if (!ch?.isSendable()) return;
-    const embed = buildStatusEmbed(await getServerInfo());
-    const row   = buildConnectRow();
-
-    if (statusMessageId) {
-      try { await (ch as TextChannel).messages.fetch(statusMessageId).then((m) => m.edit({ embeds: [embed], components: [row] })); return; }
-      catch { statusMessageId = null; }
-    }
     try {
-      const recent = await (ch as TextChannel).messages.fetch({ limit: 20 });
-      const bot    = recent.find((m) => m.author.id === client.user?.id && m.embeds.length > 0);
-      if (bot) { statusMessageId = bot.id; await bot.edit({ embeds: [embed], components: [row] }); return; }
-    } catch { /* ignore */ }
+      const info = await getServerInfo();
+      const ch = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
+      if (!ch?.isSendable()) return;
 
-    const sent = await ch.send({ embeds: [embed], components: [row] });
-    statusMessageId = sent.id;
-    logger.info({ channelId, messageId: statusMessageId }, "Status message posted");
+      const embed = buildStatusEmbed(info);
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("status_connect").setLabel("🎮 Conectar ao Servidor").setStyle(ButtonStyle.Success),
+      );
+
+      if (statusMessageId) {
+        const existing = await ch.messages.fetch(statusMessageId).catch(() => null);
+        if (existing) {
+          await existing.edit({ embeds: [embed], components: [row] });
+          return;
+        }
+        statusMessageId = null;
+      }
+
+      const recent = await ch.messages.fetch({ limit: 20 }).catch(() => null);
+      const existing = recent?.find((m) => m.author.id === client.user?.id && m.embeds[0]?.title?.includes("Status"));
+      if (existing) {
+        statusMessageId = existing.id;
+        await existing.edit({ embeds: [embed], components: [row] });
+      } else {
+        const sent = await ch.send({ embeds: [embed], components: [row] });
+        statusMessageId = sent.id;
+      }
+    } catch (err) {
+      logger.error({ err }, "Status update error");
+    }
   }
 
-  update().catch((err) => logger.error({ err }, "Status update error"));
-  setInterval(() => update().catch((err) => logger.error({ err }, "Status update error")), 60_000);
+  update().catch(() => {});
+  setInterval(() => update().catch(() => {}), 60_000);
 }
