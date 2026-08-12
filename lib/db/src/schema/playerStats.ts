@@ -16,5 +16,7 @@ export const playerStatsTable = pgTable("player_stats", {
   scrapGathered:     integer("scrap_gathered").notNull().default(0),
   explosivesCrafted: integer("explosives_crafted").notNull().default(0),
   gunpowderCrafted:  integer("gunpowder_crafted").notNull().default(0),
+  c4Used:            integer("c4_used").notNull().default(0),
+  rocketsUsed:       integer("rockets_used").notNull().default(0),
   updatedAt:         timestamp("updated_at").notNull().default(sql`now()`),
 });
