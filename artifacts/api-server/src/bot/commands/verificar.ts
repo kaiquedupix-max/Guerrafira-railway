@@ -10,13 +10,14 @@ import {
   getPlayerBySteamId,
 } from "../utils/players.js";
 import { buildVerifyEmbed } from "../utils/embeds.js";
+import { executeRconCommand } from "../utils/rcon.js";
 import { db, modLogsTable } from "@workspace/db";
 import { logger } from "../../lib/logger.js";
 
 export const data = new SlashCommandBuilder()
   .setName("verificar")
   .setDescription(
-    "Verifica um jogador após triagem e concede o cargo Verificado no Discord"
+    "Verifica um jogador e concede Verificado no Discord e no Rust"
   )
   .addStringOption((opt) =>
     opt
@@ -63,21 +64,16 @@ export async function execute(
     return;
   }
 
-  // Try to assign the verified role to the Discord member
   const verifiedRoleId = process.env.DISCORD_VERIFIED_ROLE_ID;
   let roleAssigned = false;
 
   if (verifiedRoleId && interaction.guild) {
     try {
       const member = await interaction.guild.members.fetch(discordUser.id);
-      if (member.roles.cache.has(verifiedRoleId)) {
-        await interaction.editReply(
-          `ℹ️ <@${discordUser.id}> já possui o cargo <@&${verifiedRoleId}>.`
-        );
-        return;
+      if (!member.roles.cache.has(verifiedRoleId)) {
+        await member.roles.add(verifiedRoleId, `Verificado por ${interaction.user.tag}`);
+        roleAssigned = true;
       }
-      await member.roles.add(verifiedRoleId, `Verificado por ${interaction.user.tag}`);
-      roleAssigned = true;
     } catch (err) {
       logger.error({ err, discordUserId: discordUser.id }, "Failed to assign verified role");
       await interaction.editReply(
@@ -89,7 +85,15 @@ export async function execute(
     }
   }
 
-  // Log to mod_logs
+  // Concede Verificado no Rust via RCON.
+  // Pode ser sobrescrito por VERIFIED_GAME_ADD_CMD, mas este é o padrão oficial do servidor.
+  const verifiedGameTemplate = process.env.VERIFIED_GAME_ADD_CMD?.trim() || "oxide.grant {steamid} vr";
+  const verifiedGameCommand = verifiedGameTemplate.replace(/\{steam[Ii][Dd]\}/g, player.steamId);
+  const rconResult = await executeRconCommand(verifiedGameCommand).catch((err) => {
+    logger.error({ err, steamId: player.steamId, command: verifiedGameCommand }, "Failed to grant verified permission in Rust");
+    return null;
+  });
+
   await db.insert(modLogsTable).values({
     action: "VERIFICAR",
     steamId: player.steamId,
@@ -99,7 +103,6 @@ export async function execute(
     adminName: interaction.user.tag,
   });
 
-  // Post embed to log channel
   const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
   if (logChannelId) {
     const ch = await interaction.client.channels.fetch(logChannelId).catch(() => null);
@@ -118,16 +121,22 @@ export async function execute(
   }
 
   let reply = `✅ **${player.playerName}** verificado com sucesso!\n🛡️ Log enviado ao canal de logs.`;
-  if (roleAssigned && verifiedRoleId) {
-    reply += `\n🎖️ Cargo <@&${verifiedRoleId}> atribuído a <@${discordUser.id}>.`;
-  } else if (!verifiedRoleId) {
-    reply += `\n⚠️ Configure \`DISCORD_VERIFIED_ROLE_ID\` para atribuir o cargo automaticamente.`;
+  if (verifiedRoleId) {
+    reply += roleAssigned
+      ? `\n🎖️ Cargo <@&${verifiedRoleId}> atribuído a <@${discordUser.id}>.`
+      : `\n🎖️ <@${discordUser.id}> já possuía o cargo <@&${verifiedRoleId}>.`;
+  } else {
+    reply += `\n⚠️ Configure \`DISCORD_VERIFIED_ROLE_ID\` para atribuir o cargo automaticamente no Discord.`;
+  }
+
+  if (rconResult === null) {
+    reply += `\n⚠️ Não foi possível confirmar o cargo **vr** no Rust porque o RCON está indisponível.`;
+  } else {
+    reply += `\n🎮 Cargo/permissão **vr** concedido no Rust ao SteamID \`${player.steamId}\`.`;
   }
 
   await interaction.editReply(reply);
 
-  // Notificação in-game (verde)
-  const { executeRconCommand } = await import("../utils/rcon.js");
   const adminDisplayName = (interaction.member as { displayName?: string } | null)?.displayName
     ?? interaction.user.displayName;
   await executeRconCommand(
@@ -137,21 +146,13 @@ export async function execute(
     `<color=#00FF88>jogador esta LIMPO</color>`
   ).catch(() => {});
 
-  // Cor de nick verde in-game (requer plugin configurado via VERIFIED_COLOR_CMD)
-  // Ex: VERIFIED_COLOR_CMD=oxide.usergroup add {steamid} verified
-  const colorCmd = process.env.VERIFIED_COLOR_CMD;
-  if (colorCmd) {
-    const cmd = colorCmd.replace(/\{steam[Ii][Dd]\}/g, player.steamId);
-    await executeRconCommand(cmd).catch(() => {});
-    logger.info({ cmd, steamId: player.steamId }, "Verified color command executed");
-  }
-
   logger.info(
     {
       steamId: player.steamId,
       playerName: player.playerName,
       discordUserId: discordUser.id,
       roleAssigned,
+      verifiedGameCommand,
       admin: interaction.user.tag,
     },
     "Player verified"
