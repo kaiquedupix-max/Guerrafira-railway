@@ -47,12 +47,26 @@ const VIP_CARDS: Array<{
   },
 ];
 
-function buildCard(tier: VipTier, title: string, description: string, imageEnv: string) {
-  const vip = VIP_TIERS[tier];
+function safeImageUrl(envKey: string): string | null {
+  const value = process.env[envKey]?.trim();
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return value;
+  } catch {
+    logger.warn({ envKey, value }, "Invalid VIP image URL — card will be sent without image");
+    return null;
+  }
+}
+
+function buildCard(card: (typeof VIP_CARDS)[number], includeImage = true) {
+  const vip = VIP_TIERS[card.tier];
   const embed = new EmbedBuilder()
     .setColor(vip.color)
-    .setTitle(title)
-    .setDescription(description)
+    .setTitle(card.title)
+    .setDescription(card.description)
     .addFields(
       { name: "💰 Valor", value: `R$ ${vip.price.toFixed(2)}`, inline: true },
       { name: "⏱️ Duração", value: "30 dias", inline: true },
@@ -60,15 +74,17 @@ function buildCard(tier: VipTier, title: string, description: string, imageEnv: 
     )
     .setFooter({ text: `${STORE_MARKER} • Pagamentos via Mercado Pago` });
 
-  const imageUrl = process.env[imageEnv]?.trim();
-  if (imageUrl) embed.setImage(imageUrl);
+  if (includeImage) {
+    const imageUrl = safeImageUrl(card.imageEnv);
+    if (imageUrl) embed.setImage(imageUrl);
+  }
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`vip_select_${tier}`)
+      .setCustomId(`vip_store_buy_${card.tier}`)
       .setLabel(`Comprar ${vip.name}`)
       .setEmoji(vip.emoji)
-      .setStyle(tier === "ouro" ? ButtonStyle.Success : tier === "prata" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+      .setStyle(card.tier === "ouro" ? ButtonStyle.Success : card.tier === "prata" ? ButtonStyle.Primary : ButtonStyle.Secondary),
   );
 
   return { embed, row };
@@ -98,6 +114,7 @@ export async function setupVipStore(client: Client): Promise<void> {
       message.author.id === client.user?.id &&
       message.embeds.some((embed) => embed.footer?.text?.includes(STORE_MARKER)),
     );
+
     for (const message of oldStoreMessages.values()) {
       await message.delete().catch(() => {});
     }
@@ -114,10 +131,27 @@ export async function setupVipStore(client: Client): Promise<void> {
 
   await channel.send({ embeds: [header] });
 
+  let sentCount = 0;
+
   for (const card of VIP_CARDS) {
-    const { embed, row } = buildCard(card.tier, card.title, card.description, card.imageEnv);
-    await channel.send({ embeds: [embed], components: [row] });
+    try {
+      const { embed, row } = buildCard(card, true);
+      await channel.send({ embeds: [embed], components: [row] });
+      sentCount += 1;
+      logger.info({ tier: card.tier, channelId }, "VIP store card published");
+    } catch (err) {
+      logger.error({ err, tier: card.tier }, "VIP card failed with image — retrying without image");
+
+      try {
+        const { embed, row } = buildCard(card, false);
+        await channel.send({ embeds: [embed], components: [row] });
+        sentCount += 1;
+        logger.info({ tier: card.tier, channelId }, "VIP store card published without image");
+      } catch (retryErr) {
+        logger.error({ err: retryErr, tier: card.tier }, "VIP store card could not be published");
+      }
+    }
   }
 
-  logger.info({ channelId }, "VIP store panel ready");
+  logger.info({ channelId, sentCount, expected: VIP_CARDS.length }, "VIP store panel ready");
 }
