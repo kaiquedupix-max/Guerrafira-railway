@@ -276,15 +276,80 @@ function setupRconEventBridge(client: Client): void {
   });
 }
 
-interface RustChatPayload { Channel: number; Message: string; UserId: string; Username: string }
+interface RustChatPayload {
+  Channel: number;
+  Message: string;
+  UserId: string;
+  Username: string;
+}
+
+const recentChatMessages = new Map<string, number>();
+
+function isDuplicateChat(payload: RustChatPayload): boolean {
+  const now = Date.now();
+
+  const normalizedMessage = payload.Message
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+
+  const normalizedName = payload.Username
+    .trim()
+    .toLowerCase();
+
+  const key = `${payload.UserId}:${normalizedName}:${normalizedMessage}`;
+
+  const lastSeen = recentChatMessages.get(key);
+
+  if (lastSeen && now - lastSeen < 2500) {
+    return true;
+  }
+
+  recentChatMessages.set(key, now);
+
+  if (recentChatMessages.size > 500) {
+    for (const [savedKey, timestamp] of recentChatMessages) {
+      if (now - timestamp > 15000) {
+        recentChatMessages.delete(savedKey);
+      }
+    }
+  }
+
+  return false;
+}
+
 async function handleChatEvent(client: Client, raw: string): Promise<void> {
   const chatChannelId = process.env.DISCORD_CHAT_CHANNEL_ID;
   if (!chatChannelId) return;
+
   let payload: RustChatPayload;
-  try { payload = JSON.parse(raw) as RustChatPayload; } catch { return; }
+
+  try {
+    payload = JSON.parse(raw) as RustChatPayload;
+  } catch {
+    return;
+  }
+
   if (!payload.UserId || payload.UserId === "0") return;
+  if (!payload.Message?.trim()) return;
+
+  if (isDuplicateChat(payload)) {
+    logger.debug(
+      {
+        steamId: payload.UserId,
+        username: payload.Username,
+        message: payload.Message,
+      },
+      "Duplicate Rust chat message ignored",
+    );
+    return;
+  }
+
   const ch = await client.channels.fetch(chatChannelId).catch(() => null);
-  if (ch?.isSendable()) await ch.send(`💬 **${payload.Username}**: ${payload.Message}`);
+
+  if (ch?.isSendable()) {
+    await ch.send(`💬 **${payload.Username}**: ${payload.Message}`);
+  }
 }
 
 // ─── Player sync ──────────────────────────────────────────────────────────────
