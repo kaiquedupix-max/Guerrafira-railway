@@ -45,16 +45,19 @@ async function setupPanel(client: Client): Promise<void> {
     .setColor(0x9b30ff)
     .setTitle("🚀 VERIFICAR BOOSTER")
     .setDescription(
-      "Impulsiona o **Discord Guerra Fria**? Verifique seu Booster e receba automaticamente suas vantagens dentro do servidor.\n\n" +
-      "**🎁 Vantagens do Booster**\n" +
-      "⚡ **Pular fila** — prioridade para entrar no servidor.\n" +
-      "📦 **Kit Booster in-game** — benefício exclusivo enquanto seu impulso estiver ativo.\n\n" +
-      "**Como verificar:**\n" +
-      "🚀 Você precisa estar impulsionando este servidor no momento da verificação.\n" +
-      "🎮 Clique no botão abaixo e informe seu **SteamID64**.\n" +
-      "✅ O bot confirma seu Booster e libera o benefício **VIP4** no Rust.\n" +
-      "🔄 Enquanto o impulso estiver ativo, seu acesso será mantido.\n" +
-      "❌ Se você parar de impulsionar, o benefício será removido automaticamente."
+      "Impulsiona o **Discord Guerra Fria**? Verifique seu Booster e libere benefícios exclusivos enquanto seu impulso estiver ativo.\n\n" +
+      "**🎁 VANTAGENS DE SER BOOSTER**\n\n" +
+      "🗺️ **Participar da votação dos mapas**\n" +
+      "Tenha acesso às votações exclusivas e ajude a decidir os mapas do próximo wipe.\n\n" +
+      "⚡ **Pular a fila**\n" +
+      "Tenha prioridade para entrar no servidor quando houver fila.\n\n" +
+      "📦 **Kit Booster in-game**\n" +
+      "Receba acesso ao kit exclusivo dentro do Rust utilizando o comando **`/kit booster`**.\n\n" +
+      "**🔍 COMO VERIFICAR**\n" +
+      "🚀 Esteja impulsionando o servidor no momento da verificação.\n" +
+      "🎮 Clique em **Verificar Booster** e informe seu **SteamID64**.\n" +
+      "✅ Após a confirmação, o benefício **VIP4** será liberado automaticamente no servidor.\n\n" +
+      "⚠️ Se você deixar de impulsionar o Discord, os benefícios Booster serão removidos automaticamente."
     )
     .setImage(boosterImageUrl)
     .setFooter({ text: PANEL_MARKER });
@@ -96,7 +99,7 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
   else await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, updatedAt: new Date() });
 
   await executeRconCommand(grantCommand(steamId));
-  await interaction.editReply(`🚀 **Booster verificado com sucesso!**\n\n🎮 SteamID: \`${steamId}\`\n🎁 Benefício **VIP4** concedido no Guerra Fria.\n\nEnquanto você continuar impulsionando o Discord, o benefício permanecerá ativo.`);
+  await interaction.editReply(`🚀 **Booster verificado com sucesso!**\n\n🎮 SteamID: \`${steamId}\`\n🎁 Benefício **VIP4** concedido no Guerra Fria.\n📦 Use **/kit booster** dentro do jogo para resgatar seu kit.\n\nEnquanto você continuar impulsionando o Discord, seus benefícios permanecerão ativos.`);
 }
 
 async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean): Promise<void> {
