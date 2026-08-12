@@ -161,7 +161,7 @@ export async function startBot(): Promise<void> {
     const content = msg.content.trim();
     if (!content) return;
     const displayName = msg.member?.displayName ?? msg.author.username;
-    await executeRconCommand(`say <color=red>[Moderação]</color> <color=green>${displayName}: ${content}</color>`);
+    await executeRconCommand(`say <color=red>[Moderação]</color> <color=orange>${displayName}:</color> <color=green>${content}</color>`);
     await msg.react("✅").catch(() => {});
     logger.info({ author: displayName, content }, "Discord → RCON chat");
   });
