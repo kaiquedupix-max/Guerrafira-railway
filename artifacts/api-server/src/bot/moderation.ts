@@ -7,9 +7,20 @@ import {
 import { logger } from "../lib/logger.js";
 
 const URL_REGEX = /(?:https?:\/\/|www\.)\S+|discord(?:app)?\.com\/invite\/\S+|discord\.gg\/\S+/i;
+const ALLOWED_LINK_CATEGORY_IDS = new Set([
+  "1530056461877641326",
+  "1499084541791436862",
+]);
 
 function isAdmin(message: Message): boolean {
   return Boolean(message.member?.permissions.has(PermissionFlagsBits.Administrator));
+}
+
+function isAllowedLinkChannel(message: Message): boolean {
+  if (!message.guild) return false;
+  const channel = message.channel;
+  if (!("parentId" in channel)) return false;
+  return Boolean(channel.parentId && ALLOWED_LINK_CATEGORY_IDS.has(channel.parentId));
 }
 
 function normalize(text: string): string {
@@ -77,7 +88,6 @@ function getSaoPauloParts(date: Date) {
 }
 
 function saoPauloLocalToUtc(year: number, month: number, day: number, hour: number, minute: number): Date {
-  // São Paulo atualmente usa UTC-3 sem horário de verão. O ajuste abaixo mantém o horário fixo do wipe em 18h30 local.
   return new Date(Date.UTC(year, month - 1, day, hour + 3, minute, 0));
 }
 
@@ -88,7 +98,7 @@ function nextWipeDate(now = new Date()): Date {
   for (let offset = 0; offset <= 7; offset++) {
     const candidateDay = new Date(baseUtc + offset * 86_400_000);
     const weekday = candidateDay.getUTCDay();
-    if (weekday !== 1 && weekday !== 5) continue; // segunda e sexta
+    if (weekday !== 1 && weekday !== 5) continue;
 
     const candidate = saoPauloLocalToUtc(
       candidateDay.getUTCFullYear(),
@@ -134,12 +144,13 @@ function formatWipeDate(date: Date): string {
 
 async function handleLinkModeration(message: Message): Promise<boolean> {
   if (!message.guild || message.author.bot || isAdmin(message)) return false;
+  if (isAllowedLinkChannel(message)) return false;
   if (!URL_REGEX.test(message.content)) return false;
 
   await message.delete().catch(err => logger.warn({ err, messageId: message.id }, "Failed to delete blocked link"));
 
   const warning = await message.channel.send({
-    content: `🚫 <@${message.author.id}>, links não são permitidos neste servidor. Apenas administradores podem enviar links.`,
+    content: `🚫 <@${message.author.id}>, links não são permitidos neste canal. Use os canais autorizados ou abra um ticket.`,
   }).catch(() => null);
 
   if (warning) setTimeout(() => warning.delete().catch(() => {}), 7_000);
@@ -176,5 +187,5 @@ export function startDiscordModeration(client: Client): void {
     }
   });
 
-  logger.info("Discord moderation and wipe auto-response enabled");
+  logger.info({ allowedCategories: [...ALLOWED_LINK_CATEGORY_IDS] }, "Discord moderation and wipe auto-response enabled");
 }
