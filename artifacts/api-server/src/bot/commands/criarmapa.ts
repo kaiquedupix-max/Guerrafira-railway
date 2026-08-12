@@ -66,7 +66,7 @@ async function announceVote(client: Client, endsAt: number): Promise<void> {
   if (chat?.isSendable()) {
     await chat.send(`🗳️ **VOTAÇÃO DE MAPA ABERTA!**\n\nA votação para escolher o mapa do próximo wipe está rolando! 🔥\nAcesse <#${VOTE_CHANNEL_ID}>, confira as opções e registre seu voto.\n\n⏳ A votação encerra <t:${Math.floor(endsAt / 1000)}:R>.\n🇧🇷 **Sua escolha ajuda a decidir o próximo mapa do Guerra Fria!**`).catch(() => {});
   }
-  await executeRconCommand("say <color=#ff3b3b>[GUERRA FRIA]</color> <color=#7CFC00>Entre no Discord: discord.gg/guerrafria e vote no mapa do próximo wipe!</color>").catch(() => null);
+  await executeRconCommand("say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>Entre no Discord: discord.gg/guerrafria e vote no mapa do proximo wipe!</color>").catch(() => null);
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
