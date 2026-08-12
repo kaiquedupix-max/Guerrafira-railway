@@ -3,14 +3,17 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  Events,
   type Client,
   type TextChannel,
 } from "discord.js";
 import { VIP_TIERS, type VipTier } from "./vip.js";
+import { handleVipStoreBuy } from "./vipStorePurchase.js";
 import { logger } from "../lib/logger.js";
 
 const STORE_MARKER = "Guerra Fria • Loja VIP";
 const DEFAULT_VIP_STORE_CHANNEL_ID = "1530049713422729328";
+let storeInteractionHandlerRegistered = false;
 
 const VIP_CARDS: Array<{
   tier: VipTier;
@@ -90,7 +93,33 @@ function buildCard(card: (typeof VIP_CARDS)[number], includeImage = true) {
   return { embed, row };
 }
 
+function registerStoreInteractionHandler(client: Client): void {
+  if (storeInteractionHandlerRegistered) return;
+  storeInteractionHandlerRegistered = true;
+
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isButton()) return;
+    if (!interaction.customId.startsWith("vip_store_buy_")) return;
+
+    try {
+      await handleVipStoreBuy(interaction);
+    } catch (err) {
+      logger.error({ err, customId: interaction.customId }, "VIP store button interaction failed");
+
+      try {
+        const payload = { content: "❌ Não foi possível criar o ticket de compra. Tente novamente.", ephemeral: true };
+        if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
+        else await interaction.reply(payload);
+      } catch {
+        // ignore response failure
+      }
+    }
+  });
+}
+
 export async function setupVipStore(client: Client): Promise<void> {
+  registerStoreInteractionHandler(client);
+
   const channelId =
     process.env.DISCORD_VIP_STORE_CHANNEL_ID?.trim() ||
     process.env.DISCORD_VIP_CHANNEL_ID?.trim() ||
