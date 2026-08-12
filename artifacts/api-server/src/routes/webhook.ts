@@ -1,10 +1,13 @@
 /**
- * Mercado Pago payment webhook handler.
- * MP sends POST /webhook/mercadopago when a payment status changes.
+ * Mercado Pago webhook handler.
+ * Recebe TODOS os eventos em POST /webhook/mercadopago,
+ * registra no Discord e processa pagamentos quando aplicável.
  */
 
+import crypto from "node:crypto";
 import { Router, type Request, type Response } from "express";
-import { eq, or } from "drizzle-orm";
+import { EmbedBuilder } from "discord.js";
+import { eq } from "drizzle-orm";
 import { db, paymentsTable } from "@workspace/db";
 import { grantVip, type VipTier } from "../bot/vip.js";
 import { discordClient } from "../bot/client.js";
@@ -12,57 +15,201 @@ import { logger } from "../lib/logger.js";
 
 const router = Router();
 
+function text(value: unknown, fallback = "Não informado"): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value);
+}
+
+function truncate(value: string, max = 900): string {
+  return value.length <= max ? value : `${value.slice(0, max - 3)}...`;
+}
+
+function getDataId(req: Request, body: Record<string, unknown>): string {
+  const queryValue = req.query["data.id"] ?? req.query.data_id;
+  if (typeof queryValue === "string" && queryValue) return queryValue;
+
+  const data = body.data as Record<string, unknown> | undefined;
+  if (data?.id !== undefined && data?.id !== null) return String(data.id);
+
+  return "";
+}
+
+function validateSignature(req: Request, dataId: string): { configured: boolean; valid: boolean; reason?: string } {
+  const secret = process.env.MP_WEBHOOK_SECRET;
+  if (!secret) return { configured: false, valid: true, reason: "MP_WEBHOOK_SECRET não configurada" };
+
+  const xSignature = req.header("x-signature") ?? "";
+  const xRequestId = req.header("x-request-id") ?? "";
+
+  if (!xSignature) return { configured: true, valid: false, reason: "Header x-signature ausente" };
+
+  const parts = Object.fromEntries(
+    xSignature
+      .split(",")
+      .map((part) => part.trim().split("=", 2))
+      .filter(([key, value]) => Boolean(key && value)),
+  );
+
+  const ts = parts.ts ?? "";
+  const receivedHash = parts.v1 ?? "";
+  if (!ts || !receivedHash) {
+    return { configured: true, valid: false, reason: "x-signature sem ts ou v1" };
+  }
+
+  const pieces: string[] = [];
+  if (dataId) pieces.push(`id:${dataId.toLowerCase()};`);
+  if (xRequestId) pieces.push(`request-id:${xRequestId};`);
+  if (ts) pieces.push(`ts:${ts};`);
+  const manifest = pieces.join("");
+
+  const calculated = crypto.createHmac("sha256", secret).update(manifest).digest("hex");
+
+  try {
+    const a = Buffer.from(calculated, "hex");
+    const b = Buffer.from(receivedHash, "hex");
+    const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+    return { configured: true, valid, reason: valid ? undefined : "Assinatura HMAC inválida" };
+  } catch {
+    return { configured: true, valid: false, reason: "Assinatura em formato inválido" };
+  }
+}
+
+async function sendDiscordWebhookLog(opts: {
+  body: Record<string, unknown>;
+  req: Request;
+  dataId: string;
+  signature: { configured: boolean; valid: boolean; reason?: string };
+  payment?: Record<string, unknown> | null;
+}): Promise<void> {
+  const client = discordClient();
+  const channelId = process.env.DISCORD_LOG_CHANNEL_ID;
+  if (!client || !channelId) return;
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isSendable()) return;
+
+  const { body, req, dataId, signature, payment } = opts;
+  const type = text(body.type, "desconhecido");
+  const action = text(body.action, "sem ação");
+  const liveMode = body.live_mode === true;
+
+  let color = signature.valid ? 0x3498db : 0xe74c3c;
+  const paymentStatus = payment?.status ? String(payment.status) : "";
+  if (paymentStatus === "approved") color = 0x2ecc71;
+  else if (paymentStatus === "rejected" || paymentStatus === "cancelled") color = 0xe74c3c;
+  else if (paymentStatus === "pending" || paymentStatus === "in_process") color = 0xf1c40f;
+
+  const signatureLabel = !signature.configured
+    ? "⚠️ Secret não configurada"
+    : signature.valid
+      ? "✅ Válida"
+      : `❌ Inválida — ${signature.reason ?? "motivo desconhecido"}`;
+
+  const rawJson = truncate(JSON.stringify(body, null, 2), 900);
+
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle("💳 Mercado Pago • Evento recebido")
+    .setDescription(`**${action}**`)
+    .addFields(
+      { name: "📨 Tipo", value: `\`${type}\``, inline: true },
+      { name: "🆔 Data ID", value: `\`${dataId || "não informado"}\``, inline: true },
+      { name: "🌐 Ambiente", value: liveMode ? "Produção" : "Teste", inline: true },
+      { name: "🔐 Assinatura", value: signatureLabel, inline: false },
+      { name: "🔎 Request ID", value: `\`${truncate(req.header("x-request-id") ?? "não informado", 100)}\``, inline: false },
+    )
+    .setFooter({ text: "Guerra Fria • Mercado Pago Webhook" })
+    .setTimestamp();
+
+  if (payment) {
+    const payer = (payment.payer ?? {}) as Record<string, unknown>;
+    const method = (payment.payment_method ?? {}) as Record<string, unknown>;
+    const transaction = (payment.transaction_details ?? {}) as Record<string, unknown>;
+
+    embed.addFields(
+      { name: "💰 Status", value: `\`${text(payment.status)}\``, inline: true },
+      { name: "💵 Valor", value: `${text(payment.transaction_amount)} ${text(payment.currency_id, "BRL")}`, inline: true },
+      { name: "💳 Método", value: text(method.id ?? payment.payment_method_id), inline: true },
+      { name: "👤 Pagador", value: truncate(text(payer.email ?? payer.id), 250), inline: true },
+      { name: "🏦 Valor líquido", value: text(transaction.net_received_amount), inline: true },
+      { name: "🧾 Payment ID", value: `\`${text(payment.id)}\``, inline: true },
+    );
+  }
+
+  embed.addFields({ name: "📦 Payload", value: `\`\`\`json\n${rawJson}\n\`\`\`` });
+  await channel.send({ embeds: [embed] }).catch((err) => logger.error({ err }, "Failed to send Mercado Pago Discord log"));
+}
+
 async function fetchMpPayment(paymentId: string): Promise<Record<string, unknown> | null> {
   const token = process.env.MP_ACCESS_TOKEN;
   if (!token) return null;
+
   const res = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
+
   if (!res.ok) {
     logger.error({ status: res.status, paymentId }, "Failed to fetch MP payment details");
     return null;
   }
+
   return res.json() as Promise<Record<string, unknown>>;
 }
 
 router.post("/mercadopago", async (req: Request, res: Response) => {
-  // Acknowledge immediately to prevent MP retries
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const dataId = getDataId(req, body);
+  const signature = validateSignature(req, dataId);
+
+  logger.info(
+    { type: body.type, action: body.action, dataId, signatureValid: signature.valid },
+    "MP webhook received",
+  );
+
+  // Registra tentativas inválidas no Discord, mas não processa o pagamento.
+  if (signature.configured && !signature.valid) {
+    await sendDiscordWebhookLog({ body, req, dataId, signature });
+    res.status(401).json({ received: false, error: "invalid_signature" });
+    return;
+  }
+
+  // Mercado Pago espera 200/201 ao receber corretamente a notificação.
   res.status(200).json({ received: true });
 
-  const body = req.body as Record<string, unknown>;
-  logger.info({ body: JSON.stringify(body).slice(0, 500) }, "MP webhook received");
-
   try {
-    const type   = body.type   as string | undefined;
+    const type = body.type as string | undefined;
     const action = body.action as string | undefined;
-    const dataId = (body.data as Record<string, unknown> | undefined)?.id as string | undefined;
-
-    // Accept both old (type=payment) and new (action=payment.*) formats
     const isPaymentNotification =
       type === "payment" || (typeof action === "string" && action.startsWith("payment."));
 
+    // TODOS os eventos chegam ao Discord. Eventos não-payment param aqui.
     if (!isPaymentNotification || !dataId) {
-      logger.info({ type, action, dataId }, "Webhook ignored (not a payment notification)");
+      await sendDiscordWebhookLog({ body, req, dataId, signature });
       return;
     }
 
     const mpData = await fetchMpPayment(dataId);
+    await sendDiscordWebhookLog({ body, req, dataId, signature, payment: mpData });
+
     if (!mpData) return;
 
-    const status   = mpData.status as string;
-    const mpPayId  = String(mpData.id);
+    const status = mpData.status as string;
+    const mpPayId = String(mpData.id);
     const metadata = (mpData.metadata ?? {}) as Record<string, string>;
-
-    // preference_id is present on card payments
     const mpPrefId = (mpData.preference_id as string | undefined) ?? "";
 
-    logger.info({ mpPayId, status, mpPrefId, metadata }, "MP payment details fetched");
-
-    // ── Find matching DB record ─────────────────────────────────────────────
-    let rec = await db.select().from(paymentsTable).where(eq(paymentsTable.mpPaymentId, mpPayId)).then((r) => r[0]);
+    let rec = await db
+      .select()
+      .from(paymentsTable)
+      .where(eq(paymentsTable.mpPaymentId, mpPayId))
+      .then((r) => r[0]);
 
     if (!rec && mpPrefId) {
-      rec = await db.select().from(paymentsTable).where(eq(paymentsTable.mpPreferenceId, mpPrefId)).then((r) => r[0]);
+      rec = await db
+        .select()
+        .from(paymentsTable)
+        .where(eq(paymentsTable.mpPreferenceId, mpPrefId))
+        .then((r) => r[0]);
     }
 
     if (!rec) {
@@ -70,20 +217,18 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       return;
     }
 
-    logger.info({ recId: rec.id, tier: rec.vipTier, discordUserId: rec.discordUserId, steamId: rec.steamId }, "DB payment record found");
+    await db
+      .update(paymentsTable)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(paymentsTable.id, rec.id));
 
-    // ── Update status ────────────────────────────────────────────────────────
-    await db.update(paymentsTable).set({ status, updatedAt: new Date() }).where(eq(paymentsTable.id, rec.id));
-
-    // ── Handle approved ──────────────────────────────────────────────────────
     if (status === "approved") {
-      // Prefer DB record data; fall back to payment metadata
-      const steamId       = rec.steamId ?? metadata.steam_id ?? "";
+      const steamId = rec.steamId ?? metadata.steam_id ?? "";
       const discordUserId = rec.discordUserId ?? metadata.discord_user_id ?? "";
-      const vipTier       = (rec.vipTier ?? metadata.vip_tier ?? "") as VipTier;
+      const vipTier = (rec.vipTier ?? metadata.vip_tier ?? "") as VipTier;
 
       if (!steamId || !discordUserId || !vipTier) {
-        logger.error({ rec, metadata }, "Missing required fields for VIP grant");
+        logger.error({ recId: rec.id }, "Missing required fields for VIP grant");
         return;
       }
 
@@ -93,15 +238,21 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
         return;
       }
 
-      await grantVip({ discordUserId, steamId, tier: vipTier, durationDays: 30, source: "purchase", client });
+      await grantVip({
+        discordUserId,
+        steamId,
+        tier: vipTier,
+        durationDays: 30,
+        source: "purchase",
+        client,
+      });
 
-      // Notify in ticket channel
       if (rec.ticketChannelId) {
         const ch = await client.channels.fetch(rec.ticketChannelId).catch(() => null);
         if (ch?.isSendable()) {
           await ch.send(
             `✅ **Pagamento aprovado!** Seu **VIP ${vipTier}** foi ativado.\n` +
-            `🎮 Steam ID: \`${steamId}\`  •  📅 Válido por **30 dias**. Obrigado! 🙌`,
+            `🎮 Steam ID: \`${steamId}\` • 📅 Válido por **30 dias**. Obrigado! 🙌`,
           );
         }
       }
@@ -110,11 +261,12 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
       if (rec.ticketChannelId && client) {
         const ch = await client.channels.fetch(rec.ticketChannelId).catch(() => null);
         if (ch?.isSendable()) {
-          await ch.send(`❌ Pagamento **${status === "rejected" ? "recusado" : "cancelado"}**. Tente novamente ou escolha outro método.`);
+          await ch.send(
+            `❌ Pagamento **${status === "rejected" ? "recusado" : "cancelado"}**. ` +
+            "Tente novamente ou escolha outro método.",
+          );
         }
       }
-    } else {
-      logger.info({ status, mpPayId }, "Payment status not actionable yet");
     }
   } catch (err) {
     logger.error({ err }, "Webhook processing error");
