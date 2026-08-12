@@ -10,6 +10,7 @@ import { VIP_TIERS, type VipTier } from "./vip.js";
 import { logger } from "../lib/logger.js";
 
 const STORE_MARKER = "Guerra Fria • Loja VIP";
+const DEFAULT_VIP_STORE_CHANNEL_ID = "1530049713422729328";
 
 const VIP_CARDS: Array<{
   tier: VipTier;
@@ -74,15 +75,20 @@ function buildCard(tier: VipTier, title: string, description: string, imageEnv: 
 }
 
 export async function setupVipStore(client: Client): Promise<void> {
-  const channelId = process.env.DISCORD_VIP_STORE_CHANNEL_ID ?? process.env.DISCORD_VIP_CHANNEL_ID;
-  if (!channelId) {
-    logger.warn("DISCORD_VIP_STORE_CHANNEL_ID not set — VIP store panel skipped");
-    return;
-  }
+  const channelId =
+    process.env.DISCORD_VIP_STORE_CHANNEL_ID?.trim() ||
+    process.env.DISCORD_VIP_CHANNEL_ID?.trim() ||
+    DEFAULT_VIP_STORE_CHANNEL_ID;
 
-  const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
-  if (!channel?.isTextBased()) {
-    logger.warn({ channelId }, "VIP store channel not found or is not a text channel");
+  logger.info({ channelId }, "Initializing VIP store panel");
+
+  const channel = await client.channels.fetch(channelId).catch((err) => {
+    logger.error({ err, channelId }, "Failed to fetch VIP store channel");
+    return null;
+  }) as TextChannel | null;
+
+  if (!channel?.isTextBased() || !channel.isSendable()) {
+    logger.error({ channelId }, "VIP store channel not found or bot cannot send messages there");
     return;
   }
 
