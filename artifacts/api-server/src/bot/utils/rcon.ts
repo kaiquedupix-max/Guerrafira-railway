@@ -1,48 +1,22 @@
-/**
- * Rust WebRCON client — WebSocket-based RCON + broadcast event system.
- * Rust uses WebSocket RCON, not TCP Source RCON.
- * URL format: ws://<host>:<port>/<password>
- */
-
+/** Rust WebRCON client — WebSocket-based RCON + broadcast event system. */
 import WebSocket from "ws";
 import { logger } from "../../lib/logger.js";
 
-interface RconMessage {
-  Identifier: number;
-  Message: string;
-  Name: string;
-}
-
-interface RconResponse {
-  Identifier: number;
-  Message: string;
-  Type: string;
-  Stacktrace: string;
-}
-
-// ─── Event handler ────────────────────────────────────────────────────────────
+interface RconMessage { Identifier: number; Message: string; Name: string; }
+interface RconResponse { Identifier: number; Message: string; Type: string; Stacktrace: string; }
 type RconEventHandler = (type: string, message: string) => void;
 let rconEventHandler: RconEventHandler | null = null;
+export function setRconEventHandler(handler: RconEventHandler): void { rconEventHandler = handler; }
 
-export function setRconEventHandler(handler: RconEventHandler): void {
-  rconEventHandler = handler;
-}
-
-// ─── Connection state ─────────────────────────────────────────────────────────
 let ws: WebSocket | null = null;
 let wsReady = false;
-// Single in-flight connection promise to prevent race conditions causing duplicate connections
 let connectionPromise: Promise<boolean> | null = null;
-
-const pendingResolvers = new Map<
-  number,
-  { resolve: (v: string) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
->();
+const pendingResolvers = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let messageId = 1;
 
 function getRconUrl(): string | null {
-  const host     = process.env.RCON_HOST;
-  const port     = process.env.RCON_PORT ?? "28016";
+  const host = process.env.RCON_HOST;
+  const port = process.env.RCON_PORT ?? "28016";
   const password = process.env.RCON_PASSWORD;
   if (!host || !password) return null;
   return `ws://${host}:${port}/${password}`;
@@ -51,195 +25,102 @@ function getRconUrl(): string | null {
 function _doConnect(): Promise<boolean> {
   const url = getRconUrl();
   if (!url) return Promise.resolve(false);
-
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     if (ws) { ws.terminate(); ws = null; wsReady = false; }
-
     const socket = new WebSocket(url);
-
-    const connectTimeout = setTimeout(() => {
-      logger.error("RCON WebSocket connection timed out");
-      socket.terminate();
-      resolve(false);
-    }, 8000);
-
-    socket.on("open", () => {
-      clearTimeout(connectTimeout);
-      ws = socket;
-      wsReady = true;
-      logger.info({ host: process.env.RCON_HOST }, "RCON WebSocket connected");
-      resolve(true);
-    });
-
-    socket.on("message", (data) => {
+    const connectTimeout = setTimeout(() => { logger.error("RCON WebSocket connection timed out"); socket.terminate(); resolve(false); }, 8000);
+    socket.on("open", () => { clearTimeout(connectTimeout); ws = socket; wsReady = true; logger.info({ host: process.env.RCON_HOST }, "RCON WebSocket connected"); resolve(true); });
+    socket.on("message", data => {
       try {
         const msg = JSON.parse(data.toString()) as RconResponse;
-
-        // Matched command response
         const pending = pendingResolvers.get(msg.Identifier);
-        if (pending) {
-          clearTimeout(pending.timer);
-          pendingResolvers.delete(msg.Identifier);
-          pending.resolve(msg.Message);
-          return;
-        }
-
-        // Broadcast / server event (Identifier = -1 or unmatched)
-        if (rconEventHandler && msg.Message) {
-          try {
-            rconEventHandler(msg.Type ?? "", msg.Message);
-          } catch (err) {
-            logger.error({ err }, "RCON event handler error");
-          }
-        }
-      } catch {
-        // Ignore non-JSON messages
-      }
+        if (pending) { clearTimeout(pending.timer); pendingResolvers.delete(msg.Identifier); pending.resolve(msg.Message); return; }
+        if (rconEventHandler && msg.Message) try { rconEventHandler(msg.Type ?? "", msg.Message); } catch (err) { logger.error({ err }, "RCON event handler error"); }
+      } catch {}
     });
-
-    socket.on("error", (err) => {
-      logger.error({ err }, "RCON WebSocket error");
-      wsReady = false;
-    });
-
-    socket.on("close", () => {
-      logger.warn("RCON WebSocket closed");
-      ws = null;
-      wsReady = false;
-      for (const [, pending] of pendingResolvers) {
-        clearTimeout(pending.timer);
-        pending.reject(new Error("RCON connection closed"));
-      }
-      pendingResolvers.clear();
-    });
+    socket.on("error", err => { logger.error({ err }, "RCON WebSocket error"); wsReady = false; });
+    socket.on("close", () => { logger.warn("RCON WebSocket closed"); ws = null; wsReady = false; for (const [, pending] of pendingResolvers) { clearTimeout(pending.timer); pending.reject(new Error("RCON connection closed")); } pendingResolvers.clear(); });
   });
 }
 
 async function ensureConnected(): Promise<boolean> {
   if (ws && wsReady) return true;
-
-  // If a connection attempt is already in progress, reuse it instead of
-  // opening a second WebSocket (which caused the 3× duplicate events).
   if (connectionPromise) return connectionPromise;
-
-  connectionPromise = _doConnect().finally(() => {
-    connectionPromise = null;
-  });
+  connectionPromise = _doConnect().finally(() => { connectionPromise = null; });
   return connectionPromise;
 }
 
-// ─── Command execution ────────────────────────────────────────────────────────
 export async function executeRconCommand(command: string): Promise<string | null> {
   const connected = await ensureConnected();
-  if (!connected || !ws) {
-    logger.warn({ command }, "RCON not connected — skipping command");
-    return null;
-  }
-
-  const id      = messageId++;
+  if (!connected || !ws) { logger.warn({ command }, "RCON not connected — skipping command"); return null; }
+  const id = messageId++;
   const payload: RconMessage = { Identifier: id, Message: command, Name: "WebRcon" };
-
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pendingResolvers.delete(id);
-      logger.warn({ command }, "RCON command timed out");
-      resolve(null);
-    }, 10_000);
-
-    pendingResolvers.set(id, {
-      resolve: (v) => resolve(v),
-      reject:  () => resolve(null),
-      timer,
-    });
-
-    ws!.send(JSON.stringify(payload), (err) => {
-      if (err) {
-        clearTimeout(timer);
-        pendingResolvers.delete(id);
-        logger.error({ err, command }, "RCON send error");
-        resolve(null);
-      }
-    });
+  return new Promise(resolve => {
+    const timer = setTimeout(() => { pendingResolvers.delete(id); logger.warn({ command }, "RCON command timed out"); resolve(null); }, 10000);
+    pendingResolvers.set(id, { resolve: v => resolve(v), reject: () => resolve(null), timer });
+    ws!.send(JSON.stringify(payload), err => { if (err) { clearTimeout(timer); pendingResolvers.delete(id); logger.error({ err, command }, "RCON send error"); resolve(null); } });
   });
 }
 
-// ─── Player list ──────────────────────────────────────────────────────────────
-export interface RconPlayer {
-  steamId: string;
-  name: string;
-  ping: number;
-}
-
+export interface RconPlayer { steamId: string; name: string; ping: number; }
 export async function getOnlinePlayers(): Promise<RconPlayer[]> {
   const response = await executeRconCommand("playerlist");
   if (!response) return [];
   try {
-    const raw = JSON.parse(response) as Array<{
-      SteamID: string;
-      DisplayName?: string;
-      Username?: string;
-      Ping: number;
-    }>;
-    return raw.map((p) => ({
-      steamId: p.SteamID,
-      name: (p.DisplayName ?? p.Username ?? "Unknown").trim() || "Unknown",
-      ping: p.Ping,
-    }));
-  } catch {
-    return [];
-  }
+    const raw = JSON.parse(response) as Array<{ SteamID: string; DisplayName?: string; Username?: string; Ping: number }>;
+    return raw.map(p => ({ steamId: p.SteamID, name: (p.DisplayName ?? p.Username ?? "Unknown").trim() || "Unknown", ping: p.Ping }));
+  } catch { return []; }
 }
 
-// ─── Server info ──────────────────────────────────────────────────────────────
-export interface ServerInfo {
-  hostname: string;
-  maxPlayers: number;
-  players: number;
-  queued: number;
-  joining: number;
-  sleepers: number;
-  map: string;
-  gameTime: string;
+export interface ServerInfo { hostname: string; maxPlayers: number; players: number; queued: number; joining: number; sleepers: number; map: string; gameTime: string; }
+
+function countSleepingResponse(value: string | null): number | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) return parsed.length;
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      for (const key of ["Sleepers", "SleepingPlayers", "sleepers", "sleepingPlayers", "Count", "count"]) {
+        const n = Number(obj[key]); if (Number.isFinite(n)) return n;
+      }
+    }
+  } catch {}
+  const countMatch = value.match(/(?:sleeping|sleepers?).*?(\d+)/i);
+  if (countMatch) return Number(countMatch[1]);
+  const steamIds = value.match(/7656119\d{10}/g);
+  if (steamIds) return new Set(steamIds).size;
+  return null;
 }
 
 export async function getServerInfo(): Promise<ServerInfo | null> {
-  const [infoRaw, sleepersRaw] = await Promise.all([
-    executeRconCommand("serverinfo"),
-    executeRconCommand("sleepingplayerlist"),
-  ]);
+  const infoRaw = await executeRconCommand("serverinfo");
   if (!infoRaw) return null;
-
   try {
-    const raw = JSON.parse(infoRaw) as {
-      Hostname: string;
-      MaxPlayers: number;
-      Players: number;
-      Queued: number;
-      Joining: number;
-      Map: string;
-      GameTime: string;
-      Sleepers?: number;
-    };
+    const raw = JSON.parse(infoRaw) as Record<string, unknown>;
+    let sleepers = Number(raw.Sleepers ?? raw.SleepingPlayers ?? raw.Sleeping ?? raw.sleepers ?? raw.sleepingPlayers ?? 0);
+    if (!Number.isFinite(sleepers)) sleepers = 0;
 
-    let sleepers = raw.Sleepers ?? 0;
-    if (sleepersRaw) {
-      try {
-        const list = JSON.parse(sleepersRaw) as unknown[];
-        if (Array.isArray(list)) sleepers = list.length;
-      } catch { /* use Sleepers field */ }
+    if (sleepers === 0) {
+      const sleepingList = await executeRconCommand("sleepingplayerlist");
+      const detected = countSleepingResponse(sleepingList);
+      if (detected !== null) sleepers = detected;
+    }
+    if (sleepers === 0) {
+      const sleepingUsers = await executeRconCommand("sleepingusers");
+      const detected = countSleepingResponse(sleepingUsers);
+      if (detected !== null) sleepers = detected;
     }
 
     return {
-      hostname: raw.Hostname ?? "Servidor",
-      maxPlayers: raw.MaxPlayers ?? 0,
-      players: raw.Players ?? 0,
-      queued: raw.Queued ?? 0,
-      joining: raw.Joining ?? 0,
+      hostname: String(raw.Hostname ?? "Servidor"),
+      maxPlayers: Number(raw.MaxPlayers ?? 0),
+      players: Number(raw.Players ?? 0),
+      queued: Number(raw.Queued ?? 0),
+      joining: Number(raw.Joining ?? 0),
       sleepers,
-      map: raw.Map ?? "—",
-      gameTime: raw.GameTime ?? "—",
+      map: String(raw.Map ?? "—"),
+      gameTime: String(raw.GameTime ?? "—"),
     };
-  } catch {
-    return null;
-  }
+  } catch (err) { logger.error({ err, infoRaw }, "Failed to parse serverinfo"); return null; }
 }
