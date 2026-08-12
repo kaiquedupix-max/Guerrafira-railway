@@ -3,12 +3,12 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  Events,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
   type ButtonInteraction,
   type Client,
-  type GuildMember,
   type ModalSubmitInteraction,
   type TextChannel,
 } from "discord.js";
@@ -52,11 +52,11 @@ async function setupPanel(client: Client): Promise<void> {
       "⚡ **Pular a fila**\n" +
       "Tenha prioridade para entrar no servidor quando houver fila.\n\n" +
       "📦 **Kit Booster in-game**\n" +
-      "Receba acesso ao kit exclusivo dentro do Rust utilizando o comando **`/kit booster`**.\n\n" +
+      "Receba acesso ao kit exclusivo dentro do Rust utilizando o comando **`/kit`**.\n\n" +
       "**🔍 COMO VERIFICAR**\n" +
       "🚀 Esteja impulsionando o servidor no momento da verificação.\n" +
       "🎮 Clique em **Verificar Booster** e informe seu **SteamID64**.\n" +
-      "✅ Após a confirmação, o benefício **VIP4** será liberado automaticamente no servidor.\n\n" +
+      "✅ Após a confirmação, o **Booster será ativado no jogo** automaticamente.\n\n" +
       "⚠️ Se você deixar de impulsionar o Discord, os benefícios Booster serão removidos automaticamente."
     )
     .setImage(boosterImageUrl)
@@ -78,10 +78,19 @@ export async function handleBoosterVerifyButton(interaction: ButtonInteraction):
   if (!interaction.guild) return;
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   if (!member?.premiumSince) {
-    await interaction.reply({ content: "❌ Você não está impulsionando o servidor no momento. Inicie o Booster e tente novamente.", ephemeral: true }); return;
+    await interaction.reply({ content: "❌ Você não está impulsionando o servidor no momento. Inicie o Booster e tente novamente.", ephemeral: true });
+    return;
   }
+
   const modal = new ModalBuilder().setCustomId("booster_verify_modal").setTitle("Verificar Booster");
-  const steam = new TextInputBuilder().setCustomId("steamid").setLabel("Seu SteamID64").setPlaceholder("7656119XXXXXXXXXX").setMinLength(17).setMaxLength(17).setRequired(true).setStyle(TextInputStyle.Short);
+  const steam = new TextInputBuilder()
+    .setCustomId("steamid")
+    .setLabel("Seu SteamID64")
+    .setPlaceholder("7656119XXXXXXXXXX")
+    .setMinLength(17)
+    .setMaxLength(17)
+    .setRequired(true)
+    .setStyle(TextInputStyle.Short);
   modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(steam));
   await interaction.showModal(modal);
 }
@@ -89,43 +98,93 @@ export async function handleBoosterVerifyButton(interaction: ButtonInteraction):
 export async function handleBoosterVerifyModal(interaction: ModalSubmitInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   if (!interaction.guild) return;
+
   const steamId = interaction.fields.getTextInputValue("steamid").trim();
-  if (!/^\d{17}$/.test(steamId)) { await interaction.editReply("❌ SteamID64 inválido. Informe exatamente os 17 números."); return; }
+  if (!/^\d{17}$/.test(steamId)) {
+    await interaction.editReply("❌ SteamID64 inválido. Informe exatamente os 17 números.");
+    return;
+  }
+
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-  if (!member?.premiumSince) { await interaction.editReply("❌ Seu Booster não está ativo no Discord."); return; }
+  if (!member?.premiumSince) {
+    await interaction.editReply("❌ Seu Booster não está ativo no Discord.");
+    return;
+  }
 
   const existing = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
-  if (existing.length) await db.update(boosterLinksTable).set({ steamId, active: true, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
-  else await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, updatedAt: new Date() });
+  if (existing.length) {
+    await db.update(boosterLinksTable)
+      .set({ steamId, active: true, updatedAt: new Date() })
+      .where(eq(boosterLinksTable.discordUserId, interaction.user.id));
+  } else {
+    await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, updatedAt: new Date() });
+  }
 
   await executeRconCommand(grantCommand(steamId));
-  await interaction.editReply(`🚀 **Booster verificado com sucesso!**\n\n🎮 SteamID: \`${steamId}\`\n🎁 Benefício **VIP4** concedido no Guerra Fria.\n📦 Use **/kit booster** dentro do jogo para resgatar seu kit.\n\nEnquanto você continuar impulsionando o Discord, seus benefícios permanecerão ativos.`);
+  await interaction.editReply(
+    `🚀 **Booster verificado com sucesso!**\n\n` +
+    `🎮 SteamID: \`${steamId}\`\n` +
+    "✅ Seu **Booster foi ativado no jogo**.\n" +
+    "📦 Dentro do Rust, use **`/kit`** para acessar seu kit.\n\n" +
+    "Enquanto você continuar impulsionando o Discord, seus benefícios permanecerão ativos."
+  );
 }
 
 async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean): Promise<void> {
-  const guildId = process.env.DISCORD_GUILD_ID?.trim(); if (!guildId) return;
-  const guild = await client.guilds.fetch(guildId).catch(() => null); if (!guild) return;
+  const guildId = process.env.DISCORD_GUILD_ID?.trim();
+  if (!guildId) return;
+
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) return;
+
   const member = await guild.members.fetch(discordUserId).catch(() => null);
   const boosting = Boolean(member?.premiumSince);
+
   if (boosting) {
-    if (!previouslyActive) await db.update(boosterLinksTable).set({ active: true, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
+    if (!previouslyActive) {
+      await db.update(boosterLinksTable)
+        .set({ active: true, updatedAt: new Date() })
+        .where(eq(boosterLinksTable.discordUserId, discordUserId));
+    }
     await executeRconCommand(grantCommand(steamId)).catch(() => null);
   } else if (previouslyActive) {
     await executeRconCommand(revokeCommand(steamId)).catch(() => null);
-    await db.update(boosterLinksTable).set({ active: false, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
-    logger.info({ discordUserId, steamId }, "Booster ended; VIP4 revoked");
+    await db.update(boosterLinksTable)
+      .set({ active: false, updatedAt: new Date() })
+      .where(eq(boosterLinksTable.discordUserId, discordUserId));
+    logger.info({ discordUserId, steamId }, "Booster ended; in-game benefit revoked");
   }
 }
 
 async function syncAll(client: Client): Promise<void> {
   const links = await db.select().from(boosterLinksTable);
-  for (const link of links) await syncOne(client, link.discordUserId, link.steamId, link.active).catch(err => logger.error({ err, discordUserId: link.discordUserId }, "Booster sync failed"));
+  for (const link of links) {
+    await syncOne(client, link.discordUserId, link.steamId, link.active).catch(err =>
+      logger.error({ err, discordUserId: link.discordUserId }, "Booster sync failed")
+    );
+  }
 }
 
 export async function startBoosterSystem(client: Client): Promise<void> {
-  if (started) return; started = true;
+  if (started) return;
+  started = true;
+
+  client.on(Events.InteractionCreate, async (interaction) => {
+    try {
+      if (interaction.isButton() && interaction.customId === "booster_verify") {
+        await handleBoosterVerifyButton(interaction);
+        return;
+      }
+      if (interaction.isModalSubmit() && interaction.customId === "booster_verify_modal") {
+        await handleBoosterVerifyModal(interaction);
+      }
+    } catch (err) {
+      logger.error({ err }, "Booster interaction failed");
+    }
+  });
+
   await setupPanel(client);
   await syncAll(client).catch(err => logger.error({ err }, "Initial booster sync failed"));
   setInterval(() => syncAll(client).catch(err => logger.error({ err }, "Booster sync failed")), 2 * 60_000);
-  logger.info("Booster verification panel and automatic VIP4 sync started");
+  logger.info("Booster verification panel and automatic in-game sync started");
 }
