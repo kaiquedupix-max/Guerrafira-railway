@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  ActivityType,
   ButtonBuilder,
   ButtonStyle,
   Client,
@@ -91,6 +92,13 @@ export async function startBot(): Promise<void> {
   client.once(Events.ClientReady, async (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot online");
     setDiscordClient(c);
+    c.user.setPresence({
+      status: "online",
+      activities: [{
+        name: "estatísticas do wipe • /leaderboard",
+        type: ActivityType.Watching,
+      }],
+    });
     await registerSlashCommands(c);
     startRconSync();
     startBanExpiryChecker(c);
