@@ -4,7 +4,7 @@ using Oxide.Core;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.0.2")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.0.3")]
     [Description("Emite eventos de kills, mortes, headshots, farm e craft para o leaderboard Guerra Fria via RCON/console.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
@@ -34,6 +34,15 @@ namespace Oxide.Plugins
             Emit(new LeaderboardEvent { @event = "ready" });
         }
 
+        private bool IsRealPlayer(BasePlayer player)
+        {
+            if (player == null || player.userID == 0)
+                return false;
+
+            var steamId = player.UserIDString;
+            return !string.IsNullOrEmpty(steamId) && steamId.StartsWith("7656119");
+        }
+
         private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
         {
             var victim = entity as BasePlayer;
@@ -41,7 +50,7 @@ namespace Oxide.Plugins
                 return;
 
             var attacker = info.InitiatorPlayer;
-            if (attacker == null || attacker.userID == 0 || victim.userID == 0)
+            if (!IsRealPlayer(attacker) || !IsRealPlayer(victim))
                 return;
 
             if (attacker.userID == victim.userID)
@@ -75,7 +84,7 @@ namespace Oxide.Plugins
 
         private void TrackGather(BasePlayer player, Item item)
         {
-            if (player == null || item == null || item.amount <= 0)
+            if (!IsRealPlayer(player) || item == null || item.amount <= 0)
                 return;
 
             Emit(new LeaderboardEvent
@@ -94,7 +103,7 @@ namespace Oxide.Plugins
                 return;
 
             var player = crafter.owner;
-            if (player == null)
+            if (!IsRealPlayer(player))
                 return;
 
             var shortname = item.info.shortname ?? string.Empty;
