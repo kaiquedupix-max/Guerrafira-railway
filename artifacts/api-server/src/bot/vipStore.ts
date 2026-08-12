@@ -9,6 +9,7 @@ import {
 } from "discord.js";
 import { VIP_TIERS, type VipTier } from "./vip.js";
 import { handleVipStoreBuy } from "./vipStorePurchase.js";
+import { startBoosterSystem } from "./booster.js";
 import { logger } from "../lib/logger.js";
 
 const STORE_MARKER = "Guerra Fria • Loja VIP";
@@ -119,6 +120,7 @@ function registerStoreInteractionHandler(client: Client): void {
 
 export async function setupVipStore(client: Client): Promise<void> {
   registerStoreInteractionHandler(client);
+  await startBoosterSystem(client).catch((err) => logger.error({ err }, "Failed to start booster system"));
 
   const channelId =
     process.env.DISCORD_VIP_STORE_CHANNEL_ID?.trim() ||
