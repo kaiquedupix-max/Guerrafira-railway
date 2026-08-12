@@ -116,14 +116,29 @@ const EXPLOSIVE_SHORTNAMES = new Set(["explosives", "explosive.timed", "grenade.
 export function parseCraftEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as GatherPayload | null;
   if (!obj?.steamid) return false;
-  const ev = eventName(obj); const lowerType = type.toLowerCase();
-  if (ev !== "craft" && !lowerType.includes("craft")) return false;
+  const ev = eventName(obj);
   const item = String(obj.item ?? "").toLowerCase();
+  const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
+  if (amount <= 0) return false;
+
+  if (ev === "raid_use") {
+    if (item !== "c4" && item !== "rocket") return false;
+    const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown" };
+    const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", updatedAt: sql`now()` };
+    if (item === "c4") { values.c4Used = amount; set.c4Used = sql`${playerStatsTable.c4Used} + ${amount}`; }
+    if (item === "rocket") { values.rocketsUsed = amount; set.rocketsUsed = sql`${playerStatsTable.rocketsUsed} + ${amount}`; }
+    db.insert(playerStatsTable)
+      .values(values as typeof playerStatsTable.$inferInsert)
+      .onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any })
+      .catch(err => logger.error({ err }, "recordRaidUse error"));
+    return true;
+  }
+
+  const lowerType = type.toLowerCase();
+  if (ev !== "craft" && !lowerType.includes("craft")) return false;
   const isGunpowder = item === "gunpowder";
   const isExplosive = EXPLOSIVE_SHORTNAMES.has(item);
   if (!isGunpowder && !isExplosive) return false;
-  const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
-  if (amount <= 0) return false;
 
   const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown" };
   const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", updatedAt: sql`now()` };
