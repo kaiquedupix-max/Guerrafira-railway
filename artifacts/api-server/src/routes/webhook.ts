@@ -2,9 +2,12 @@
  * Mercado Pago webhook handler.
  * Recebe TODOS os eventos em POST /webhook/mercadopago,
  * registra no Discord e processa pagamentos quando aplicável.
+ *
+ * Observação: a validação HMAC foi desativada por solicitação do administrador.
+ * Pagamentos só são ativados após consulta à API oficial do Mercado Pago e
+ * confirmação de status === "approved".
  */
 
-import crypto from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { EmbedBuilder } from "discord.js";
 import { eq } from "drizzle-orm";
@@ -34,51 +37,10 @@ function getDataId(req: Request, body: Record<string, unknown>): string {
   return "";
 }
 
-function validateSignature(req: Request, dataId: string): { configured: boolean; valid: boolean; reason?: string } {
-  const secret = process.env.MP_WEBHOOK_SECRET;
-  if (!secret) return { configured: false, valid: true, reason: "MP_WEBHOOK_SECRET não configurada" };
-
-  const xSignature = req.header("x-signature") ?? "";
-  const xRequestId = req.header("x-request-id") ?? "";
-
-  if (!xSignature) return { configured: true, valid: false, reason: "Header x-signature ausente" };
-
-  const parts = Object.fromEntries(
-    xSignature
-      .split(",")
-      .map((part) => part.trim().split("=", 2))
-      .filter(([key, value]) => Boolean(key && value)),
-  );
-
-  const ts = parts.ts ?? "";
-  const receivedHash = parts.v1 ?? "";
-  if (!ts || !receivedHash) {
-    return { configured: true, valid: false, reason: "x-signature sem ts ou v1" };
-  }
-
-  const pieces: string[] = [];
-  if (dataId) pieces.push(`id:${dataId.toLowerCase()};`);
-  if (xRequestId) pieces.push(`request-id:${xRequestId};`);
-  if (ts) pieces.push(`ts:${ts};`);
-  const manifest = pieces.join("");
-
-  const calculated = crypto.createHmac("sha256", secret).update(manifest).digest("hex");
-
-  try {
-    const a = Buffer.from(calculated, "hex");
-    const b = Buffer.from(receivedHash, "hex");
-    const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
-    return { configured: true, valid, reason: valid ? undefined : "Assinatura HMAC inválida" };
-  } catch {
-    return { configured: true, valid: false, reason: "Assinatura em formato inválido" };
-  }
-}
-
 async function sendDiscordWebhookLog(opts: {
   body: Record<string, unknown>;
   req: Request;
   dataId: string;
-  signature: { configured: boolean; valid: boolean; reason?: string };
   payment?: Record<string, unknown> | null;
 }): Promise<void> {
   const client = discordClient();
@@ -104,22 +66,16 @@ async function sendDiscordWebhookLog(opts: {
     return;
   }
 
-  const { body, req, dataId, signature, payment } = opts;
+  const { body, req, dataId, payment } = opts;
   const type = text(body.type, "desconhecido");
   const action = text(body.action, "sem ação");
   const liveMode = body.live_mode === true;
 
-  let color = signature.valid ? 0x3498db : 0xe74c3c;
+  let color = 0x3498db;
   const paymentStatus = payment?.status ? String(payment.status) : "";
   if (paymentStatus === "approved") color = 0x2ecc71;
   else if (paymentStatus === "rejected" || paymentStatus === "cancelled") color = 0xe74c3c;
   else if (paymentStatus === "pending" || paymentStatus === "in_process") color = 0xf1c40f;
-
-  const signatureLabel = !signature.configured
-    ? "⚠️ Secret não configurada"
-    : signature.valid
-      ? "✅ Válida"
-      : `❌ Inválida — ${signature.reason ?? "motivo desconhecido"}`;
 
   const rawJson = truncate(JSON.stringify(body, null, 2), 900);
 
@@ -131,7 +87,7 @@ async function sendDiscordWebhookLog(opts: {
       { name: "📨 Tipo", value: `\`${type}\``, inline: true },
       { name: "🆔 Data ID", value: `\`${dataId || "não informado"}\``, inline: true },
       { name: "🌐 Ambiente", value: liveMode ? "Produção" : "Teste", inline: true },
-      { name: "🔐 Assinatura", value: signatureLabel, inline: false },
+      { name: "🔐 Assinatura", value: "⚠️ Verificação desativada", inline: false },
       { name: "🔎 Request ID", value: `\`${truncate(req.header("x-request-id") ?? "não informado", 100)}\``, inline: false },
     )
     .setFooter({ text: "Guerra Fria • Mercado Pago Webhook" })
@@ -164,7 +120,10 @@ async function sendDiscordWebhookLog(opts: {
 
 async function fetchMpPayment(paymentId: string): Promise<Record<string, unknown> | null> {
   const token = process.env.MP_ACCESS_TOKEN;
-  if (!token) return null;
+  if (!token) {
+    logger.error("MP_ACCESS_TOKEN não configurado — não é possível confirmar pagamento");
+    return null;
+  }
 
   const res = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -181,19 +140,13 @@ async function fetchMpPayment(paymentId: string): Promise<Record<string, unknown
 router.post("/mercadopago", async (req: Request, res: Response) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const dataId = getDataId(req, body);
-  const signature = validateSignature(req, dataId);
 
   logger.info(
-    { type: body.type, action: body.action, dataId, signatureValid: signature.valid },
+    { type: body.type, action: body.action, dataId, signatureValidation: "disabled" },
     "MP webhook received",
   );
 
-  if (signature.configured && !signature.valid) {
-    await sendDiscordWebhookLog({ body, req, dataId, signature });
-    res.status(401).json({ received: false, error: "invalid_signature" });
-    return;
-  }
-
+  // Sempre reconhece o recebimento do webhook.
   res.status(200).json({ received: true });
 
   try {
@@ -202,13 +155,15 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     const isPaymentNotification =
       type === "payment" || (typeof action === "string" && action.startsWith("payment."));
 
+    // Todos os eventos continuam sendo registrados no Discord.
     if (!isPaymentNotification || !dataId) {
-      await sendDiscordWebhookLog({ body, req, dataId, signature });
+      await sendDiscordWebhookLog({ body, req, dataId });
       return;
     }
 
+    // A assinatura não é validada. O status do pagamento é confirmado pela API oficial.
     const mpData = await fetchMpPayment(dataId);
-    await sendDiscordWebhookLog({ body, req, dataId, signature, payment: mpData });
+    await sendDiscordWebhookLog({ body, req, dataId, payment: mpData });
 
     if (!mpData) return;
 
