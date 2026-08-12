@@ -39,10 +39,30 @@ interface CombatPayload extends Record<string, unknown> {
   headshot?: boolean; is_headshot?: boolean; weapon?: string; distance?: number; timestamp?: number;
 }
 
+function processArrowHit(obj: CombatPayload): boolean {
+  if (typeof obj.attacker_steamid !== "string" || typeof obj.victim_steamid !== "string") return false;
+  analyzeArrowHit({
+    attackerSteamId: obj.attacker_steamid,
+    attackerName: typeof obj.attacker === "string" ? obj.attacker : "Unknown",
+    victimSteamId: obj.victim_steamid,
+    victimName: typeof obj.victim === "string" ? obj.victim : "Unknown",
+    headshot: obj.headshot === true,
+    weapon: typeof obj.weapon === "string" ? obj.weapon : undefined,
+    bone: typeof obj.bone === "string" ? obj.bone : undefined,
+    distance: Number.isFinite(Number(obj.distance)) ? Number(obj.distance) : undefined,
+    timestamp: Number.isFinite(Number(obj.timestamp)) ? Number(obj.timestamp) : undefined,
+  }).catch(err => logger.error({ err }, "arrow detector error"));
+  return true;
+}
+
 export function parseKillEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as CombatPayload | null;
   if (!obj) return false;
   const ev = eventName(obj);
+
+  // Usa o mesmo bridge RCON das kills para a telemetria de flechas.
+  if (ev === "arrow_hit") return processArrowHit(obj);
+
   const lowerType = type.toLowerCase();
   if (!(ev === "kill" || lowerType.includes("kill") || lowerType.includes("death") || lowerType.includes("combat") || lowerType === "generic" || type === "")) return false;
 
@@ -73,19 +93,7 @@ export function parseKillEvent(type: string, message: string): boolean {
 export function parseArrowHitEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as CombatPayload | null;
   if (!obj || eventName(obj) !== "arrow_hit") return false;
-  if (typeof obj.attacker_steamid !== "string" || typeof obj.victim_steamid !== "string") return false;
-  analyzeArrowHit({
-    attackerSteamId: obj.attacker_steamid,
-    attackerName: typeof obj.attacker === "string" ? obj.attacker : "Unknown",
-    victimSteamId: obj.victim_steamid,
-    victimName: typeof obj.victim === "string" ? obj.victim : "Unknown",
-    headshot: obj.headshot === true,
-    weapon: typeof obj.weapon === "string" ? obj.weapon : undefined,
-    bone: typeof obj.bone === "string" ? obj.bone : undefined,
-    distance: Number.isFinite(Number(obj.distance)) ? Number(obj.distance) : undefined,
-    timestamp: Number.isFinite(Number(obj.timestamp)) ? Number(obj.timestamp) : undefined,
-  }).catch(err => logger.error({ err }, "arrow detector error"));
-  return true;
+  return processArrowHit(obj);
 }
 
 interface GatherPayload extends Record<string, unknown> { event?: string; steamid?: string; player?: string; item?: string; amount?: number; }
