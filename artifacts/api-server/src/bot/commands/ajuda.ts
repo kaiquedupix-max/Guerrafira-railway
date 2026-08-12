@@ -74,7 +74,15 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           value: [
             "`/listaplayer` — consulta jogadores registrados pelo bot, incluindo online e offline.",
             "↳ Permite pesquisar jogadores e consultar/copiar o SteamID.",
-            "`/verificar @usuário` — verifica um membro e atribui o cargo de jogador verificado.",
+            "`/verificar` — verifica um jogador, dá o cargo Verificado no Discord e adiciona o SteamID ao grupo `vr` no Rust.",
+          ].join("\n"),
+        },
+        {
+          name: "🚀 BOOSTER",
+          value: [
+            "Painel Booster — vincula Discord + SteamID e adiciona o jogador ao grupo `bs` no Rust.",
+            "`/removerbooster steamid` — remove manualmente o vínculo Booster.",
+            "↳ Remove o SteamID do grupo `bs`, apaga o vínculo do banco e libera uma nova verificação.",
           ].join("\n"),
         },
         {
