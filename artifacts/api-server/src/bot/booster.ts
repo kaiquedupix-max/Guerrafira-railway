@@ -23,12 +23,12 @@ const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/kaiquedupix
 let started = false;
 
 function grantCommand(steamId: string): string {
-  const template = process.env.BOOSTER_GAME_ADD_CMD?.trim() || "oxide.grant user {steamid} vip4";
+  const template = process.env.BOOSTER_GAME_ADD_CMD?.trim() || "oxide.grant {steamid} bs";
   return template.replace(/\{steam[Ii][Dd]\}/g, steamId);
 }
 
 function revokeCommand(steamId: string): string {
-  const template = process.env.BOOSTER_GAME_REMOVE_CMD?.trim() || "oxide.revoke user {steamid} vip4";
+  const template = process.env.BOOSTER_GAME_REMOVE_CMD?.trim() || "oxide.revoke {steamid} bs";
   return template.replace(/\{steam[Ii][Dd]\}/g, steamId);
 }
 
@@ -178,11 +178,18 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
     updatedAt: new Date(),
   });
 
-  await executeRconCommand(grantCommand(steamId));
+  const command = grantCommand(steamId);
+  const result = await executeRconCommand(command).catch((err) => {
+    logger.error({ err, steamId, command }, "Failed to grant Booster permission in Rust");
+    return null;
+  });
+
   await interaction.editReply(
     `🚀 **Booster verificado com sucesso!**\n\n` +
     `🎮 SteamID: \`${steamId}\`\n` +
-    "✅ Seu **Booster foi ativado no jogo**.\n" +
+    (result === null
+      ? "⚠️ Booster salvo, mas o RCON não confirmou a permissão **bs** no jogo.\n"
+      : "✅ Seu **Booster foi ativado no jogo** com a permissão **bs**.\n") +
     "📦 Dentro do Rust, use **`/kit`** para acessar seu kit.\n\n" +
     "🔒 Este SteamID ficou vinculado à sua conta do Discord.\n" +
     "Enquanto você continuar impulsionando o Discord, seus benefícios permanecerão ativos."
@@ -205,13 +212,17 @@ async function syncOne(client: Client, discordUserId: string, steamId: string, p
         .set({ active: true, updatedAt: new Date() })
         .where(eq(boosterLinksTable.discordUserId, discordUserId));
     }
-    await executeRconCommand(grantCommand(steamId)).catch(() => null);
+    await executeRconCommand(grantCommand(steamId)).catch((err) =>
+      logger.error({ err, discordUserId, steamId }, "Failed to grant Booster permission during sync")
+    );
   } else if (previouslyActive) {
-    await executeRconCommand(revokeCommand(steamId)).catch(() => null);
+    await executeRconCommand(revokeCommand(steamId)).catch((err) =>
+      logger.error({ err, discordUserId, steamId }, "Failed to revoke Booster permission during sync")
+    );
     await db.update(boosterLinksTable)
       .set({ active: false, updatedAt: new Date() })
       .where(eq(boosterLinksTable.discordUserId, discordUserId));
-    logger.info({ discordUserId, steamId }, "Booster ended; in-game benefit revoked");
+    logger.info({ discordUserId, steamId }, "Booster ended; bs permission revoked in-game");
   }
 }
 
