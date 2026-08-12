@@ -18,6 +18,7 @@ import { executeRconCommand } from "./utils/rcon.js";
 import { logger } from "../lib/logger.js";
 
 const PANEL_MARKER = "Guerra Fria • Verificação Booster";
+const DEFAULT_BOOSTER_CHANNEL_ID = "1499084541548298412";
 const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/kaiquedupix-max/Imagens-gf/refs/heads/main/EBC01249-5174-40E9-B18B-8841D151C1A5.png";
 let started = false;
 
@@ -32,13 +33,24 @@ function revokeCommand(steamId: string): string {
 }
 
 async function setupPanel(client: Client): Promise<void> {
-  const channelId = process.env.DISCORD_BOOSTER_CHANNEL_ID?.trim();
-  if (!channelId) { logger.warn("DISCORD_BOOSTER_CHANNEL_ID not set — booster panel disabled"); return; }
-  const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
-  if (!channel?.isSendable()) { logger.error({ channelId }, "Booster panel channel unavailable"); return; }
+  const channelId = process.env.DISCORD_BOOSTER_CHANNEL_ID?.trim() || DEFAULT_BOOSTER_CHANNEL_ID;
+  logger.info({ channelId }, "Initializing Booster verification panel");
+
+  const channel = await client.channels.fetch(channelId).catch((err) => {
+    logger.error({ err, channelId }, "Failed to fetch Booster panel channel");
+    return null;
+  }) as TextChannel | null;
+
+  if (!channel?.isTextBased() || !channel.isSendable()) {
+    logger.error({ channelId }, "Booster panel channel not found or bot cannot send messages there");
+    return;
+  }
 
   const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
-  const old = recent?.find(m => m.author.id === client.user?.id && m.embeds.some(e => e.footer?.text?.includes(PANEL_MARKER)));
+  const old = recent?.find(m =>
+    m.author.id === client.user?.id &&
+    m.embeds.some(e => e.footer?.text?.includes(PANEL_MARKER))
+  );
   const boosterImageUrl = process.env.BOOSTER_IMAGE_URL?.trim() || DEFAULT_BOOSTER_IMAGE_URL;
 
   const embed = new EmbedBuilder()
@@ -70,8 +82,13 @@ async function setupPanel(client: Client): Promise<void> {
       .setStyle(ButtonStyle.Primary)
   );
 
-  if (old) await old.edit({ embeds: [embed], components: [row] });
-  else await channel.send({ embeds: [embed], components: [row] });
+  if (old) {
+    await old.edit({ embeds: [embed], components: [row] });
+    logger.info({ channelId, messageId: old.id }, "Booster verification panel updated");
+  } else {
+    const sent = await channel.send({ embeds: [embed], components: [row] });
+    logger.info({ channelId, messageId: sent.id }, "Booster verification panel created");
+  }
 }
 
 export async function handleBoosterVerifyButton(interaction: ButtonInteraction): Promise<void> {
@@ -167,7 +184,6 @@ async function syncAll(client: Client): Promise<void> {
 
 export async function startBoosterSystem(client: Client): Promise<void> {
   if (started) return;
-  started = true;
 
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
@@ -184,6 +200,8 @@ export async function startBoosterSystem(client: Client): Promise<void> {
   });
 
   await setupPanel(client);
+  started = true;
+
   await syncAll(client).catch(err => logger.error({ err }, "Initial booster sync failed"));
   setInterval(() => syncAll(client).catch(err => logger.error({ err }, "Booster sync failed")), 2 * 60_000);
   logger.info("Booster verification panel and automatic in-game sync started");
