@@ -1,156 +1,103 @@
 import {
-  SlashCommandBuilder,
-  type ChatInputCommandInteraction,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  type ButtonInteraction,
   type Client,
   type GuildMember,
+  type ModalSubmitInteraction,
+  type TextChannel,
 } from "discord.js";
 import { db, boosterLinksTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { executeRconCommand } from "./utils/rcon.js";
 import { logger } from "../lib/logger.js";
 
+const PANEL_MARKER = "Guerra Fria • Verificação Booster";
 let started = false;
 
-function gameCommand(template: string | undefined, steamId: string): string | null {
-  if (!template?.trim()) return null;
+function grantCommand(steamId: string): string {
+  const template = process.env.BOOSTER_GAME_ADD_CMD?.trim() || "oxide.grant user {steamid} vip4";
   return template.replace(/\{steam[Ii][Dd]\}/g, steamId);
 }
 
-async function setBoosterBenefits(member: GuildMember, steamId: string, active: boolean): Promise<void> {
-  const customRoleId = process.env.DISCORD_BOOSTER_ROLE_ID?.trim();
+function revokeCommand(steamId: string): string {
+  const template = process.env.BOOSTER_GAME_REMOVE_CMD?.trim() || "oxide.revoke user {steamid} vip4";
+  return template.replace(/\{steam[Ii][Dd]\}/g, steamId);
+}
 
-  if (customRoleId) {
-    try {
-      if (active && !member.roles.cache.has(customRoleId)) {
-        await member.roles.add(customRoleId, "Sincronização automática de Booster");
-      } else if (!active && member.roles.cache.has(customRoleId)) {
-        await member.roles.remove(customRoleId, "Impulso do servidor encerrado");
-      }
-    } catch (err) {
-      logger.error({ err, discordUserId: member.id, customRoleId }, "Failed to sync booster Discord role");
-    }
-  }
+async function setupPanel(client: Client): Promise<void> {
+  const channelId = process.env.DISCORD_BOOSTER_CHANNEL_ID?.trim();
+  if (!channelId) { logger.warn("DISCORD_BOOSTER_CHANNEL_ID not set — booster panel disabled"); return; }
+  const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
+  if (!channel?.isSendable()) { logger.error({ channelId }, "Booster panel channel unavailable"); return; }
 
-  const template = active ? process.env.BOOSTER_GAME_ADD_CMD : process.env.BOOSTER_GAME_REMOVE_CMD;
-  const command = gameCommand(template, steamId);
-  if (command) {
-    await executeRconCommand(command).catch(() => null);
-    logger.info({ active, steamId, command }, "Booster game benefit synchronized");
+  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  const old = recent?.find(m => m.author.id === client.user?.id && m.embeds.some(e => e.footer?.text?.includes(PANEL_MARKER)));
+  const embed = new EmbedBuilder().setColor(0xf47fff).setTitle("🚀 VERIFICAR BOOSTER")
+    .setDescription("Impulsiona o **Discord Guerra Fria**? Verifique seu Booster e receba automaticamente o benefício **VIP4** dentro do servidor.\n\n**Como funciona:**\n🚀 Você precisa estar impulsionando este servidor no momento da verificação.\n🎮 Clique no botão abaixo e informe seu **SteamID64**.\n✅ O bot confirma seu Booster e libera o benefício no Rust.\n🔄 Enquanto o impulso estiver ativo, seu acesso será mantido.\n❌ Se você parar de impulsionar, o benefício será removido automaticamente.")
+    .setFooter({ text: PANEL_MARKER });
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("booster_verify").setLabel("Verificar Booster").setEmoji("🚀").setStyle(ButtonStyle.Success));
+  if (old) await old.edit({ embeds: [embed], components: [row] });
+  else await channel.send({ embeds: [embed], components: [row] });
+}
+
+export async function handleBoosterVerifyButton(interaction: ButtonInteraction): Promise<void> {
+  if (!interaction.guild) return;
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member?.premiumSince) {
+    await interaction.reply({ content: "❌ Você não está impulsionando o servidor no momento. Inicie o Booster e tente novamente.", ephemeral: true }); return;
   }
+  const modal = new ModalBuilder().setCustomId("booster_verify_modal").setTitle("Verificar Booster");
+  const steam = new TextInputBuilder().setCustomId("steamid").setLabel("Seu SteamID64").setPlaceholder("7656119XXXXXXXXXX").setMinLength(17).setMaxLength(17).setRequired(true).setStyle(TextInputStyle.Short);
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(steam));
+  await interaction.showModal(modal);
+}
+
+export async function handleBoosterVerifyModal(interaction: ModalSubmitInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  if (!interaction.guild) return;
+  const steamId = interaction.fields.getTextInputValue("steamid").trim();
+  if (!/^\d{17}$/.test(steamId)) { await interaction.editReply("❌ SteamID64 inválido. Informe exatamente os 17 números."); return; }
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member?.premiumSince) { await interaction.editReply("❌ Seu Booster não está ativo no Discord."); return; }
+
+  const existing = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
+  if (existing.length) await db.update(boosterLinksTable).set({ steamId, active: true, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
+  else await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, updatedAt: new Date() });
+
+  await executeRconCommand(grantCommand(steamId));
+  await interaction.editReply(`🚀 **Booster verificado com sucesso!**\n\n🎮 SteamID: \`${steamId}\`\n🎁 Benefício **VIP4** concedido no Guerra Fria.\n\nEnquanto você continuar impulsionando o Discord, o benefício permanecerá ativo.`);
 }
 
 async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean): Promise<void> {
-  const guildId = process.env.DISCORD_GUILD_ID?.trim();
-  if (!guildId) return;
-
-  const guild = await client.guilds.fetch(guildId).catch(() => null);
-  if (!guild) return;
-
+  const guildId = process.env.DISCORD_GUILD_ID?.trim(); if (!guildId) return;
+  const guild = await client.guilds.fetch(guildId).catch(() => null); if (!guild) return;
   const member = await guild.members.fetch(discordUserId).catch(() => null);
   const boosting = Boolean(member?.premiumSince);
-
-  if (!member) {
-    if (previouslyActive) {
-      const removeCmd = gameCommand(process.env.BOOSTER_GAME_REMOVE_CMD, steamId);
-      if (removeCmd) await executeRconCommand(removeCmd).catch(() => null);
-      await db.update(boosterLinksTable).set({ active: false, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
-    }
-    return;
-  }
-
-  if (boosting !== previouslyActive) {
-    await setBoosterBenefits(member, steamId, boosting);
-    await db.update(boosterLinksTable).set({ active: boosting, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
-    logger.info({ discordUserId, steamId, boosting }, "Booster status changed");
-  } else if (boosting) {
-    // Reaplica silenciosamente para recuperar benefícios após restart/wipe do servidor.
-    await setBoosterBenefits(member, steamId, true);
+  if (boosting) {
+    if (!previouslyActive) await db.update(boosterLinksTable).set({ active: true, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
+    await executeRconCommand(grantCommand(steamId)).catch(() => null);
+  } else if (previouslyActive) {
+    await executeRconCommand(revokeCommand(steamId)).catch(() => null);
+    await db.update(boosterLinksTable).set({ active: false, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
+    logger.info({ discordUserId, steamId }, "Booster ended; VIP4 revoked");
   }
 }
 
 async function syncAll(client: Client): Promise<void> {
   const links = await db.select().from(boosterLinksTable);
-  for (const link of links) {
-    await syncOne(client, link.discordUserId, link.steamId, link.active).catch((err) =>
-      logger.error({ err, discordUserId: link.discordUserId }, "Booster sync failed")
-    );
-  }
-}
-
-async function handleBoosterCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-
-  if (!interaction.guild) {
-    await interaction.editReply("❌ Use este comando dentro do servidor Guerra Fria.");
-    return;
-  }
-
-  const steamId = interaction.options.getString("steamid", true).trim();
-  if (!/^\d{17}$/.test(steamId)) {
-    await interaction.editReply("❌ SteamID64 inválido. Informe os 17 números do seu SteamID64.");
-    return;
-  }
-
-  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-  if (!member?.premiumSince) {
-    await interaction.editReply("❌ Você precisa estar impulsionando o servidor neste momento para ativar o Kit Booster.");
-    return;
-  }
-
-  const existing = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
-  if (existing.length) {
-    await db.update(boosterLinksTable)
-      .set({ steamId, active: true, updatedAt: new Date() })
-      .where(eq(boosterLinksTable.discordUserId, interaction.user.id));
-  } else {
-    await db.insert(boosterLinksTable).values({
-      discordUserId: interaction.user.id,
-      steamId,
-      active: true,
-      updatedAt: new Date(),
-    });
-  }
-
-  await setBoosterBenefits(member, steamId, true);
-  await interaction.editReply(
-    "🚀 **Booster ativado com sucesso!**\n\n" +
-    `🎮 SteamID vinculado: \`${steamId}\`\n` +
-    "🎁 Seu benefício/Kit Booster foi ativado no servidor.\n\n" +
-    "Enquanto você continuar impulsionando o Discord, o benefício será mantido. Se o impulso for encerrado, o cargo personalizado e o acesso in-game serão removidos automaticamente."
-  );
-}
-
-async function registerCommand(client: Client): Promise<void> {
-  const guildId = process.env.DISCORD_GUILD_ID?.trim();
-  if (!guildId) return;
-
-  const guild = await client.guilds.fetch(guildId).catch(() => null);
-  if (!guild) return;
-
-  const data = new SlashCommandBuilder()
-    .setName("booster")
-    .setDescription("Vincula seu SteamID e ativa o Kit Booster enquanto você impulsionar o servidor")
-    .addStringOption((o) => o.setName("steamid").setDescription("Seu SteamID64 de 17 dígitos").setRequired(true));
-
-  const commands = await guild.commands.fetch().catch(() => null);
-  const existing = commands?.find((c) => c.name === "booster");
-  if (existing) await existing.edit(data.toJSON()).catch(() => {});
-  else await guild.commands.create(data.toJSON()).catch((err) => logger.error({ err }, "Failed to register /booster"));
+  for (const link of links) await syncOne(client, link.discordUserId, link.steamId, link.active).catch(err => logger.error({ err, discordUserId: link.discordUserId }, "Booster sync failed"));
 }
 
 export async function startBoosterSystem(client: Client): Promise<void> {
-  if (started) return;
-  started = true;
-
-  await registerCommand(client);
-
-  client.on("interactionCreate", async (interaction) => {
-    if (!interaction.isChatInputCommand() || interaction.commandName !== "booster") return;
-    await handleBoosterCommand(interaction).catch((err) => logger.error({ err }, "Booster command failed"));
-  });
-
-  await syncAll(client).catch((err) => logger.error({ err }, "Initial booster sync failed"));
-  setInterval(() => syncAll(client).catch((err) => logger.error({ err }, "Booster sync failed")), 2 * 60_000);
-
-  logger.info("Automatic booster system started");
+  if (started) return; started = true;
+  await setupPanel(client);
+  await syncAll(client).catch(err => logger.error({ err }, "Initial booster sync failed"));
+  setInterval(() => syncAll(client).catch(err => logger.error({ err }, "Booster sync failed")), 2 * 60_000);
+  logger.info("Booster verification panel and automatic VIP4 sync started");
 }
