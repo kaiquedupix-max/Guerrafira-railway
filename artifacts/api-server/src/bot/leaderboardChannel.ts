@@ -4,7 +4,7 @@
  * Updates every 10 minutes.
  */
 
-import { EmbedBuilder, type Client, type TextChannel } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Client, type TextChannel } from "discord.js";
 import { desc, gt, sql } from "drizzle-orm";
 import { db, playerStatsTable } from "@workspace/db";
 import { logger } from "../lib/logger.js";
@@ -12,9 +12,20 @@ import { logger } from "../lib/logger.js";
 const INTERVAL = 10 * 60_000;
 const MEDALS = ["🥇", "🥈", "🥉"];
 const medal = (i: number) => MEDALS[i] ?? `**${i + 1}.**`;
+const LEADERBOARD_URL = process.env.LEADERBOARD_URL?.trim() || "https://guerrafria.up.railway.app";
 
 function fmtNum(n: number, dec = 0): string {
   return n.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function leaderboardButton() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("Abrir Leaderboard Completo")
+      .setEmoji("🌐")
+      .setStyle(ButtonStyle.Link)
+      .setURL(LEADERBOARD_URL),
+  );
 }
 
 async function buildEmbeds(): Promise<EmbedBuilder[]> {
@@ -78,11 +89,13 @@ async function buildEmbeds(): Promise<EmbedBuilder[]> {
 
   return [
     new EmbedBuilder()
-      .setColor(0x2c2f33)
+      .setColor(0x8b5cf6)
       .setTitle("📊  Leaderboard — Guerra Fria 2X")
       .setDescription(
         "Rankings atualizados automaticamente a cada **10 minutos**.\n" +
-        "Use `/leaderboard` para ver uma categoria específica.\n\u200b",
+        "Use `/leaderboard` para consultar uma categoria diretamente no Discord.\n\n" +
+        "🌐 **Quer ver todas as estatísticas detalhadas deste wipe?**\n" +
+        "Abra o Leaderboard Oficial no navegador pelo botão abaixo.\n\u200b",
       )
       .setImage("https://raw.githubusercontent.com/kaiquedupix-max/Guerrafira-railway/main/assets/leaderboard-banner.png")
       .setTimestamp(),
@@ -125,11 +138,13 @@ async function updateChannel(client: Client): Promise<void> {
     : [];
 
   if (botMsgs.length === embeds.length) {
-    await Promise.all(embeds.map((embed, i) => botMsgs[i]!.edit({ embeds: [embed] })));
+    await Promise.all(embeds.map((embed, i) => botMsgs[i]!.edit({ embeds: [embed], components: i === 0 ? [leaderboardButton()] : [] })));
     logger.info({ channelId }, "Leaderboard channel updated");
   } else {
     for (const m of botMsgs) await m.delete().catch(() => {});
-    for (const embed of embeds) await ch.send({ embeds: [embed] });
+    for (let i = 0; i < embeds.length; i++) {
+      await ch.send({ embeds: [embeds[i]!], components: i === 0 ? [leaderboardButton()] : [] });
+    }
     logger.info({ channelId }, "Leaderboard channel posted fresh");
   }
 }
