@@ -1,70 +1,85 @@
 /**
- * Kill / death / headshot tracker via RCON broadcast events.
+ * Guerra Fria leaderboard tracker.
  *
- * Rust servers with Statistics or Leaderboard plugins emit kill events as JSON
- * broadcasts. Without a plugin, raw game output contains death messages.
- * This module handles both formats and upserts into player_stats.
+ * Receives JSON events emitted by the Rust plugin through server console/RCON.
+ * Supported events:
+ *   {"event":"kill","attacker":"Name","attacker_steamid":"76561...","victim":"Name","victim_steamid":"76561...","headshot":true}
+ *   {"event":"gather","steamid":"76561...","player":"Name","item":"stones","amount":1000}
+ *   {"event":"craft","steamid":"76561...","player":"Name","item":"explosive.timed","amount":1}
  *
- * Supported plugin JSON formats:
- *   {"attacker":"Name","attacker_steamid":"76561...","victim":"Name","victim_steamid":"76561...","weapon":"...","bodypart":"head"}
- *   {"killer_id":"76561...","killer":"Name","victim_id":"76561...","victim":"Name","headshot":true,"weapon":"..."}
+ * Legacy payload formats are still accepted for compatibility.
  */
 
 import { db, playerStatsTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 
-// ─── Upsert helpers ──────────────────────────────────────────────────────────
+function extractJson(message: string): Record<string, unknown> | null {
+  const start = message.indexOf("{");
+  const end = message.lastIndexOf("}");
+  if (start < 0 || end < start) return null;
+
+  try {
+    const parsed = JSON.parse(message.slice(start, end + 1));
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function eventName(obj: Record<string, unknown>): string {
+  const raw = obj.event ?? obj.type ?? obj.event_type;
+  return typeof raw === "string" ? raw.toLowerCase() : "";
+}
+
 async function recordKill(opts: {
   killerSteamId: string;
-  killerName:    string;
+  killerName: string;
   victimSteamId: string;
-  victimName:    string;
-  headshot:      boolean;
+  victimName: string;
+  headshot: boolean;
 }): Promise<void> {
   const { killerSteamId, killerName, victimSteamId, victimName, headshot } = opts;
 
   await Promise.all([
-    // Attacker gets kill (+ headshot if applicable)
     db
       .insert(playerStatsTable)
       .values({
-        steamId:    killerSteamId,
+        steamId: killerSteamId,
         playerName: killerName,
-        kills:      1,
-        headshots:  headshot ? 1 : 0,
+        kills: 1,
+        headshots: headshot ? 1 : 0,
       })
       .onConflictDoUpdate({
         target: playerStatsTable.steamId,
         set: {
           playerName: killerName,
-          kills:      sql`${playerStatsTable.kills} + 1`,
-          headshots:  sql`${playerStatsTable.headshots} + ${headshot ? 1 : 0}`,
-          updatedAt:  sql`now()`,
+          kills: sql`${playerStatsTable.kills} + 1`,
+          headshots: sql`${playerStatsTable.headshots} + ${headshot ? 1 : 0}`,
+          updatedAt: sql`now()`,
         },
       }),
 
-    // Victim gets a death
     db
       .insert(playerStatsTable)
       .values({
-        steamId:    victimSteamId,
+        steamId: victimSteamId,
         playerName: victimName,
-        deaths:     1,
+        deaths: 1,
       })
       .onConflictDoUpdate({
         target: playerStatsTable.steamId,
         set: {
           playerName: victimName,
-          deaths:     sql`${playerStatsTable.deaths} + 1`,
-          updatedAt:  sql`now()`,
+          deaths: sql`${playerStatsTable.deaths} + 1`,
+          updatedAt: sql`now()`,
         },
       }),
   ]);
 }
 
-// ─── Format 1: Statistics / Leaderboard plugin ────────────────────────────────
 interface KillPayloadA {
+  event?: string;
   attacker?: string;
   attacker_steamid?: string;
   victim?: string;
@@ -74,6 +89,7 @@ interface KillPayloadA {
 }
 
 interface KillPayloadB {
+  event?: string;
   killer?: string;
   killer_id?: string;
   victim?: string;
@@ -83,103 +99,140 @@ interface KillPayloadB {
 }
 
 export function parseKillEvent(type: string, message: string): boolean {
-  // Only act on types that look like kill events
+  const obj = extractJson(message) as (KillPayloadA & KillPayloadB & Record<string, unknown>) | null;
+  if (!obj) return false;
+
+  const ev = eventName(obj);
   const lowerType = type.toLowerCase();
-  const isKillType =
+  const looksLikeKill =
+    ev === "kill" ||
     lowerType.includes("kill") ||
     lowerType.includes("death") ||
     lowerType.includes("combat") ||
-    lowerType === "generic"; // some plugins use generic
+    lowerType === "generic" ||
+    type === "";
 
-  if (!isKillType && type !== "") return false;
+  if (!looksLikeKill) return false;
 
-  // Try JSON parse
-  try {
-    const obj = JSON.parse(message) as KillPayloadA & KillPayloadB;
+  if (obj.attacker_steamid && obj.victim_steamid) {
+    const headshot =
+      obj.headshot === true ||
+      (typeof obj.bodypart === "string" &&
+        (obj.bodypart.toLowerCase().includes("head") || obj.bodypart.toLowerCase() === "skull"));
 
-    // Format A: attacker_steamid / victim_steamid
-    if (obj.attacker_steamid && obj.victim_steamid) {
-      const headshot =
-        obj.headshot === true ||
-        (typeof obj.bodypart === "string" &&
-          (obj.bodypart.toLowerCase().includes("head") || obj.bodypart === "skull"));
-      recordKill({
-        killerSteamId: obj.attacker_steamid,
-        killerName:    obj.attacker ?? "Unknown",
-        victimSteamId: obj.victim_steamid,
-        victimName:    obj.victim ?? "Unknown",
-        headshot,
-      }).catch((err) => logger.error({ err }, "recordKill error"));
-      return true;
-    }
+    recordKill({
+      killerSteamId: obj.attacker_steamid,
+      killerName: obj.attacker ?? "Unknown",
+      victimSteamId: obj.victim_steamid,
+      victimName: obj.victim ?? "Unknown",
+      headshot,
+    }).catch((err) => logger.error({ err }, "recordKill error"));
+    return true;
+  }
 
-    // Format B: killer_id / victim_id
-    if (obj.killer_id && obj.victim_id) {
-      const headshot = obj.headshot === true || obj.is_headshot === true;
-      recordKill({
-        killerSteamId: obj.killer_id,
-        killerName:    obj.killer ?? "Unknown",
-        victimSteamId: obj.victim_id,
-        victimName:    obj.victim ?? "Unknown",
-        headshot,
-      }).catch((err) => logger.error({ err }, "recordKill error"));
-      return true;
-    }
-  } catch {
-    // Not JSON — ignore; without a plugin kill events aren't reliable text
+  if (obj.killer_id && obj.victim_id) {
+    const headshot = obj.headshot === true || obj.is_headshot === true;
+    recordKill({
+      killerSteamId: obj.killer_id,
+      killerName: obj.killer ?? "Unknown",
+      victimSteamId: obj.victim_id,
+      victimName: obj.victim ?? "Unknown",
+      headshot,
+    }).catch((err) => logger.error({ err }, "recordKill error"));
+    return true;
   }
 
   return false;
 }
 
-// ─── Resource / craft tracking (requires plugin) ─────────────────────────────
-interface GatherPayload { steamid?: string; player?: string; amount?: number }
-interface CraftPayload  { steamid?: string; player?: string; item?: string; amount?: number }
-
-export function parseGatherEvent(type: string, message: string): boolean {
-  if (!type.toLowerCase().includes("gather") && !type.toLowerCase().includes("resource")) return false;
-  try {
-    const obj = JSON.parse(message) as GatherPayload;
-    if (!obj.steamid) return false;
-    const amount = obj.amount ?? 1;
-    db
-      .insert(playerStatsTable)
-      .values({ steamId: obj.steamid, playerName: obj.player ?? "Unknown", resourcesGathered: amount })
-      .onConflictDoUpdate({
-        target: playerStatsTable.steamId,
-        set: {
-          playerName:        obj.player ?? "Unknown",
-          resourcesGathered: sql`${playerStatsTable.resourcesGathered} + ${amount}`,
-          updatedAt:         sql`now()`,
-        },
-      })
-      .catch((err) => logger.error({ err }, "recordGather error"));
-    return true;
-  } catch { return false; }
+interface GatherPayload extends Record<string, unknown> {
+  event?: string;
+  steamid?: string;
+  player?: string;
+  item?: string;
+  amount?: number;
 }
 
+interface CraftPayload extends Record<string, unknown> {
+  event?: string;
+  steamid?: string;
+  player?: string;
+  item?: string;
+  amount?: number;
+}
+
+export function parseGatherEvent(type: string, message: string): boolean {
+  const obj = extractJson(message) as GatherPayload | null;
+  if (!obj?.steamid) return false;
+
+  const ev = eventName(obj);
+  const lowerType = type.toLowerCase();
+  if (ev !== "gather" && !lowerType.includes("gather") && !lowerType.includes("resource")) return false;
+
+  const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
+  if (amount <= 0) return false;
+
+  db
+    .insert(playerStatsTable)
+    .values({
+      steamId: obj.steamid,
+      playerName: obj.player ?? "Unknown",
+      resourcesGathered: amount,
+    })
+    .onConflictDoUpdate({
+      target: playerStatsTable.steamId,
+      set: {
+        playerName: obj.player ?? "Unknown",
+        resourcesGathered: sql`${playerStatsTable.resourcesGathered} + ${amount}`,
+        updatedAt: sql`now()`,
+      },
+    })
+    .catch((err) => logger.error({ err }, "recordGather error"));
+
+  return true;
+}
+
+const EXPLOSIVE_SHORTNAMES = new Set([
+  "explosives",
+  "explosive.timed",
+  "grenade.f1",
+  "grenade.beancan",
+  "ammo.rocket.basic",
+  "ammo.rocket.hv",
+  "ammo.rocket.fire",
+  "ammo.rifle.explosive",
+  "surveycharge",
+]);
+
 export function parseCraftEvent(type: string, message: string): boolean {
-  if (!type.toLowerCase().includes("craft")) return false;
-  try {
-    const obj = JSON.parse(message) as CraftPayload;
-    if (!obj.steamid) return false;
-    const isExplosive =
-      typeof obj.item === "string" &&
-      (obj.item.includes("explosive") || obj.item.includes("c4") || obj.item.includes("rocket") || obj.item.includes("grenade"));
-    if (!isExplosive) return false;
-    const amount = obj.amount ?? 1;
-    db
-      .insert(playerStatsTable)
-      .values({ steamId: obj.steamid, playerName: obj.player ?? "Unknown", explosivesCrafted: amount })
-      .onConflictDoUpdate({
-        target: playerStatsTable.steamId,
-        set: {
-          playerName:       obj.player ?? "Unknown",
-          explosivesCrafted: sql`${playerStatsTable.explosivesCrafted} + ${amount}`,
-          updatedAt:        sql`now()`,
-        },
-      })
-      .catch((err) => logger.error({ err }, "recordCraft error"));
-    return true;
-  } catch { return false; }
+  const obj = extractJson(message) as CraftPayload | null;
+  if (!obj?.steamid) return false;
+
+  const ev = eventName(obj);
+  const lowerType = type.toLowerCase();
+  if (ev !== "craft" && !lowerType.includes("craft")) return false;
+
+  if (typeof obj.item === "string" && !EXPLOSIVE_SHORTNAMES.has(obj.item.toLowerCase())) return false;
+
+  const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
+  if (amount <= 0) return false;
+
+  db
+    .insert(playerStatsTable)
+    .values({
+      steamId: obj.steamid,
+      playerName: obj.player ?? "Unknown",
+      explosivesCrafted: amount,
+    })
+    .onConflictDoUpdate({
+      target: playerStatsTable.steamId,
+      set: {
+        playerName: obj.player ?? "Unknown",
+        explosivesCrafted: sql`${playerStatsTable.explosivesCrafted} + ${amount}`,
+        updatedAt: sql`now()`,
+      },
+    })
+    .catch((err) => logger.error({ err }, "recordCraft error"));
+
+  return true;
 }
