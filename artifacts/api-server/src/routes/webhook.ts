@@ -82,7 +82,7 @@ async function sendDiscordWebhookLog(opts: {
   payment?: Record<string, unknown> | null;
 }): Promise<void> {
   const client = discordClient();
-  const channelId = process.env.DISCORD_LOG_CHANNEL_ID || process.env.LOG_CHANNEL_ID;
+  const channelId = process.env.MP_LOG_CHANNEL_ID;
 
   if (!client) {
     logger.error("Mercado Pago log não enviado: cliente do Discord ainda não está disponível");
@@ -90,7 +90,7 @@ async function sendDiscordWebhookLog(opts: {
   }
 
   if (!channelId) {
-    logger.error("Mercado Pago log não enviado: configure DISCORD_LOG_CHANNEL_ID ou LOG_CHANNEL_ID no Railway");
+    logger.error("Mercado Pago log não enviado: configure MP_LOG_CHANNEL_ID no Railway");
     return;
   }
 
