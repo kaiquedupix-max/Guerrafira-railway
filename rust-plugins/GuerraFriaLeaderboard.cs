@@ -5,8 +5,8 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.3.0")]
-    [Description("Leaderboard profissional + telemetria simples para detector assistido Guerra Fria.")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.4.0")]
+    [Description("Leaderboard profissional + raid tracker + telemetria assistida Guerra Fria.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
         private const string Prefix = "[GF_LEADERBOARD]";
@@ -62,6 +62,42 @@ namespace Oxide.Plugins
             if (string.IsNullOrEmpty(weapon)) return false;
             weapon = weapon.ToLowerInvariant();
             return weapon.Contains("bow") || weapon.Contains("crossbow");
+        }
+
+        private void EmitRaidUse(BasePlayer player, string item)
+        {
+            if (!IsRealPlayer(player)) return;
+            Emit(new LeaderboardEvent
+            {
+                @event = "raid_use",
+                steamid = player.UserIDString,
+                player = player.displayName ?? "Unknown",
+                item = item,
+                amount = 1,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+        }
+
+        private void OnRocketLaunched(BasePlayer player, BaseEntity entity)
+        {
+            if (!IsRealPlayer(player)) return;
+            try
+            {
+                var active = player.GetActiveItem();
+                var shortname = active != null && active.info != null ? active.info.shortname : string.Empty;
+                if (shortname != "rocket.launcher") return;
+            }
+            catch { return; }
+            EmitRaidUse(player, "rocket");
+        }
+
+        private void OnExplosiveThrown(BasePlayer player, BaseEntity entity, ThrownWeapon item)
+        {
+            if (!IsRealPlayer(player) || entity == null) return;
+            var prefab = entity.ShortPrefabName ?? string.Empty;
+            prefab = prefab.ToLowerInvariant();
+            if (prefab.Contains("explosive.timed") || prefab.Contains("timedexplosive") || prefab.Contains("timed.explosive"))
+                EmitRaidUse(player, "c4");
         }
 
         private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
@@ -155,7 +191,7 @@ namespace Oxide.Plugins
         private void StatusCommand(ConsoleSystem.Arg arg)
         {
             if (arg == null) return;
-            arg.ReplyWith("GuerraFriaLeaderboard: ONLINE | kills/HS/farm por recurso/polvora + detector ativos");
+            arg.ReplyWith("GuerraFriaLeaderboard: ONLINE | kills/HS/farm/polvora/Top Raid + detector ativos");
         }
     }
 }
