@@ -1,5 +1,5 @@
 import { db, playersTable } from "@workspace/db";
-import { eq, ilike, desc, count, sql } from "drizzle-orm";
+import { eq, ilike, desc, count, sql, or } from "drizzle-orm";
 import type { RconPlayer } from "./rcon.js";
 
 export async function upsertPlayer(player: RconPlayer): Promise<void> {
@@ -26,12 +26,26 @@ export async function setAllOffline(): Promise<void> {
 }
 
 export async function searchPlayers(query: string, limit = 25) {
-  if (!query) return getAllPlayers(limit);
+  const trimmed = query.trim();
+
+  if (!trimmed) {
+    return db
+      .select()
+      .from(playersTable)
+      .orderBy(sql`${playersTable.isOnline} DESC`, desc(playersTable.lastSeen))
+      .limit(limit);
+  }
+
   return db
     .select()
     .from(playersTable)
-    .where(ilike(playersTable.playerName, `%${query}%`))
-    .orderBy(desc(playersTable.lastSeen))
+    .where(
+      or(
+        ilike(playersTable.playerName, `%${trimmed}%`),
+        ilike(playersTable.steamId, `%${trimmed}%`),
+      )
+    )
+    .orderBy(sql`${playersTable.isOnline} DESC`, desc(playersTable.lastSeen))
     .limit(limit);
 }
 
@@ -39,13 +53,19 @@ export async function getAllPlayers(limit = 25) {
   return db
     .select()
     .from(playersTable)
-    .orderBy(desc(playersTable.lastSeen))
+    .orderBy(sql`${playersTable.isOnline} DESC`, desc(playersTable.lastSeen))
     .limit(limit);
 }
 
 export async function getPlayersPage(query: string, page: number, pageSize = 10) {
   const offset = page * pageSize;
-  const condition = query ? ilike(playersTable.playerName, `%${query}%`) : undefined;
+  const trimmed = query.trim();
+  const condition = trimmed
+    ? or(
+        ilike(playersTable.playerName, `%${trimmed}%`),
+        ilike(playersTable.steamId, `%${trimmed}%`),
+      )
+    : undefined;
 
   const [rows, countRes] = await Promise.all([
     db.select().from(playersTable)
