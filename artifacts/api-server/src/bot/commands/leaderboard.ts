@@ -7,10 +7,10 @@ import { desc, gt, sql } from "drizzle-orm";
 import { db, playerStatsTable } from "@workspace/db";
 
 const CATEGORIES = [
-  { value: "kills",     name: "🔫 Top Kills"            },
-  { value: "kd",        name: "⚔️ Maior KD"              },
-  { value: "hs",        name: "🎯 Maior Taxa de HS"      },
-  { value: "farm",      name: "⛏️ Top Farm"              },
+  { value: "kills",     name: "🔫 Top Kills"              },
+  { value: "kd",        name: "⚔️ Maior KD"               },
+  { value: "hs",        name: "🎯 Maior Taxa de HS"       },
+  { value: "farm",      name: "⛏️ Top Farm"               },
   { value: "explosive", name: "💣 Top Craft de Explosivos" },
 ] as const;
 
@@ -29,7 +29,7 @@ export const data = new SlashCommandBuilder()
   );
 
 const MEDALS = ["🥇", "🥈", "🥉"];
-const medal  = (i: number) => MEDALS[i] ?? `**${i + 1}.**`;
+const medal = (i: number) => MEDALS[i] ?? `**${i + 1}.**`;
 
 function fmt(n: number, decimals = 2): string {
   return n.toLocaleString("pt-BR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -39,88 +39,77 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ ephemeral: true });
 
   const cat = interaction.options.getString("categoria", true) as Category;
-
-  // ─── Build query per category ──────────────────────────────────────────────
   let rows: { steamId: string; playerName: string; value: number }[] = [];
   let embedTitle: string;
   let valueLabel: string;
   let color: number;
 
   if (cat === "kills") {
-    embedTitle  = "🔫  Top Kills";
-    valueLabel  = "Kills";
-    color       = 0xe74c3c;
-    const data_ = await db
+    embedTitle = "🔫  Top Kills";
+    valueLabel = "Kills";
+    color = 0xe74c3c;
+    rows = await db
       .select({ steamId: playerStatsTable.steamId, playerName: playerStatsTable.playerName, value: playerStatsTable.kills })
       .from(playerStatsTable)
       .where(gt(playerStatsTable.kills, 0))
       .orderBy(desc(playerStatsTable.kills))
       .limit(10);
-    rows = data_;
-
   } else if (cat === "kd") {
-    embedTitle  = "⚔️  Maior KD (Kill/Death)";
-    valueLabel  = "KD";
-    color       = 0xe67e22;
-    // KD = kills / max(deaths, 1) — only players with at least 5 kills
+    embedTitle = "⚔️  Maior KD (Kill/Death)";
+    valueLabel = "KD";
+    color = 0xe67e22;
     const raw = await db
       .select({
-        steamId:    playerStatsTable.steamId,
+        steamId: playerStatsTable.steamId,
         playerName: playerStatsTable.playerName,
-        kills:      playerStatsTable.kills,
-        deaths:     playerStatsTable.deaths,
-        kd:         sql<number>`ROUND(${playerStatsTable.kills}::numeric / GREATEST(${playerStatsTable.deaths}, 1), 2)`,
+        kills: playerStatsTable.kills,
+        deaths: playerStatsTable.deaths,
+        kd: sql<number>`ROUND(${playerStatsTable.kills}::numeric / GREATEST(${playerStatsTable.deaths}, 1), 2)`,
       })
       .from(playerStatsTable)
       .where(gt(playerStatsTable.kills, 4))
       .orderBy(desc(sql`${playerStatsTable.kills}::numeric / GREATEST(${playerStatsTable.deaths}, 1)`))
       .limit(10);
     rows = raw.map((r) => ({ steamId: r.steamId, playerName: r.playerName, value: Number(r.kd) }));
-
   } else if (cat === "hs") {
-    embedTitle  = "🎯  Maior Taxa de HS";
-    valueLabel  = "HS%";
-    color       = 0x9b59b6;
+    embedTitle = "🎯  Maior Taxa de HS";
+    valueLabel = "HS%";
+    color = 0x9b59b6;
     const raw = await db
       .select({
-        steamId:    playerStatsTable.steamId,
+        steamId: playerStatsTable.steamId,
         playerName: playerStatsTable.playerName,
-        kills:      playerStatsTable.kills,
-        headshots:  playerStatsTable.headshots,
-        hsRate:     sql<number>`ROUND(${playerStatsTable.headshots}::numeric / GREATEST(${playerStatsTable.kills}, 1) * 100, 1)`,
+        kills: playerStatsTable.kills,
+        headshots: playerStatsTable.headshots,
+        hsRate: sql<number>`ROUND(${playerStatsTable.headshots}::numeric / GREATEST(${playerStatsTable.kills}, 1) * 100, 1)`,
       })
       .from(playerStatsTable)
       .where(gt(playerStatsTable.kills, 4))
       .orderBy(desc(sql`${playerStatsTable.headshots}::numeric / GREATEST(${playerStatsTable.kills}, 1)`))
       .limit(10);
     rows = raw.map((r) => ({ steamId: r.steamId, playerName: r.playerName, value: Number(r.hsRate) }));
-
   } else if (cat === "farm") {
-    embedTitle  = "⛏️  Top Farm";
-    valueLabel  = "Recursos";
-    color       = 0x27ae60;
-    const data_ = await db
+    embedTitle = "⛏️  Top Farm";
+    valueLabel = "Recursos";
+    color = 0x27ae60;
+    rows = await db
       .select({ steamId: playerStatsTable.steamId, playerName: playerStatsTable.playerName, value: playerStatsTable.resourcesGathered })
       .from(playerStatsTable)
       .where(gt(playerStatsTable.resourcesGathered, 0))
       .orderBy(desc(playerStatsTable.resourcesGathered))
       .limit(10);
-    rows = data_;
-
   } else {
-    embedTitle  = "💣  Top Craft de Explosivos";
-    valueLabel  = "Explosivos";
-    color       = 0xf39c12;
-    const data_ = await db
+    embedTitle = "💣  Top Craft de Explosivos";
+    valueLabel = "Explosivos";
+    color = 0xf39c12;
+    rows = await db
       .select({ steamId: playerStatsTable.steamId, playerName: playerStatsTable.playerName, value: playerStatsTable.explosivesCrafted })
       .from(playerStatsTable)
       .where(gt(playerStatsTable.explosivesCrafted, 0))
       .orderBy(desc(playerStatsTable.explosivesCrafted))
       .limit(10);
-    rows = data_;
   }
 
-  // ─── Build embed ───────────────────────────────────────────────────────────
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(`${embedTitle} — Guerra Fria 2X`)
@@ -130,7 +119,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (!rows.length) {
     const noDataNote =
       cat === "farm" || cat === "explosive"
-        ? "\n\n> ℹ️ Farm e craft de explosivos requerem o plugin **Statistics** instalado no servidor para coleta de dados."
+        ? "\n\n> ℹ️ A coleta começa após instalar o plugin **GuerraFriaLeaderboard.cs** no servidor Rust."
         : "";
     embed.setDescription(`📭 Nenhum dado registrado ainda.${noDataNote}`);
     await interaction.editReply({ embeds: [embed] });
@@ -139,9 +128,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   const lines = rows.map((r, i) => {
     const valStr =
-      cat === "kd"  ? `**${fmt(r.value)} KD**` :
-      cat === "hs"  ? `**${fmt(r.value, 1)}%**` :
-      cat === "farm" || cat === "explosive" ? `**${r.value.toLocaleString("pt-BR")}** ${valueLabel.toLowerCase()}` :
+      cat === "kd" ? `**${fmt(r.value)} KD**` :
+      cat === "hs" ? `**${fmt(r.value, 1)}%**` :
       `**${r.value.toLocaleString("pt-BR")}** ${valueLabel.toLowerCase()}`;
     return `${medal(i)} **${r.playerName}** — ${valStr}`;
   });
