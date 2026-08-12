@@ -1,11 +1,12 @@
 using System;
 using Newtonsoft.Json;
 using Oxide.Core;
+using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.0.3")]
-    [Description("Emite eventos de kills, mortes, headshots, farm e craft para o leaderboard Guerra Fria via RCON/console.")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.1.0")]
+    [Description("Emite eventos de kills, mortes, headshots, arma e distância para leaderboard e detector assistido Guerra Fria.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
         private const string Prefix = "[GF_LEADERBOARD]";
@@ -18,6 +19,9 @@ namespace Oxide.Plugins
             public string victim;
             public string victim_steamid;
             public bool headshot;
+            public string weapon;
+            public float distance;
+            public long timestamp;
             public string steamid;
             public string player;
             public string item;
@@ -26,12 +30,12 @@ namespace Oxide.Plugins
 
         private void Init()
         {
-            Puts("GuerraFriaLeaderboard carregado. Eventos do leaderboard serão enviados pelo console/RCON.");
+            Puts("GuerraFriaLeaderboard carregado.");
         }
 
         private void OnServerInitialized()
         {
-            Emit(new LeaderboardEvent { @event = "ready" });
+            Emit(new LeaderboardEvent { @event = "ready", timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
         }
 
         private bool IsRealPlayer(BasePlayer player)
@@ -41,6 +45,28 @@ namespace Oxide.Plugins
 
             var steamId = player.UserIDString;
             return !string.IsNullOrEmpty(steamId) && steamId.StartsWith("7656119");
+        }
+
+        private string GetWeaponName(HitInfo info)
+        {
+            if (info == null)
+                return "unknown";
+
+            try
+            {
+                if (info.WeaponPrefab != null && !string.IsNullOrEmpty(info.WeaponPrefab.ShortPrefabName))
+                    return info.WeaponPrefab.ShortPrefabName;
+            }
+            catch { }
+
+            try
+            {
+                if (info.Weapon != null && !string.IsNullOrEmpty(info.Weapon.ShortPrefabName))
+                    return info.Weapon.ShortPrefabName;
+            }
+            catch { }
+
+            return "unknown";
         }
 
         private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
@@ -56,6 +82,8 @@ namespace Oxide.Plugins
             if (attacker.userID == victim.userID)
                 return;
 
+            var distance = Vector3.Distance(attacker.transform.position, victim.transform.position);
+
             Emit(new LeaderboardEvent
             {
                 @event = "kill",
@@ -63,7 +91,10 @@ namespace Oxide.Plugins
                 attacker_steamid = attacker.UserIDString,
                 victim = victim.displayName ?? "Unknown",
                 victim_steamid = victim.UserIDString,
-                headshot = info.isHeadshot
+                headshot = info.isHeadshot,
+                weapon = GetWeaponName(info),
+                distance = (float)Math.Round(distance, 1),
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             });
         }
 
@@ -93,7 +124,8 @@ namespace Oxide.Plugins
                 steamid = player.UserIDString,
                 player = player.displayName ?? "Unknown",
                 item = item.info != null ? item.info.shortname : "unknown",
-                amount = item.amount
+                amount = item.amount,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             });
         }
 
@@ -116,7 +148,8 @@ namespace Oxide.Plugins
                 steamid = player.UserIDString,
                 player = player.displayName ?? "Unknown",
                 item = shortname,
-                amount = Math.Max(item.amount, 1)
+                amount = Math.Max(item.amount, 1),
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             });
         }
 
@@ -159,7 +192,7 @@ namespace Oxide.Plugins
             if (arg == null)
                 return;
 
-            arg.ReplyWith("GuerraFriaLeaderboard: ONLINE | kills/deaths/headshots/farm/craft ativos");
+            arg.ReplyWith("GuerraFriaLeaderboard: ONLINE | kills/headshots/arma/distancia + detector assistido ativos");
         }
     }
 }
