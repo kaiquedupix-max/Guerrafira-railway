@@ -59,10 +59,7 @@ export function parseKillEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as CombatPayload | null;
   if (!obj) return false;
   const ev = eventName(obj);
-
-  // Usa o mesmo bridge RCON das kills para a telemetria de flechas.
   if (ev === "arrow_hit") return processArrowHit(obj);
-
   const lowerType = type.toLowerCase();
   if (!(ev === "kill" || lowerType.includes("kill") || lowerType.includes("death") || lowerType.includes("combat") || lowerType === "generic" || type === "")) return false;
 
@@ -76,16 +73,7 @@ export function parseKillEvent(type: string, message: string): boolean {
   const headshot = obj.headshot === true || obj.is_headshot === true || body.includes("head") || body === "skull";
 
   recordKill({ killerSteamId: killerId, killerName, victimSteamId: victimId, victimName, headshot })
-    .then(() => analyzeKill({
-      attackerSteamId: killerId,
-      attackerName: killerName,
-      victimSteamId: victimId,
-      victimName,
-      headshot,
-      weapon: typeof obj.weapon === "string" ? obj.weapon : undefined,
-      distance: Number.isFinite(Number(obj.distance)) ? Number(obj.distance) : undefined,
-      timestamp: Number.isFinite(Number(obj.timestamp)) ? Number(obj.timestamp) : undefined,
-    }))
+    .then(() => analyzeKill({ attackerSteamId: killerId, attackerName: killerName, victimSteamId: victimId, victimName, headshot, weapon: typeof obj.weapon === "string" ? obj.weapon : undefined, distance: Number.isFinite(Number(obj.distance)) ? Number(obj.distance) : undefined, timestamp: Number.isFinite(Number(obj.timestamp)) ? Number(obj.timestamp) : undefined }))
     .catch(err => logger.error({ err }, "recordKill/detector error"));
   return true;
 }
@@ -97,6 +85,7 @@ export function parseArrowHitEvent(type: string, message: string): boolean {
 }
 
 interface GatherPayload extends Record<string, unknown> { event?: string; steamid?: string; player?: string; item?: string; amount?: number; }
+
 export function parseGatherEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as GatherPayload | null;
   if (!obj?.steamid) return false;
@@ -104,25 +93,40 @@ export function parseGatherEvent(type: string, message: string): boolean {
   if (ev !== "gather" && !lowerType.includes("gather") && !lowerType.includes("resource")) return false;
   const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
   if (amount <= 0) return false;
-  db.insert(playerStatsTable).values({ steamId: obj.steamid, playerName: obj.player ?? "Unknown", resourcesGathered: amount }).onConflictDoUpdate({
-    target: playerStatsTable.steamId,
-    set: { playerName: obj.player ?? "Unknown", resourcesGathered: sql`${playerStatsTable.resourcesGathered} + ${amount}`, updatedAt: sql`now()` },
-  }).catch(err => logger.error({ err }, "recordGather error"));
+
+  const item = String(obj.item ?? "").toLowerCase();
+  const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown", resourcesGathered: amount };
+  const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", resourcesGathered: sql`${playerStatsTable.resourcesGathered} + ${amount}`, updatedAt: sql`now()` };
+
+  if (item === "wood") { values.woodGathered = amount; set.woodGathered = sql`${playerStatsTable.woodGathered} + ${amount}`; }
+  else if (item === "stones" || item === "stone") { values.stoneGathered = amount; set.stoneGathered = sql`${playerStatsTable.stoneGathered} + ${amount}`; }
+  else if (item === "metal.ore") { values.metalOreGathered = amount; set.metalOreGathered = sql`${playerStatsTable.metalOreGathered} + ${amount}`; }
+  else if (item === "sulfur.ore") { values.sulfurOreGathered = amount; set.sulfurOreGathered = sql`${playerStatsTable.sulfurOreGathered} + ${amount}`; }
+  else if (item === "scrap") { values.scrapGathered = amount; set.scrapGathered = sql`${playerStatsTable.scrapGathered} + ${amount}`; }
+
+  db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set }).catch(err => logger.error({ err }, "recordGather error"));
   return true;
 }
 
 const EXPLOSIVE_SHORTNAMES = new Set(["explosives", "explosive.timed", "grenade.f1", "grenade.beancan", "ammo.rocket.basic", "ammo.rocket.hv", "ammo.rocket.fire", "ammo.rifle.explosive", "surveycharge"]);
+
 export function parseCraftEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as GatherPayload | null;
   if (!obj?.steamid) return false;
   const ev = eventName(obj); const lowerType = type.toLowerCase();
   if (ev !== "craft" && !lowerType.includes("craft")) return false;
-  if (typeof obj.item === "string" && !EXPLOSIVE_SHORTNAMES.has(obj.item.toLowerCase())) return false;
+  const item = String(obj.item ?? "").toLowerCase();
+  const isGunpowder = item === "gunpowder";
+  const isExplosive = EXPLOSIVE_SHORTNAMES.has(item);
+  if (!isGunpowder && !isExplosive) return false;
   const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
   if (amount <= 0) return false;
-  db.insert(playerStatsTable).values({ steamId: obj.steamid, playerName: obj.player ?? "Unknown", explosivesCrafted: amount }).onConflictDoUpdate({
-    target: playerStatsTable.steamId,
-    set: { playerName: obj.player ?? "Unknown", explosivesCrafted: sql`${playerStatsTable.explosivesCrafted} + ${amount}`, updatedAt: sql`now()` },
-  }).catch(err => logger.error({ err }, "recordCraft error"));
+
+  const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown" };
+  const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", updatedAt: sql`now()` };
+  if (isGunpowder) { values.gunpowderCrafted = amount; set.gunpowderCrafted = sql`${playerStatsTable.gunpowderCrafted} + ${amount}`; }
+  if (isExplosive) { values.explosivesCrafted = amount; set.explosivesCrafted = sql`${playerStatsTable.explosivesCrafted} + ${amount}`; }
+
+  db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set }).catch(err => logger.error({ err }, "recordCraft error"));
   return true;
 }
