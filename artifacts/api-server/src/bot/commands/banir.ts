@@ -15,6 +15,7 @@ import { db, modLogsTable } from "@workspace/db";
 import { logger } from "../../lib/logger.js";
 
 const APPEAL_LINK = "discord.gg/guerrafria";
+const STEAM_ID_RE = /^7656119\d{10}$/;
 
 function calcExpiry(duration: string): Date | null {
   const now = new Date();
@@ -22,7 +23,7 @@ function calcExpiry(duration: string): Date | null {
     case "3d":  return new Date(now.getTime() + 3  * 24 * 60 * 60 * 1000);
     case "7d":  return new Date(now.getTime() + 7  * 24 * 60 * 60 * 1000);
     case "30d": return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    default:    return null; // permanent
+    default:    return null;
   }
 }
 
@@ -42,7 +43,7 @@ export const data = new SlashCommandBuilder()
   .addStringOption((opt) =>
     opt
       .setName("jogador")
-      .setDescription("Nome do jogador a ser banido")
+      .setDescription("Pesquise pelo nome ou informe o SteamID64")
       .setRequired(true)
       .setAutocomplete(true)
   )
@@ -69,14 +70,22 @@ export const data = new SlashCommandBuilder()
 export async function autocomplete(
   interaction: AutocompleteInteraction
 ): Promise<void> {
-  const focused = interaction.options.getFocused();
+  const focused = interaction.options.getFocused().trim();
   const players = await searchPlayers(focused, 25);
-  await interaction.respond(
-    players.map((p) => ({
-      name: `${p.isOnline ? "🟢" : "⚫"} ${p.playerName} — ${p.steamId}`,
-      value: p.steamId,
-    }))
-  );
+
+  const suggestions = players.map((p) => ({
+    name: `${p.isOnline ? "🟢 ONLINE" : "⚫ OFFLINE"} • ${p.playerName} — ${p.steamId}`.slice(0, 100),
+    value: p.steamId,
+  }));
+
+  if (STEAM_ID_RE.test(focused) && !suggestions.some((s) => s.value === focused)) {
+    suggestions.unshift({
+      name: `⚫ OFFLINE • Banir diretamente SteamID ${focused}`.slice(0, 100),
+      value: focused,
+    });
+  }
+
+  await interaction.respond(suggestions.slice(0, 25));
 }
 
 export async function execute(
@@ -84,32 +93,35 @@ export async function execute(
 ): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const steamId  = interaction.options.getString("jogador",  true);
-  const duration = interaction.options.getString("duracao",  true);
-  const reason   = interaction.options.getString("motivo",   true);
+  const selected  = interaction.options.getString("jogador", true).trim();
+  const duration  = interaction.options.getString("duracao", true);
+  const reason    = interaction.options.getString("motivo", true);
 
-  const player = await getPlayerBySteamId(steamId);
-  if (!player) {
-    await interaction.editReply("❌ Jogador não encontrado no banco de dados.");
+  let player = await getPlayerBySteamId(selected);
+
+  if (!player && !STEAM_ID_RE.test(selected)) {
+    await interaction.editReply(
+      "❌ Jogador não encontrado no histórico. Pesquise pelo nome ou informe diretamente o SteamID64 do jogador offline."
+    );
     return;
   }
 
+  const steamId = player?.steamId ?? selected;
+  const playerName = player?.playerName ?? `Jogador offline (${steamId})`;
   const expiresAt = calcExpiry(duration);
 
-  // Build reason string shown to player on the game server
   const rconReason =
     `[${durationLabel(duration).toUpperCase()}] ${reason} | Recurso: ${APPEAL_LINK}`;
 
-  // banid works for online AND offline players
+  // banid aceita SteamID64, portanto funciona mesmo sem o jogador estar conectado.
   const rconResult = await executeRconCommand(
-    `banid ${player.steamId} "${player.playerName}" "${rconReason}"`
+    `banid ${steamId} "${playerName.replace(/"/g, "'")}" "${rconReason.replace(/"/g, "'")}"`
   );
 
-  // Save moderation log
   await db.insert(modLogsTable).values({
     action: "BAN",
-    steamId: player.steamId,
-    playerName: player.playerName,
+    steamId,
+    playerName,
     reason,
     adminId: interaction.user.id,
     adminName: interaction.user.tag,
@@ -117,7 +129,6 @@ export async function execute(
     banExpiresAt: expiresAt,
   });
 
-  // Post embed to log channel
   const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
   if (logChannelId) {
     const ch = await interaction.client.channels.fetch(logChannelId).catch(() => null);
@@ -125,8 +136,8 @@ export async function execute(
       await ch.send({
         embeds: [
           buildBanEmbed({
-            playerName: player.playerName,
-            steamId: player.steamId,
+            playerName,
+            steamId,
             reason,
             duration,
             expiresAt,
@@ -146,22 +157,20 @@ export async function execute(
     : "";
 
   await interaction.editReply(
-    `✅ **${player.playerName}** (\`${player.steamId}\`) foi banido por **${durationLabel(duration)}**.\n` +
+    `✅ **${playerName}** (\`${steamId}\`) foi banido por **${durationLabel(duration)}**.\n` +
     `📋 Motivo: ${reason}\n${expiryText}${rconWarning}`
   );
 
-  // Notificação no chat do jogo
-  const durationText = durationLabel(duration);
   await executeRconCommand(
     `say <color=#FF4444>⚠ AÇÃO DE MODERAÇÃO</color> | ` +
-    `<color=#FFFFFF>${player.playerName}</color> foi banido | ` +
+    `<color=#FFFFFF>${playerName}</color> foi banido | ` +
     `<color=#FFAA00>Motivo: ${reason}</color> | ` +
-    `<color=#FF4444>Duração: ${durationText}</color> | ` +
+    `<color=#FF4444>Duração: ${durationLabel(duration)}</color> | ` +
     `<color=#00AAFF>Admin: ${interaction.user.username}</color>`
-  ).catch(() => {}); // silencia se RCON cair
+  ).catch(() => {});
 
   logger.info(
-    { steamId: player.steamId, playerName: player.playerName, duration, reason, admin: interaction.user.tag },
+    { steamId, playerName, duration, reason, admin: interaction.user.tag },
     "Player banned"
   );
 }
