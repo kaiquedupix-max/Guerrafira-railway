@@ -1,10 +1,15 @@
 import {
   SlashCommandBuilder,
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   type ChatInputCommandInteraction,
 } from "discord.js";
 import { desc, gt, sql } from "drizzle-orm";
 import { db, playerStatsTable } from "@workspace/db";
+
+const LEADERBOARD_URL = process.env.LEADERBOARD_URL?.trim() || "https://guerrafria.up.railway.app";
 
 const CATEGORIES = [
   { value: "kills",     name: "🔫 Top Kills"              },
@@ -33,6 +38,16 @@ const medal = (i: number) => MEDALS[i] ?? `**${i + 1}.**`;
 
 function fmt(n: number, decimals = 2): string {
   return n.toLocaleString("pt-BR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function websiteButton() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("Abrir Leaderboard Completo")
+      .setEmoji("🌐")
+      .setStyle(ButtonStyle.Link)
+      .setURL(LEADERBOARD_URL),
+  );
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -113,7 +128,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(`${embedTitle} — Guerra Fria 2X`)
-    .setFooter({ text: "Guerra Fria • Leaderboard • Atualizado em tempo real" })
+    .setFooter({ text: "Guerra Fria • Leaderboard • Estatísticas oficiais do wipe" })
     .setTimestamp();
 
   if (!rows.length) {
@@ -121,8 +136,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       cat === "farm" || cat === "explosive"
         ? "\n\n> ℹ️ A coleta começa após instalar o plugin **GuerraFriaLeaderboard.cs** no servidor Rust."
         : "";
-    embed.setDescription(`📭 Nenhum dado registrado ainda.${noDataNote}`);
-    await interaction.editReply({ embeds: [embed] });
+    embed.setDescription(
+      `📭 Nenhum dado registrado ainda.${noDataNote}\n\n` +
+      "🌐 **Confira o leaderboard detalhado do wipe no site oficial.**",
+    );
+    await interaction.editReply({ embeds: [embed], components: [websiteButton()] });
     return;
   }
 
@@ -134,6 +152,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return `${medal(i)} **${r.playerName}** — ${valStr}`;
   });
 
-  embed.setDescription(lines.join("\n"));
-  await interaction.editReply({ embeds: [embed] });
+  embed.setDescription(
+    `${lines.join("\n")}\n\n` +
+    "🌐 **Quer ver todas as categorias e estatísticas detalhadas deste wipe?**\n" +
+    "Acesse o Leaderboard Oficial do Guerra Fria pelo botão abaixo.",
+  );
+  await interaction.editReply({ embeds: [embed], components: [websiteButton()] });
 }
