@@ -69,6 +69,7 @@ async function setupPanel(client: Client): Promise<void> {
       "🚀 Esteja impulsionando o servidor no momento da verificação.\n" +
       "🎮 Clique em **Verificar Booster** e informe seu **SteamID64**.\n" +
       "✅ Após a confirmação, o **Booster será ativado no jogo** automaticamente.\n\n" +
+      "⚠️ Cada conta do Discord pode vincular apenas **um SteamID**. Se precisar alterar o vínculo, procure a administração.\n" +
       "⚠️ Se você deixar de impulsionar o Discord, os benefícios Booster serão removidos automaticamente."
     )
     .setImage(boosterImageUrl)
@@ -91,11 +92,34 @@ async function setupPanel(client: Client): Promise<void> {
   }
 }
 
+async function getDiscordLink(discordUserId: string) {
+  const rows = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, discordUserId));
+  return rows[0] ?? null;
+}
+
+async function getSteamLink(steamId: string) {
+  const rows = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId));
+  return rows[0] ?? null;
+}
+
 export async function handleBoosterVerifyButton(interaction: ButtonInteraction): Promise<void> {
   if (!interaction.guild) return;
+
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   if (!member?.premiumSince) {
     await interaction.reply({ content: "❌ Você não está impulsionando o servidor no momento. Inicie o Booster e tente novamente.", ephemeral: true });
+    return;
+  }
+
+  const existing = await getDiscordLink(interaction.user.id);
+  if (existing) {
+    await interaction.reply({
+      content:
+        "✅ **Seu Booster já está verificado.**\n\n" +
+        `🎮 SteamID vinculado: \`${existing.steamId}\`\n\n` +
+        "Por segurança, não é possível trocar o SteamID pelo painel. Se você realmente precisar alterar o vínculo, abra um ticket com a administração.",
+      ephemeral: true,
+    });
     return;
   }
 
@@ -128,14 +152,31 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
     return;
   }
 
-  const existing = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
-  if (existing.length) {
-    await db.update(boosterLinksTable)
-      .set({ steamId, active: true, updatedAt: new Date() })
-      .where(eq(boosterLinksTable.discordUserId, interaction.user.id));
-  } else {
-    await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, updatedAt: new Date() });
+  const existingDiscord = await getDiscordLink(interaction.user.id);
+  if (existingDiscord) {
+    await interaction.editReply(
+      "✅ **Seu Booster já está verificado.**\n\n" +
+      `🎮 SteamID vinculado: \`${existingDiscord.steamId}\`\n\n` +
+      "Não é possível alterar o SteamID pelo painel. Abra um ticket com a administração caso precise corrigir o vínculo."
+    );
+    return;
   }
+
+  const existingSteam = await getSteamLink(steamId);
+  if (existingSteam && existingSteam.discordUserId !== interaction.user.id) {
+    await interaction.editReply(
+      "❌ Este **SteamID já está vinculado a outra conta do Discord**.\n\n" +
+      "Se acredita que isso é um erro, abra um ticket com a administração."
+    );
+    return;
+  }
+
+  await db.insert(boosterLinksTable).values({
+    discordUserId: interaction.user.id,
+    steamId,
+    active: true,
+    updatedAt: new Date(),
+  });
 
   await executeRconCommand(grantCommand(steamId));
   await interaction.editReply(
@@ -143,6 +184,7 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
     `🎮 SteamID: \`${steamId}\`\n` +
     "✅ Seu **Booster foi ativado no jogo**.\n" +
     "📦 Dentro do Rust, use **`/kit`** para acessar seu kit.\n\n" +
+    "🔒 Este SteamID ficou vinculado à sua conta do Discord.\n" +
     "Enquanto você continuar impulsionando o Discord, seus benefícios permanecerão ativos."
   );
 }
