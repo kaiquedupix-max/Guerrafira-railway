@@ -10,11 +10,13 @@ import {
 import { VIP_TIERS, type VipTier } from "./vip.js";
 import { handleVipStoreBuy } from "./vipStorePurchase.js";
 import { startBoosterSystem } from "./booster.js";
+import { startDiscordModeration } from "./moderation.js";
 import { logger } from "../lib/logger.js";
 
 const STORE_MARKER = "Guerra Fria • Loja VIP";
 const DEFAULT_VIP_STORE_CHANNEL_ID = "1530049713422729328";
 let storeInteractionHandlerRegistered = false;
+let moderationStarted = false;
 
 const VIP_CARDS: Array<{
   tier: VipTier;
@@ -120,6 +122,10 @@ function registerStoreInteractionHandler(client: Client): void {
 
 export async function setupVipStore(client: Client): Promise<void> {
   registerStoreInteractionHandler(client);
+  if (!moderationStarted) {
+    startDiscordModeration(client);
+    moderationStarted = true;
+  }
   await startBoosterSystem(client).catch((err) => logger.error({ err }, "Failed to start booster system"));
 
   const channelId =
