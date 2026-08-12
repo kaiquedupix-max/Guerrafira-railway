@@ -18,6 +18,7 @@ import { executeRconCommand } from "./utils/rcon.js";
 import { logger } from "../lib/logger.js";
 
 const PANEL_MARKER = "Guerra Fria • Verificação Booster";
+const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/kaiquedupix-max/Imagens-gf/refs/heads/main/booster.jpeg";
 let started = false;
 
 function grantCommand(steamId: string): string {
@@ -38,10 +39,34 @@ async function setupPanel(client: Client): Promise<void> {
 
   const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
   const old = recent?.find(m => m.author.id === client.user?.id && m.embeds.some(e => e.footer?.text?.includes(PANEL_MARKER)));
-  const embed = new EmbedBuilder().setColor(0xf47fff).setTitle("🚀 VERIFICAR BOOSTER")
-    .setDescription("Impulsiona o **Discord Guerra Fria**? Verifique seu Booster e receba automaticamente o benefício **VIP4** dentro do servidor.\n\n**Como funciona:**\n🚀 Você precisa estar impulsionando este servidor no momento da verificação.\n🎮 Clique no botão abaixo e informe seu **SteamID64**.\n✅ O bot confirma seu Booster e libera o benefício no Rust.\n🔄 Enquanto o impulso estiver ativo, seu acesso será mantido.\n❌ Se você parar de impulsionar, o benefício será removido automaticamente.")
+  const boosterImageUrl = process.env.BOOSTER_IMAGE_URL?.trim() || DEFAULT_BOOSTER_IMAGE_URL;
+
+  const embed = new EmbedBuilder()
+    .setColor(0x9b30ff)
+    .setTitle("🚀 VERIFICAR BOOSTER")
+    .setDescription(
+      "Impulsiona o **Discord Guerra Fria**? Verifique seu Booster e receba automaticamente suas vantagens dentro do servidor.\n\n" +
+      "**🎁 Vantagens do Booster**\n" +
+      "⚡ **Pular fila** — prioridade para entrar no servidor.\n" +
+      "📦 **Kit Booster in-game** — benefício exclusivo enquanto seu impulso estiver ativo.\n\n" +
+      "**Como verificar:**\n" +
+      "🚀 Você precisa estar impulsionando este servidor no momento da verificação.\n" +
+      "🎮 Clique no botão abaixo e informe seu **SteamID64**.\n" +
+      "✅ O bot confirma seu Booster e libera o benefício **VIP4** no Rust.\n" +
+      "🔄 Enquanto o impulso estiver ativo, seu acesso será mantido.\n" +
+      "❌ Se você parar de impulsionar, o benefício será removido automaticamente."
+    )
+    .setImage(boosterImageUrl)
     .setFooter({ text: PANEL_MARKER });
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("booster_verify").setLabel("Verificar Booster").setEmoji("🚀").setStyle(ButtonStyle.Success));
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("booster_verify")
+      .setLabel("Verificar Booster")
+      .setEmoji("🚀")
+      .setStyle(ButtonStyle.Primary)
+  );
+
   if (old) await old.edit({ embeds: [embed], components: [row] });
   else await channel.send({ embeds: [embed], components: [row] });
 }
