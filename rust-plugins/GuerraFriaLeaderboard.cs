@@ -4,7 +4,7 @@ using Oxide.Core;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.0.0")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.0.1")]
     [Description("Emite eventos de kills, mortes, headshots, farm e craft para o leaderboard Guerra Fria via RCON/console.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
@@ -58,7 +58,6 @@ namespace Oxide.Plugins
             });
         }
 
-        // Hooks pós-coleta do Oxide/uMod: contabilizam exatamente o que o jogador recebeu.
         private void OnDispenserGathered(ResourceDispenser dispenser, BasePlayer player, Item item)
         {
             TrackGather(player, item);
@@ -89,12 +88,12 @@ namespace Oxide.Plugins
             });
         }
 
-        private void OnItemCraftFinished(ItemCraftTask task, Item item)
+        private void OnItemCraftFinished(ItemCraftTask task, Item item, ItemCrafter crafter)
         {
-            if (task == null || item == null || item.info == null)
+            if (task == null || item == null || item.info == null || crafter == null)
                 return;
 
-            var player = task.owner;
+            var player = crafter.owner;
             if (player == null)
                 return;
 
