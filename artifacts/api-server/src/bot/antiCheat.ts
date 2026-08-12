@@ -15,34 +15,34 @@ type KillSignal = {
   timestamp?: number;
 };
 
+type HitSignal = KillSignal & { bone?: string };
 type RecentKill = KillSignal & { at: number };
+type RecentHit = HitSignal & { at: number };
 
 type PlayerState = {
-  recent: RecentKill[];
+  recentKills: RecentKill[];
+  recentArrowHits: RecentHit[];
   score: number;
   lastScoreAt: number;
   lastAlertAt: number;
-  headshotStreak: number;
-  killStreak: number;
-  lastVictimIds: string[];
 };
 
 const states = new Map<string, PlayerState>();
-const ALERT_COOLDOWN_MS = 90_000;
-const HISTORY_MS = 15 * 60_000;
-const SCORE_DECAY_MS = 5 * 60_000;
+const ALERT_COOLDOWN_MS = 60_000;
+const HISTORY_MS = 10 * 60_000;
+const SCORE_DECAY_MS = 3 * 60_000;
 
 function stateFor(steamId: string): PlayerState {
   let state = states.get(steamId);
   if (!state) {
-    state = { recent: [], score: 0, lastScoreAt: Date.now(), lastAlertAt: 0, headshotStreak: 0, killStreak: 0, lastVictimIds: [] };
+    state = { recentKills: [], recentArrowHits: [], score: 0, lastScoreAt: Date.now(), lastAlertAt: 0 };
     states.set(steamId, state);
   }
   return state;
 }
 
 function normalizeWeapon(raw?: string): string {
-  return (raw ?? "desconhecida").toLowerCase().replace(/\.entity$|\.prefab$/g, "");
+  return (raw ?? "unknown").toLowerCase().replace(/\.entity$|\.prefab$/g, "");
 }
 
 function weaponLabel(raw?: string): string {
@@ -50,50 +50,43 @@ function weaponLabel(raw?: string): string {
   if (w.includes("thompson")) return "Thompson";
   if (w.includes("smg.2") || w.includes("mp5")) return "MP5";
   if (w.includes("smg")) return "SMG";
-  if (w.includes("pistol.python")) return "Python";
-  if (w.includes("pistol.revolver")) return "Revolver";
-  if (w.includes("pistol.semiauto")) return "P250/SAP";
-  if (w.includes("pistol")) return "Pistola";
-  if (w.includes("rifle.ak")) return "AK";
-  if (w.includes("rifle.lr300")) return "LR-300";
-  if (w.includes("rifle.bolt")) return "Bolt";
-  if (w.includes("rifle.l96")) return "L96";
-  if (w.includes("shotgun")) return "Shotgun";
+  if (w.includes("crossbow")) return "Crossbow";
+  if (w.includes("bow")) return "Arco";
   return raw || "Desconhecida";
-}
-
-function addReason(reasons: string[], points: { value: number }, reason: string, score: number): void {
-  if (!reasons.includes(reason)) reasons.push(reason);
-  points.value += score;
-}
-
-function evaluateWeaponDistance(weaponRaw: string | undefined, distance: number | undefined, reasons: string[], points: { value: number }): void {
-  if (!distance || distance <= 0) return;
-  const w = normalizeWeapon(weaponRaw);
-
-  if (w.includes("thompson") && distance >= 200) addReason(reasons, points, `Thompson a ${distance.toFixed(0)}m`, 5);
-  else if ((w.includes("smg") || w.includes("mp5")) && distance >= 180) addReason(reasons, points, `${weaponLabel(weaponRaw)} a ${distance.toFixed(0)}m`, 4);
-  else if ((w.includes("pistol") || w.includes("python") || w.includes("revolver")) && distance >= 150) addReason(reasons, points, `${weaponLabel(weaponRaw)} a ${distance.toFixed(0)}m`, 4);
-  else if (w.includes("shotgun") && distance >= 140) addReason(reasons, points, `Shotgun a ${distance.toFixed(0)}m`, 4);
 }
 
 function decayScore(state: PlayerState, now: number): void {
   const elapsed = now - state.lastScoreAt;
   if (elapsed < SCORE_DECAY_MS) return;
-  const decay = Math.floor(elapsed / SCORE_DECAY_MS);
-  state.score = Math.max(0, state.score - decay);
+  state.score = Math.max(0, state.score - Math.floor(elapsed / SCORE_DECAY_MS));
   state.lastScoreAt = now;
 }
 
 async function persistentStats(steamId: string): Promise<{ kills: number; deaths: number; headshots: number }> {
   const rows = await db.select({ kills: playerStatsTable.kills, deaths: playerStatsTable.deaths, headshots: playerStatsTable.headshots })
-    .from(playerStatsTable)
-    .where(eq(playerStatsTable.steamId, steamId));
+    .from(playerStatsTable).where(eq(playerStatsTable.steamId, steamId));
   const row = rows[0];
   return { kills: Number(row?.kills ?? 0), deaths: Number(row?.deaths ?? 0), headshots: Number(row?.headshots ?? 0) };
 }
 
-async function sendAlert(signal: KillSignal, reasons: string[], score: number, stats: { kills: number; deaths: number; headshots: number }, recent: RecentKill[]): Promise<void> {
+function levelFor(score: number): { label: string; color: number } {
+  if (score >= 6) return { label: "🔴 CRÍTICO", color: 0xe74c3c };
+  if (score >= 3) return { label: "🟠 SUSPEITO", color: 0xe67e22 };
+  return { label: "🟡 ATENÇÃO", color: 0xf1c40f };
+}
+
+async function sendAlert(args: {
+  attackerSteamId: string;
+  attackerName: string;
+  victimName: string;
+  weapon?: string;
+  distance?: number;
+  headshot?: boolean;
+  bone?: string;
+  reasons: string[];
+  score: number;
+  stats: { kills: number; deaths: number; headshots: number };
+}): Promise<void> {
   const client = discordClient();
   if (!client) return;
   const channelId = process.env.ANTICHEAT_LOG_CHANNEL_ID?.trim() || process.env.DISCORD_LOG_CHANNEL_ID?.trim();
@@ -101,92 +94,92 @@ async function sendAlert(signal: KillSignal, reasons: string[], score: number, s
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel?.isSendable()) return;
 
-  const hsRate = stats.kills > 0 ? (stats.headshots / stats.kills) * 100 : 0;
-  const kd = stats.deaths > 0 ? stats.kills / stats.deaths : stats.kills;
-  const level = score >= 10 ? "🔴 CRÍTICO" : score >= 6 ? "🟠 SUSPEITO" : "🟡 ATENÇÃO";
-  const color = score >= 10 ? 0xe74c3c : score >= 6 ? 0xe67e22 : 0xf1c40f;
-  const lastKills = recent.slice(-5).map((k) => `• ${k.headshot ? "🎯 HS" : "💀 Kill"} em **${k.victimName}** — ${weaponLabel(k.weapon)}${k.distance ? ` • ${k.distance.toFixed(0)}m` : ""}`).join("\n");
-
+  const hsRate = args.stats.kills > 0 ? (args.stats.headshots / args.stats.kills) * 100 : 0;
+  const level = levelFor(args.score);
   const embed = new EmbedBuilder()
-    .setColor(color)
-    .setTitle(`🛡️ Anti-Cheat • ${level}`)
-    .setDescription(`**${signal.attackerName}** gerou sinais que merecem observação da staff.\n\n⚠️ **Isto não é prova de cheat e não aplica punição automática.**`)
+    .setColor(level.color)
+    .setTitle(`🛡️ Detector de Suspeita • ${level.label}`)
+    .setDescription(`**${args.attackerName}** gerou um comportamento que merece observação.\n\n⚠️ Alerta assistido: não aplica ban automático.`)
     .addFields(
-      { name: "👤 Jogador", value: `${signal.attackerName}\n\`${signal.attackerSteamId}\``, inline: true },
-      { name: "📊 Score", value: `**${score} pontos**`, inline: true },
-      { name: "🎯 Estatísticas", value: `Kills: **${stats.kills}**\nK/D: **${kd.toFixed(2)}**\nHS: **${hsRate.toFixed(1)}%**`, inline: true },
-      { name: "🚨 Motivos", value: reasons.map((r) => `• ${r}`).join("\n").slice(0, 1024) },
-      { name: "🔫 Último evento", value: `Vítima: **${signal.victimName}**\nArma: **${weaponLabel(signal.weapon)}**\nDistância: **${signal.distance ? `${signal.distance.toFixed(1)}m` : "N/D"}**\nHeadshot: **${signal.headshot ? "Sim" : "Não"}**`, inline: true },
-      { name: "🧾 Sequência recente", value: lastKills || "Sem sequência registrada", inline: false },
-      { name: "🔗 Steam", value: `https://steamcommunity.com/profiles/${signal.attackerSteamId}` },
+      { name: "👤 Jogador", value: `${args.attackerName}\n\`${args.attackerSteamId}\``, inline: true },
+      { name: "📊 Score", value: `**${args.score}**`, inline: true },
+      { name: "🎯 HS", value: `${args.stats.kills} kills • **${hsRate.toFixed(1)}% HS**`, inline: true },
+      { name: "🚨 Motivos", value: args.reasons.map(r => `• ${r}`).join("\n").slice(0, 1024) },
+      { name: "🔫 Evento", value: `Vítima: **${args.victimName}**\nArma: **${weaponLabel(args.weapon)}**\nDistância: **${args.distance ? `${args.distance.toFixed(1)}m` : "N/D"}**${args.bone ? `\nLocal: **${args.bone}**` : ""}${typeof args.headshot === "boolean" ? `\nHeadshot: **${args.headshot ? "Sim" : "Não"}**` : ""}` },
+      { name: "🔗 Steam", value: `https://steamcommunity.com/profiles/${args.attackerSteamId}` },
     )
-    .setFooter({ text: "Guerra Fria • Detecção assistida — revisar manualmente antes de qualquer punição" })
+    .setFooter({ text: "Guerra Fria • Observar manualmente antes de qualquer punição" })
     .setTimestamp();
-
   await channel.send({ embeds: [embed] });
 }
 
 export async function analyzeKill(signal: KillSignal): Promise<void> {
-  if (!signal.attackerSteamId.startsWith("7656119") || !signal.victimSteamId.startsWith("7656119")) return;
-  if (signal.attackerSteamId === signal.victimSteamId) return;
-
+  if (!signal.attackerSteamId.startsWith("7656119") || !signal.victimSteamId.startsWith("7656119") || signal.attackerSteamId === signal.victimSteamId) return;
   const now = signal.timestamp && Number.isFinite(signal.timestamp) ? signal.timestamp : Date.now();
   const state = stateFor(signal.attackerSteamId);
   decayScore(state, now);
-
-  state.recent.push({ ...signal, at: now });
-  state.recent = state.recent.filter((k) => now - k.at <= HISTORY_MS);
-  state.killStreak += 1;
-  state.headshotStreak = signal.headshot ? state.headshotStreak + 1 : 0;
-  state.lastVictimIds.push(signal.victimSteamId);
-  state.lastVictimIds = state.lastVictimIds.slice(-10);
+  state.recentKills.push({ ...signal, at: now });
+  state.recentKills = state.recentKills.filter(k => now - k.at <= HISTORY_MS);
 
   const reasons: string[] = [];
-  const points = { value: 0 };
+  let points = 0;
+  const w = normalizeWeapon(signal.weapon);
 
-  const last30 = state.recent.filter((k) => now - k.at <= 30_000);
-  const last20 = state.recent.filter((k) => now - k.at <= 20_000);
-  const last10 = state.recent.filter((k) => now - k.at <= 10_000);
-  const last8 = state.recent.filter((k) => now - k.at <= 8_000);
-  const last4 = state.recent.filter((k) => now - k.at <= 4_000);
-
-  if (state.headshotStreak >= 5) addReason(reasons, points, `${state.headshotStreak} kills consecutivas, todas de headshot`, 5);
-  else if (state.headshotStreak >= 3 && last10.filter((k) => k.headshot).length >= 3) addReason(reasons, points, `${state.headshotStreak} headshots consecutivos em poucos segundos`, 3);
-
-  if (last20.length >= 4) addReason(reasons, points, `${last20.length} kills em menos de 20 segundos`, 3);
-  if (last30.length >= 5) addReason(reasons, points, `${last30.length} kills em menos de 30 segundos`, 4);
-
-  const targets4 = new Set(last4.map((k) => k.victimSteamId)).size;
-  const targets8 = new Set(last8.map((k) => k.victimSteamId)).size;
-  if (targets4 >= 3) addReason(reasons, points, `${targets4} vítimas diferentes em até 4 segundos (possível snap)`, 4);
-  if (targets8 >= 4) addReason(reasons, points, `${targets8} vítimas diferentes em até 8 segundos`, 4);
-
-  evaluateWeaponDistance(signal.weapon, signal.distance, reasons, points);
+  if ((w.includes("mp5") || w.includes("smg") || w.includes("thompson")) && (signal.distance ?? 0) >= 120) {
+    reasons.push(`${weaponLabel(signal.weapon)} matou a ${(signal.distance ?? 0).toFixed(0)}m`);
+    points += 3;
+  }
 
   const stats = await persistentStats(signal.attackerSteamId).catch(() => ({ kills: 0, deaths: 0, headshots: 0 }));
-  const projectedKills = Math.max(stats.kills, 1);
-  const hsRate = stats.headshots / projectedKills;
-  if (stats.kills >= 20 && hsRate >= 0.85) addReason(reasons, points, `HS% extremamente alto: ${(hsRate * 100).toFixed(1)}% em ${stats.kills} kills`, 4);
-  else if (stats.kills >= 15 && hsRate >= 0.80) addReason(reasons, points, `HS% muito alto: ${(hsRate * 100).toFixed(1)}% em ${stats.kills} kills`, 3);
+  const hsRate = stats.kills > 0 ? stats.headshots / stats.kills : 0;
+  if (stats.kills >= 10 && hsRate > 0.60) {
+    reasons.push(`HS acima de 60%: ${(hsRate * 100).toFixed(1)}% com ${stats.kills} kills`);
+    points += 2;
+  }
 
-  if (stats.kills >= 15 && stats.deaths <= 1) addReason(reasons, points, `K/D fora do padrão: ${stats.kills}/${stats.deaths}`, 3);
-
-  const recentLongRange = state.recent.filter((k) => {
-    if (!k.distance || k.distance < 150) return false;
-    const w = normalizeWeapon(k.weapon);
-    return w.includes("thompson") || w.includes("smg") || w.includes("pistol") || w.includes("revolver") || w.includes("python");
-  });
-  if (recentLongRange.length >= 3) addReason(reasons, points, `${recentLongRange.length} kills recentes de longa distância com arma de curto/médio alcance`, 4);
+  const last3 = state.recentKills.slice(-3);
+  if (last3.length === 3 && last3.every(k => k.headshot) && last3[2].at - last3[0].at <= 30_000) {
+    reasons.push("3 kills seguidas de headshot em até 30 segundos");
+    points += 2;
+  }
 
   if (!reasons.length) return;
-
-  state.score += points.value;
+  state.score += points;
   state.lastScoreAt = now;
-  const criticalSingle = points.value >= 5;
-  const shouldAlert = (state.score >= 6 || criticalSingle) && now - state.lastAlertAt >= ALERT_COOLDOWN_MS;
-  if (!shouldAlert) return;
-
+  if (now - state.lastAlertAt < ALERT_COOLDOWN_MS) return;
   state.lastAlertAt = now;
-  await sendAlert(signal, reasons, state.score, stats, state.recent).catch((err) => logger.error({ err, steamId: signal.attackerSteamId }, "Anti-cheat Discord alert failed"));
-  logger.warn({ steamId: signal.attackerSteamId, player: signal.attackerName, score: state.score, reasons }, "Anti-cheat suspicion detected");
+  await sendAlert({ ...signal, reasons, score: state.score, stats }).catch(err => logger.error({ err }, "Anti-cheat kill alert failed"));
+}
+
+export async function analyzeArrowHit(signal: HitSignal): Promise<void> {
+  if (!signal.attackerSteamId.startsWith("7656119") || !signal.victimSteamId.startsWith("7656119") || signal.attackerSteamId === signal.victimSteamId) return;
+  const now = signal.timestamp && Number.isFinite(signal.timestamp) ? signal.timestamp : Date.now();
+  const state = stateFor(signal.attackerSteamId);
+  decayScore(state, now);
+  state.recentArrowHits.push({ ...signal, at: now });
+  state.recentArrowHits = state.recentArrowHits.filter(h => now - h.at <= 15_000);
+
+  const reasons: string[] = [];
+  let points = 0;
+  const sameVictim = state.recentArrowHits.filter(h => h.victimSteamId === signal.victimSteamId);
+  const last2 = sameVictim.slice(-2);
+  if (last2.length === 2 && last2[1].at - last2[0].at <= 1500) {
+    reasons.push(`2 flechadas no mesmo jogador em ${(last2[1].at - last2[0].at) / 1000}s`);
+    points += 2;
+  }
+
+  const bone = (signal.bone ?? "unknown").toLowerCase();
+  const sameBone = sameVictim.filter(h => (h.bone ?? "unknown").toLowerCase() === bone).slice(-3);
+  if (bone !== "unknown" && sameBone.length === 3 && sameBone[2].at - sameBone[0].at <= 10_000) {
+    reasons.push(`3 flechadas seguidas no mesmo local (${signal.bone}) em até 10s`);
+    points += 3;
+  }
+
+  if (!reasons.length) return;
+  state.score += points;
+  state.lastScoreAt = now;
+  if (now - state.lastAlertAt < ALERT_COOLDOWN_MS) return;
+  state.lastAlertAt = now;
+  const stats = await persistentStats(signal.attackerSteamId).catch(() => ({ kills: 0, deaths: 0, headshots: 0 }));
+  await sendAlert({ ...signal, reasons, score: state.score, stats }).catch(err => logger.error({ err }, "Anti-cheat arrow alert failed"));
 }
