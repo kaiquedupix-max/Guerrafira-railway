@@ -5,8 +5,8 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.2.0")]
-    [Description("Leaderboard + telemetria simples para detector assistido Guerra Fria.")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.3.0")]
+    [Description("Leaderboard profissional + telemetria simples para detector assistido Guerra Fria.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
         private const string Prefix = "[GF_LEADERBOARD]";
@@ -127,12 +127,13 @@ namespace Oxide.Plugins
             var player = crafter.owner;
             if (!IsRealPlayer(player)) return;
             var shortname = item.info.shortname ?? string.Empty;
-            if (!IsExplosive(shortname)) return;
+            if (!IsTrackedCraft(shortname)) return;
             Emit(new LeaderboardEvent { @event = "craft", steamid = player.UserIDString, player = player.displayName ?? "Unknown", item = shortname, amount = Math.Max(item.amount, 1), timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
         }
 
-        private bool IsExplosive(string shortname)
+        private bool IsTrackedCraft(string shortname)
         {
+            if (shortname == "gunpowder") return true;
             switch (shortname)
             {
                 case "explosives": case "explosive.timed": case "grenade.f1": case "grenade.beancan": case "ammo.rocket.basic": case "ammo.rocket.hv": case "ammo.rocket.fire": case "ammo.rifle.explosive": case "surveycharge": return true;
@@ -154,7 +155,7 @@ namespace Oxide.Plugins
         private void StatusCommand(ConsoleSystem.Arg arg)
         {
             if (arg == null) return;
-            arg.ReplyWith("GuerraFriaLeaderboard: ONLINE | kills/headshots/distancia + arrow hits ativos");
+            arg.ReplyWith("GuerraFriaLeaderboard: ONLINE | kills/HS/farm por recurso/polvora + detector ativos");
         }
     }
 }
