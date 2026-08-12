@@ -18,7 +18,7 @@ import { executeRconCommand } from "./utils/rcon.js";
 import { logger } from "../lib/logger.js";
 
 const PANEL_MARKER = "Guerra Fria • Verificação Booster";
-const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/kaiquedupix-max/Imagens-gf/refs/heads/main/booster.jpeg";
+const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/kaiquedupix-max/Imagens-gf/refs/heads/main/EBC01249-5174-40E9-B18B-8841D151C1A5.png";
 let started = false;
 
 function grantCommand(steamId: string): string {
