@@ -4,7 +4,7 @@ import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import webhookRouter from "./routes/webhook.js";
-import { leaderboardHtml } from "./routes/leaderboard";
+import { leaderboardHtml } from "./routes/leaderboardV2";
 import { adminHtml } from "./admin/html.js";
 import { adminExtraJs } from "./admin/extra.js";
 import { logger } from "./lib/logger";
