@@ -24,7 +24,7 @@ export const data = new SlashCommandBuilder()
 
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
   const focused = interaction.options.getFocused().toLowerCase();
-  const now     = new Date();
+  const now = new Date();
 
   const active = await db
     .select()
@@ -48,10 +48,10 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
     })
     .slice(0, 25)
     .map((s) => {
-      const vip     = VIP_TIERS[s.vipTier as VipTier];
+      const vip = VIP_TIERS[s.vipTier as VipTier];
       const daysLeft = Math.max(0, Math.ceil((new Date(s.expiresAt).getTime() - now.getTime()) / 86_400_000));
       return {
-        name:  `${vip?.emoji ?? "⭐"} ${vip?.name ?? s.vipTier} — ${s.steamId} (${daysLeft}d restante)`.slice(0, 100),
+        name: `${vip?.emoji ?? "⭐"} ${vip?.name ?? s.vipTier} — ${s.steamId} (${daysLeft}d restante)`.slice(0, 100),
         value: String(s.id),
       };
     });
@@ -83,14 +83,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   try {
     await revokeVip({
       subscriptionId: sub.id,
-      tier:           sub.vipTier as VipTier,
-      steamId:        sub.steamId,
-      discordUserId:  sub.discordUserId,
-      client:         interaction.client,
+      tier: sub.vipTier as VipTier,
+      steamId: sub.steamId,
+      discordUserId: sub.discordUserId,
+      client: interaction.client,
     });
   } catch (err) {
     logger.error({ err, subId, steamId: sub.steamId }, "removervip command error");
-    await interaction.editReply("❌ Ocorreu um erro ao remover o VIP. Verifique os logs.");
+    await interaction.editReply("❌ Ocorreu um erro ao remover o VIP. Verifique os logs internos.");
     return;
   }
 
@@ -98,22 +98,15 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .setColor(0xe74c3c)
     .setTitle(`${vip?.emoji ?? "⭐"}  VIP Removido`)
     .addFields(
-      { name: "Membro",   value: `<@${sub.discordUserId}>`, inline: true },
-      { name: "Tier",     value: vip?.name ?? sub.vipTier,  inline: true },
-      { name: "Steam ID", value: `\`${sub.steamId}\``,      inline: true },
-      { name: "Admin",    value: `<@${interaction.user.id}>`, inline: true },
+      { name: "Membro", value: `<@${sub.discordUserId}>`, inline: true },
+      { name: "Tier", value: vip?.name ?? sub.vipTier, inline: true },
+      { name: "Steam ID", value: `\`${sub.steamId}\``, inline: true },
+      { name: "Admin", value: `<@${interaction.user.id}>`, inline: true },
     )
     .setFooter({ text: "Guerra Fria • Remoção Manual" })
     .setTimestamp();
 
+  // Apenas quem executou o comando recebe esta confirmação.
+  // Não envia VIP para o canal de registros do servidor.
   await interaction.editReply({ embeds: [embed] });
-
-  // Notifica no canal de logs
-  const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
-  if (logChannelId) {
-    const logCh = await interaction.client.channels.fetch(logChannelId).catch(() => null);
-    if (logCh?.isSendable()) {
-      await logCh.send({ embeds: [embed] });
-    }
-  }
 }
