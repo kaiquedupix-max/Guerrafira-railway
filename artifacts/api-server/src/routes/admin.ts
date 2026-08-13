@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { adminLogin, adminCallback, adminLogout } from "../admin/oauthRoutesV2.js";
+import { adminLoginV3, adminCallbackV3, adminLogoutV3 } from "../admin/oauthRoutesV3.js";
 import readRoutes from "../admin/routesRead.js";
 import moderationRoutes from "../admin/routesModeration.js";
 import serverRoutes from "../admin/routesServer.js";
@@ -10,9 +10,19 @@ import leaderboardRoutes from "../admin/routesLeaderboard.js";
 import financeRoutes from "../admin/routesFinance.js";
 
 const router = Router();
-router.get("/auth/login", adminLogin);
-router.get("/auth/callback", adminCallback);
-router.get("/auth/logout", adminLogout);
+
+router.use((req, _res, next) => {
+  const auth = req.get("authorization") ?? "";
+  if ((!req.cookies || !req.cookies.gf_admin) && auth.toLowerCase().startsWith("bearer ")) {
+    const token = auth.slice(7).trim();
+    req.cookies = { ...(req.cookies ?? {}), gf_admin: token };
+  }
+  next();
+});
+
+router.get("/auth/login", adminLoginV3);
+router.get("/auth/callback", adminCallbackV3);
+router.get("/auth/logout", adminLogoutV3);
 router.use(readRoutes);
 router.use("/moderation", moderationRoutes);
 router.use("/server", serverRoutes);
