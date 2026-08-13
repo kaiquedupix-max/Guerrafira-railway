@@ -60,7 +60,6 @@ router.post("/unban", async (req, res) => {
   const admin = res.locals.admin as { userId: string; username: string };
   await executeRconCommand(`unban ${steamId}`);
   await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId, playerName: p?.playerName ?? steamId, reason: "Desbanido pelo painel web", adminId: admin.userId, adminName: `${admin.username} [WEB]` });
-  await sendServerLog(new EmbedBuilder().setColor(0x22c55e).setTitle("✅ Desbanimento aplicado").setDescription(`**${p?.playerName ?? steamId}** foi desbanido pelo painel web.\nSteamID: \`${steamId}\`\nAdmin: <@${admin.userId}>`).setTimestamp());
   res.json({ ok: true });
 });
 
