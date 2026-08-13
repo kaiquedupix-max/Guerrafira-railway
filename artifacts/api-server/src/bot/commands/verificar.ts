@@ -45,7 +45,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       }
     } catch (err) {
       logger.error({ err, discordUserId: discordUser.id }, "Failed to assign verified role");
-      await interaction.editReply(`⚠️ Não foi possível atribuir o cargo. Certifique-se de que:\n• O bot tem permissão de **Gerenciar Cargos**\n• O cargo <@&${verifiedRoleId}> está **abaixo** do cargo do bot na hierarquia`);
+      await interaction.editReply(`⚠️ Não foi possível atribuir o cargo. Certifique-se de que:\n• O bot tem permissão de **Gerenciar Cargos**.\n• O cargo <@&${verifiedRoleId}> está **abaixo** do cargo do bot na hierarquia.`);
       return;
     }
   }
@@ -65,13 +65,19 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (ch?.isSendable()) await ch.send({ embeds: [buildVerifyEmbed({ playerName: player.playerName, steamId: player.steamId, discordUser, admin: interaction.user })] });
   }
 
-  let reply = `✅ **${player.playerName}** verificado com sucesso!\n🛡️ Log enviado ao canal de logs.`;
-  if (verifiedRoleId) reply += roleAssigned ? `\n🎖️ Cargo <@&${verifiedRoleId}> atribuído a <@${discordUser.id}>.` : `\n🎖️ <@${discordUser.id}> já possuía o cargo <@&${verifiedRoleId}>.`;
+  let reply = `✅ **${player.playerName}** foi verificado com sucesso.\n🛡️ Registro enviado ao canal de logs.`;
+  if (verifiedRoleId) reply += roleAssigned ? `\n🎖️ O cargo <@&${verifiedRoleId}> foi atribuído a <@${discordUser.id}>.` : `\n🎖️ <@${discordUser.id}> já possuía o cargo <@&${verifiedRoleId}>.`;
   else reply += `\n⚠️ Configure \`DISCORD_VERIFIED_ROLE_ID\` para atribuir o cargo automaticamente no Discord.`;
-  reply += rconResult === null ? `\n⚠️ Não foi possível confirmar o grupo **vr** no Rust porque o RCON está indisponível.` : `\n🎮 Jogador adicionado ao grupo **vr** no Rust.`;
+  reply += rconResult === null ? `\n⚠️ Não foi possível confirmar o grupo **vr** no Rust porque o RCON está indisponível.` : `\n🎮 O jogador foi adicionado ao grupo **vr** no Rust.`;
   await interaction.editReply(reply);
 
   const adminDisplayName = (interaction.member as { displayName?: string } | null)?.displayName ?? interaction.user.displayName;
-  await executeRconCommand(`say <color=#00FF88>[VERIFICACAO CONCLUIDA]</color> | <color=#FF8800>${player.playerName}</color> foi verificado pelo admin <color=#FF4444>${adminDisplayName}</color> — <color=#00FF88>jogador esta LIMPO</color>`).catch(() => {});
+  await executeRconCommand(
+    `say <color=#00FF88>[VERIFICAÇÃO CONCLUÍDA]</color> | ` +
+    `<color=#FF8800>${player.playerName}</color> foi verificado pelo administrador ` +
+    `<color=#FF4444>${adminDisplayName}</color>. ` +
+    `<color=#00FF88>O jogador foi considerado LIMPO.</color>`
+  ).catch(() => {});
+
   logger.info({ steamId: player.steamId, playerName: player.playerName, discordUserId: discordUser.id, roleAssigned, verifiedGameCommand, admin: interaction.user.tag }, "Player verified");
 }
