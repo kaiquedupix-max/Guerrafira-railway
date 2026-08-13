@@ -10,7 +10,6 @@ import {
   getPlayerBySteamId,
 } from "../utils/players.js";
 import { executeRconCommand } from "../utils/rcon.js";
-import { buildKickEmbed } from "../utils/embeds.js";
 import { db, modLogsTable } from "@workspace/db";
 import { logger } from "../../lib/logger.js";
 
@@ -53,7 +52,7 @@ export async function execute(
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const steamId = interaction.options.getString("jogador", true);
-  const reason  = interaction.options.getString("motivo",  true);
+  const reason  = interaction.options.getString("motivo", true);
 
   const player = await getPlayerBySteamId(steamId);
   if (!player) {
@@ -68,7 +67,6 @@ export async function execute(
     return;
   }
 
-  // Include appeal link in the message shown on the server
   const rconReason = `${reason} | Recurso: ${APPEAL_LINK}`;
 
   const rconResult = await executeRconCommand(
@@ -82,7 +80,8 @@ export async function execute(
     return;
   }
 
-  // Save moderation log
+  // Mantém o histórico interno para consultas administrativas,
+  // mas não publica kick no canal Registros do Servidor.
   await db.insert(modLogsTable).values({
     action: "KICK",
     steamId: player.steamId,
@@ -91,24 +90,6 @@ export async function execute(
     adminId: interaction.user.id,
     adminName: interaction.user.tag,
   });
-
-  // Post embed to log channel
-  const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
-  if (logChannelId) {
-    const ch = await interaction.client.channels.fetch(logChannelId).catch(() => null);
-    if (ch?.isSendable()) {
-      await ch.send({
-        embeds: [
-          buildKickEmbed({
-            playerName: player.playerName,
-            steamId: player.steamId,
-            reason,
-            admin: interaction.user,
-          }),
-        ],
-      });
-    }
-  }
 
   await interaction.editReply(
     `✅ **${player.playerName}** foi expulso do servidor.\n📋 Motivo: ${reason}`
