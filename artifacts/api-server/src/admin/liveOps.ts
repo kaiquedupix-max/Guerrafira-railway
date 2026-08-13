@@ -8,25 +8,36 @@ let seq = 1;
 const chat: LiveChatItem[] = [];
 const events = new Map<string, LiveEvent>([
   ["cargo", { key: "cargo", label: "Cargo Ship", active: false, lastSeen: null, lastMessage: null }],
-  ["heli", { key: "heli", label: "Patrol Helicopter", active: false, lastSeen: null, lastMessage: null }],
+  ["heli", { key: "heli", label: "Helicóptero de Patrulha", active: false, lastSeen: null, lastMessage: null }],
   ["chinook", { key: "chinook", label: "CH47 Chinook", active: false, lastSeen: null, lastMessage: null }],
   ["bradley", { key: "bradley", label: "Bradley APC", active: false, lastSeen: null, lastMessage: null }],
-  ["plane", { key: "plane", label: "Cargo Plane", active: false, lastSeen: null, lastMessage: null }],
+  ["plane", { key: "plane", label: "Avião de Carga", active: false, lastSeen: null, lastMessage: null }],
 ]);
 
 function trimList<T>(arr: T[], max: number) { if (arr.length > max) arr.splice(0, arr.length - max); }
 
 function parseChat(raw: string): { player: string; message: string } | null {
   const text = raw.trim();
-  // Common Rust WebRCON chat JSON shape.
   try {
     const j = JSON.parse(text) as Record<string, unknown>;
-    const msg = String(j.Message ?? j.message ?? j.Text ?? j.text ?? "").trim();
-    const player = String(j.Username ?? j.username ?? j.DisplayName ?? j.name ?? j.UserId ?? "Jugador").trim();
-    if (msg && (j.Channel !== undefined || j.UserId !== undefined || j.Username !== undefined)) return { player, message: msg };
+    const msg = String(j.Message ?? j.message ?? j.Text ?? j.text ?? j.Content ?? j.content ?? "").trim();
+    const player = String(j.Username ?? j.username ?? j.DisplayName ?? j.displayName ?? j.Name ?? j.name ?? j.UserId ?? j.userId ?? "Jogador").trim();
+    const channel = j.Channel ?? j.channel ?? j.ChatChannel ?? j.chatChannel;
+    if (msg && (channel !== undefined || j.UserId !== undefined || j.userId !== undefined || j.Username !== undefined || j.username !== undefined || j.DisplayName !== undefined)) {
+      return { player: player || "Jogador", message: msg };
+    }
   } catch {}
-  const m = text.match(/^\[CHAT\]\s*(?:\[[^\]]+\]\s*)?([^:]{1,40}):\s*(.+)$/i);
-  return m ? { player: m[1].trim(), message: m[2].trim() } : null;
+
+  const patterns = [
+    /^\[CHAT\]\s*(?:\[[^\]]+\]\s*)?([^:]{1,60}):\s*(.+)$/i,
+    /^\[Chat\]\s+([^:]{1,60}):\s*(.+)$/i,
+    /^([^:\r\n]{1,60})\s*:\s*(.+)$/,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m && m[1] && m[2] && !/^server$/i.test(m[1].trim())) return { player: m[1].trim(), message: m[2].trim() };
+  }
+  return null;
 }
 
 function markEvent(key: string, raw: string) {
