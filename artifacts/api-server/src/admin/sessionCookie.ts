@@ -15,10 +15,11 @@ export function issueAdminSession(res: Response, userId: string, username: strin
   const session: AdminSession = { userId, username, expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
   const payload = Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
   const token = `${payload}.${sign(payload)}`;
+
   res.cookie("gf_admin", token, {
     httpOnly: true,
     secure: true,
-    sameSite: "lax",
+    sameSite: "none",
     path: "/",
     maxAge: 12 * 60 * 60 * 1000,
   });
@@ -27,12 +28,15 @@ export function issueAdminSession(res: Response, userId: string, username: strin
 export function getAdminSession(req: Request): AdminSession | null {
   const token = req.cookies?.gf_admin as string | undefined;
   if (!token) return null;
+
   const [payload, signature] = token.split(".");
   if (!payload || !signature) return null;
+
   const expected = sign(payload);
-  const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
+  const a = Buffer.from(signature, "utf8");
+  const b = Buffer.from(expected, "utf8");
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AdminSession;
     if (!session.userId || !session.username || session.expiresAt < Date.now()) return null;
@@ -43,5 +47,5 @@ export function getAdminSession(req: Request): AdminSession | null {
 }
 
 export function revokeAdminSession(_req: Request, res: Response): void {
-  res.clearCookie("gf_admin", { path: "/" });
+  res.clearCookie("gf_admin", { path: "/", secure: true, sameSite: "none" });
 }
