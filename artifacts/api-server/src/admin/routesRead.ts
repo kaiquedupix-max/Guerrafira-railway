@@ -2,7 +2,7 @@ import { Router } from "express";
 import { desc } from "drizzle-orm";
 import { db, playersTable, modLogsTable, boosterLinksTable, vipSubscriptionsTable } from "@workspace/db";
 import { getServerInfo } from "../bot/utils/rcon.js";
-import { getAdminSession } from "./session.js";
+import { getAdminSession } from "./sessionCookie.js";
 import { requireAdmin } from "./guard.js";
 
 const router = Router();
