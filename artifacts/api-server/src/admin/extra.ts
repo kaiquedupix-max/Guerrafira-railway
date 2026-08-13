@@ -1,1 +1,21 @@
-export const adminExtraJs = ``;
+export const adminExtraJs = `
+(function(){
+  function el(id){return document.getElementById(id)}
+  function addNav(id,label){for(const box of [el('nav'),el('mobileNav')]){if(!box||box.querySelector('[data-view="'+id+'"]'))continue;const b=document.createElement('button');b.textContent=label;b.dataset.view=id;b.onclick=function(){show(id)};box.appendChild(b)}}
+  var main=document.querySelector('.main');
+  if(main&&!el('serverTools')){
+    var s=document.createElement('section');s.id='serverTools';s.className='view';s.innerHTML='<div class="forms"><div class="form"><h3>Anuncio global en Rust</h3><textarea id="gfAnnouncement" placeholder="Mensaje para todos los jugadores"></textarea><button class="btn yellow" id="gfAnnouncementBtn">Enviar al juego</button></div><div class="form"><h3>Estado rápido</h3><p class="sub">Actualiza jugadores, mapa, cola, sleepers y eventos desde RCON.</p><button class="btn" id="gfRefreshBtn">Actualizar servidor</button></div></div>';main.appendChild(s);
+    var d=document.createElement('section');d.id='discordTools';d.className='view';d.innerHTML='<div class="forms"><div class="form"><h3>Mensaje en Discord</h3><input id="gfDiscordChannel" placeholder="ID del canal"><textarea id="gfDiscordMessage" placeholder="Mensaje"></textarea><button class="btn" id="gfDiscordSend">Enviar</button></div><div class="form"><h3>Sorteo VIP</h3><select id="gfRaffleTier"><option value="bronze">Bronze</option><option value="prata">Prata</option><option value="ouro">Ouro</option></select><select id="gfRaffleDays"><option value="3">3 días</option><option value="7">7 días</option><option value="30" selected>30 días</option></select><select id="gfRaffleHours"><option value="1">1 hora</option><option value="6">6 horas</option><option value="12">12 horas</option><option value="24" selected>24 horas</option><option value="72">3 días</option><option value="168">7 días</option></select><button class="btn yellow" id="gfRaffleBtn">Crear sorteo</button></div></div>';main.appendChild(d);
+    pages.serverTools='Servidor';pages.discordTools='Discord';
+    addNav('serverTools','Servidor');addNav('discordTools','Discord');
+    el('gfAnnouncementBtn').onclick=function(){post('/api/admin/server/say',{message:el('gfAnnouncement').value})};
+    el('gfRefreshBtn').onclick=function(){loadOverview();loadEvents();toast('Información actualizada')};
+    el('gfDiscordSend').onclick=function(){post('/api/admin/discord/message',{channelId:el('gfDiscordChannel').value,message:el('gfDiscordMessage').value})};
+    el('gfRaffleBtn').onclick=function(){post('/api/admin/discord/raffle',{tier:el('gfRaffleTier').value,vipDays:Number(el('gfRaffleDays').value),hours:Number(el('gfRaffleHours').value)})};
+  }
+
+  var steam=el('steam');if(steam&&!el('gfSteamTools')){var box=document.createElement('div');box.id='gfSteamTools';box.className='section';box.innerHTML='<div class="head"><h2>Administrar Booster</h2></div><div class="body forms"><div class="form"><input id="gfBoostDiscord" placeholder="Discord ID"><select id="gfBoostActive"><option value="true">Activar Booster</option><option value="false">Quitar Booster</option></select><button class="btn" id="gfBoostBtn">Aplicar</button></div></div>';steam.appendChild(box);el('gfBoostBtn').onclick=function(){post('/api/admin/steam/booster',{discordUserId:el('gfBoostDiscord').value,active:el('gfBoostActive').value==='true'}).then(loadSteam)}}
+
+  var vip=el('vip');if(vip&&!el('gfVipTools')){var vb=document.createElement('div');vb.id='gfVipTools';vb.className='section';vb.innerHTML='<div class="head"><h2>Conceder VIP</h2></div><div class="body forms"><input id="gfVipSteam" placeholder="SteamID"><input id="gfVipDiscord" placeholder="Discord ID (opcional)"><select id="gfVipTier"><option value="bronze">Bronze</option><option value="prata">Prata</option><option value="ouro">Ouro</option></select><input id="gfVipDays" type="number" value="30"><button class="btn yellow" id="gfVipGrant">Conceder VIP</button></div>';vip.appendChild(vb);el('gfVipGrant').onclick=function(){post('/api/admin/vip/grant',{steamId:el('gfVipSteam').value,discordUserId:el('gfVipDiscord').value,tier:el('gfVipTier').value,days:Number(el('gfVipDays').value)}).then(loadVips)}}
+})();
+`;
