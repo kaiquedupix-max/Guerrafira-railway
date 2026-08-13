@@ -34,8 +34,8 @@ async function setupPanel(client: Client): Promise<void> {
     "Impulsiona o **Discord Guerra Fria**? Verifique seu Booster e libere benefícios exclusivos enquanto seu impulso estiver ativo.\n\n" +
     "**🎁 VANTAGENS DE SER BOOSTER**\n\n🗺️ **Participar da votação dos mapas**\nTenha acesso às votações exclusivas e ajude a decidir os mapas do próximo wipe.\n\n" +
     "⚡ **Pular a fila**\nTenha prioridade para entrar no servidor quando houver fila.\n\n📦 **Kit Booster in-game**\nReceba acesso ao kit exclusivo dentro do Rust utilizando o comando **`/kit`**.\n\n" +
-    "**🔍 COMO VERIFICAR**\n🚀 Esteja impulsionando o servidor no momento da verificação.\n🎮 Clique em **Verificar Booster** e informe seu **SteamID64**.\n✅ Após a confirmação, o **Booster será ativado no jogo** automaticamente.\n\n" +
-    "⚠️ Cada conta do Discord pode vincular apenas **um SteamID**. Se precisar alterar o vínculo, procure a administração.\n⚠️ Se você deixar de impulsionar o Discord, os benefícios Booster serão removidos automaticamente."
+    "**🔍 COMO VERIFICAR**\n🚀 Esteja impulsionando o servidor no momento da verificação.\n🎮 Na primeira vez, informe seu **SteamID64**. Se sua conta já possui uma Steam vinculada, ela será usada automaticamente.\n✅ Após a confirmação, o **Booster será ativado no jogo** automaticamente.\n\n" +
+    "⚠️ A Steam vinculada não pode ser alterada pelo painel. Se precisar trocar o SteamID, abra um ticket com a administração.\n⚠️ Se você deixar de impulsionar o Discord, os benefícios Booster serão removidos automaticamente, mas o vínculo Steam será mantido."
   ).setImage(boosterImageUrl).setFooter({ text: PANEL_MARKER });
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("booster_verify").setLabel("Verificar Booster").setEmoji("🚀").setStyle(ButtonStyle.Primary));
   if (old) await old.edit({ embeds: [embed], components: [row] }); else await channel.send({ embeds: [embed], components: [row] });
@@ -49,7 +49,17 @@ export async function handleBoosterVerifyButton(interaction: ButtonInteraction):
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   if (!member?.premiumSince) { await interaction.reply({ content: "❌ Você não está impulsionando o servidor no momento. Inicie o Booster e tente novamente.", ephemeral: true }); return; }
   const existing = await getDiscordLink(interaction.user.id);
-  if (existing) { await interaction.reply({ content: `✅ **Seu Booster já está verificado.**\n\n🎮 SteamID vinculado: \`${existing.steamId}\`\n\nPor segurança, não é possível trocar o SteamID pelo painel. Se precisar alterar o vínculo, abra um ticket.`, ephemeral: true }); return; }
+  if (existing) {
+    if (existing.active) {
+      await interaction.reply({ content: `✅ **Seu Booster já está verificado.**\n\n🎮 SteamID vinculado: \`${existing.steamId}\`\n\n🔒 Por segurança, não é possível trocar o SteamID pelo painel. Se precisar alterar, abra um ticket com a administração.`, ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const result = await executeRconCommand(grantCommand(existing.steamId)).catch(() => null);
+    await db.update(boosterLinksTable).set({ active: true, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
+    await interaction.editReply(`🚀 **Booster ativado com sua Steam vinculada!**\n\n🎮 SteamID: \`${existing.steamId}\`\n${result === null ? "⚠️ Não foi possível confirmar o grupo **bs** via RCON." : "✅ Você foi adicionado ao grupo **bs** no Rust."}\n\n🔒 Para alterar a Steam vinculada, abra um ticket com a administração.`);
+    return;
+  }
   const modal = new ModalBuilder().setCustomId("booster_verify_modal").setTitle("Verificar Booster");
   const steam = new TextInputBuilder().setCustomId("steamid").setLabel("Seu SteamID64").setPlaceholder("7656119XXXXXXXXXX").setMinLength(17).setMaxLength(17).setRequired(true).setStyle(TextInputStyle.Short);
   modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(steam));
@@ -63,13 +73,13 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   if (!member?.premiumSince) { await interaction.editReply("❌ Seu Booster não está ativo no Discord."); return; }
   const existingDiscord = await getDiscordLink(interaction.user.id);
-  if (existingDiscord) { await interaction.editReply(`✅ **Seu Booster já está verificado.**\n\n🎮 SteamID vinculado: \`${existingDiscord.steamId}\`\n\nNão é possível alterar o SteamID pelo painel.`); return; }
+  if (existingDiscord) { await interaction.editReply(`🔒 Esta conta já possui a Steam \`${existingDiscord.steamId}\` vinculada. Por segurança, não é possível alterar o SteamID por aqui. Abra um ticket com a administração.`); return; }
   const existingSteam = await getSteamLink(steamId);
   if (existingSteam && existingSteam.discordUserId !== interaction.user.id) { await interaction.editReply("❌ Este **SteamID já está vinculado a outra conta do Discord**. Abra um ticket se acredita que isso é um erro."); return; }
   await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, updatedAt: new Date() });
   const command = grantCommand(steamId);
   const result = await executeRconCommand(command).catch((err) => { logger.error({ err, steamId, command }, "Failed to add Booster to Rust group"); return null; });
-  await interaction.editReply(`🚀 **Booster verificado com sucesso!**\n\n🎮 SteamID: \`${steamId}\`\n${result === null ? "⚠️ Booster salvo, mas o RCON não confirmou o grupo **bs** no jogo.\n" : "✅ Você foi adicionado ao grupo **bs** no jogo.\n"}📦 Dentro do Rust, use **\`/kit\`** para acessar seu kit.\n\n🔒 Este SteamID ficou vinculado à sua conta do Discord.`);
+  await interaction.editReply(`🚀 **Booster verificado com sucesso!**\n\n🎮 SteamID: \`${steamId}\`\n${result === null ? "⚠️ Booster salvo, mas o RCON não confirmou o grupo **bs** no jogo.\n" : "✅ Você foi adicionado ao grupo **bs** no jogo.\n"}📦 Dentro do Rust, use **\`/kit\`** para acessar seu kit.\n\n🔒 Este SteamID ficou vinculado à sua conta do Discord. Para alterá-lo, abra um ticket com a administração.`);
 }
 
 async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean): Promise<void> {
