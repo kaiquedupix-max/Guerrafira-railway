@@ -1,6 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startBot } from "./bot/indexSteamLinked";
+import { startBot } from "./bot/index";
 
 const rawPort = process.env["PORT"];
 
