@@ -3,6 +3,7 @@
 import { logger } from "../lib/logger.js";
 
 const MP_BASE = "https://api.mercadopago.com";
+const PIX_EXPIRATION_MINUTES = 30;
 
 function getToken(): string | null {
   const token = process.env.MP_ACCESS_TOKEN;
@@ -26,10 +27,11 @@ function getWebhookUrl(): string {
 
 // ─── PIX ─────────────────────────────────────────────────────────────────────
 export interface PixResult {
-  paymentId:    string;
-  qrCode:       string;
-  qrCodeBase64: string;
-  amount:       number;
+  paymentId:     string;
+  qrCode:        string;
+  qrCodeBase64:  string;
+  amount:        number;
+  expiresAt:     string;
 }
 
 export async function createPixPayment(opts: {
@@ -45,10 +47,15 @@ export async function createPixPayment(opts: {
 
   logger.info({ amount: opts.amount, vipTier: opts.vipTier, email: opts.email }, "Creating MP PIX payment");
 
+  // O QR Code deve vencer exatamente 30 minutos após a criação.
+  // Enviamos o vencimento explicitamente para não depender do padrão do Mercado Pago.
+  const requestedExpiration = new Date(Date.now() + PIX_EXPIRATION_MINUTES * 60_000).toISOString();
+
   const body = {
     transaction_amount: opts.amount,
     description:        opts.description,
     payment_method_id:  "pix",
+    date_of_expiration: requestedExpiration,
     payer: {
       email:          opts.email,
       first_name:     "Comprador",
@@ -64,11 +71,11 @@ export async function createPixPayment(opts: {
   };
 
   try {
-    const res     = await fetch(`${MP_BASE}/v1/payments`, {
+    const res = await fetch(`${MP_BASE}/v1/payments`, {
       method: "POST",
       headers: {
-        Authorization:       `Bearer ${token}`,
-        "Content-Type":      "application/json",
+        Authorization:        `Bearer ${token}`,
+        "Content-Type":       "application/json",
         "X-Idempotency-Key": `pix-${opts.discordUserId}-${opts.vipTier}-${Date.now()}`,
       },
       body: JSON.stringify(body),
@@ -81,14 +88,22 @@ export async function createPixPayment(opts: {
     const data = JSON.parse(rawText) as {
       id: number;
       status: string;
+      date_of_expiration?: string;
       point_of_interaction: { transaction_data: { qr_code: string; qr_code_base64: string } };
     };
-    logger.info({ paymentId: data.id, status: data.status }, "MP PIX payment created");
+
+    const expiresAt = data.date_of_expiration ?? requestedExpiration;
+    logger.info(
+      { paymentId: data.id, status: data.status, expiresAt, expirationMinutes: PIX_EXPIRATION_MINUTES },
+      "MP PIX payment created with explicit expiration",
+    );
+
     return {
       paymentId:    String(data.id),
       qrCode:       data.point_of_interaction.transaction_data.qr_code,
       qrCodeBase64: data.point_of_interaction.transaction_data.qr_code_base64,
       amount:       opts.amount,
+      expiresAt,
     };
   } catch (err) {
     logger.error({ err }, "MP PIX payment exception");
@@ -98,8 +113,8 @@ export async function createPixPayment(opts: {
 
 // ─── Card (preference) ────────────────────────────────────────────────────────
 export interface CardResult {
-  preferenceId:     string;
-  checkoutUrl:      string;
+  preferenceId:      string;
+  checkoutUrl:       string;
   externalReference: string;
 }
 
@@ -129,7 +144,7 @@ export async function createCardPreference(opts: {
   };
 
   try {
-    const res     = await fetch(`${MP_BASE}/checkout/preferences`, {
+    const res = await fetch(`${MP_BASE}/checkout/preferences`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
