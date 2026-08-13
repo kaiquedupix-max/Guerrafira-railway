@@ -5,135 +5,57 @@ import { requireAdmin } from "./guard.js";
 
 const router = Router();
 router.use(requireAdmin);
+function clean(v: unknown, max = 120): string { return String(v ?? "").trim().slice(0, max); }
+function money(v: unknown): number { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0; }
+function validStatus(v: unknown): string { const s = clean(v, 30).toLowerCase(); return ["approved","pending","refunded","cancelled","rejected"].includes(s) ? s : "approved"; }
 
-function clean(v: unknown, max = 120): string {
-  return String(v ?? "").trim().slice(0, max);
-}
-function money(v: unknown): number {
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0;
-}
-function validStatus(v: unknown): string {
-  const s = clean(v, 30).toLowerCase();
-  return ["approved", "pending", "refunded", "cancelled", "rejected"].includes(s) ? s : "approved";
-}
+router.get("/finance/live", async (req, res) => {
+  const accessToken = (process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.MP_ACCESS_TOKEN || process.env.MERCADOPAGO_ACCESS_TOKEN || "").trim();
+  if (!accessToken) return void res.status(503).json({ error: "MERCADO_PAGO_ACCESS_TOKEN no está configurado en Railway." });
+  const requested = Number(req.query.days ?? 30);
+  const days = Number.isFinite(requested) ? Math.min(365, Math.max(1, Math.floor(requested))) : 30;
+  const end = new Date(); const begin = new Date(Date.now() - (days - 1) * 86400000);
+  const iso = (d: Date) => d.toISOString();
+  const all: any[] = [];
+  for (let page = 0; page < 20; page++) {
+    const qs = new URLSearchParams({ sort: "date_approved", criteria: "desc", range: "date_approved", begin_date: iso(begin), end_date: iso(end), limit: "50", offset: String(page * 50) });
+    const r = await fetch(`https://api.mercadopago.com/v1/payments/search?${qs.toString()}`, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } });
+    if (!r.ok) { const text = await r.text().catch(() => ""); return void res.status(502).json({ error: `Mercado Pago respondió ${r.status}.`, detail: text.slice(0, 300) }); }
+    const data = await r.json() as any;
+    const rows = Array.isArray(data?.results) ? data.results : [];
+    all.push(...rows);
+    if (rows.length < 50) break;
+  }
+  const payments = all.map(p => ({
+    id: String(p.id ?? ""), status: String(p.status ?? ""), statusDetail: String(p.status_detail ?? ""),
+    amount: Number(p.transaction_amount ?? 0), refunded: Number(p.transaction_amount_refunded ?? 0),
+    currency: String(p.currency_id ?? "BRL"), method: String(p.payment_method_id ?? p.payment_type_id ?? "—"), type: String(p.payment_type_id ?? "—"),
+    description: String(p.description ?? p.external_reference ?? "Pago Mercado Pago"), externalReference: String(p.external_reference ?? ""),
+    dateCreated: p.date_created ?? null, dateApproved: p.date_approved ?? null,
+    payer: p.payer?.email ? String(p.payer.email) : "",
+  }));
+  const approved = payments.filter(p => p.status === "approved");
+  const grossRevenue = approved.reduce((s, p) => s + p.amount, 0);
+  const refunded = payments.reduce((s, p) => s + p.refunded, 0);
+  const netRevenue = grossRevenue - refunded;
+  const byDay = new Map<string, number>();
+  for (const p of approved) { const key = String(p.dateApproved || p.dateCreated || "").slice(0, 10); if (key) byDay.set(key, (byDay.get(key) || 0) + p.amount - p.refunded); }
+  const trend = Array.from(byDay.entries()).sort((a,b)=>a[0].localeCompare(b[0])).map(([day,revenue]) => ({ day, revenue: Math.round(revenue * 100) / 100 }));
+  res.json({ source: "mercado_pago", days, summary: { grossRevenue: Math.round(grossRevenue*100)/100, refunded: Math.round(refunded*100)/100, netRevenue: Math.round(netRevenue*100)/100, approved: approved.length, total: payments.length, avgTicket: approved.length ? Math.round((grossRevenue/approved.length)*100)/100 : 0 }, trend, payments: payments.slice(0, 500) });
+});
 
 router.get("/finance", async (req, res) => {
-  const requested = Number(req.query.days ?? 30);
-  const days = Number.isFinite(requested) ? Math.min(3650, Math.max(1, Math.floor(requested))) : 30;
-  const status = clean(req.query.status, 30).toLowerCase();
-  const tier = clean(req.query.tier, 40).toLowerCase();
-  const search = clean(req.query.q, 100);
-
-  const summary = await pool.query(`
-    SELECT
-      COALESCE(SUM(amount::numeric) FILTER (WHERE status = 'approved'), 0)::float AS revenue,
-      COUNT(*) FILTER (WHERE status = 'approved')::int AS sales,
-      COALESCE(AVG(amount::numeric) FILTER (WHERE status = 'approved'), 0)::float AS avg_ticket,
-      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
-      COALESCE(SUM(amount::numeric) FILTER (WHERE status = 'refunded'), 0)::float AS refunded
-    FROM payments
-    WHERE created_at >= NOW() - ($1::text || ' days')::interval
-  `, [String(days)]);
-
-  const trend = await pool.query(`
-    WITH dates AS (
-      SELECT generate_series(CURRENT_DATE - ($1::int - 1), CURRENT_DATE, interval '1 day')::date AS day
-    ), totals AS (
-      SELECT created_at::date AS day,
-             COALESCE(SUM(amount::numeric), 0)::float AS revenue,
-             COUNT(*)::int AS sales
-      FROM payments
-      WHERE status = 'approved' AND created_at >= CURRENT_DATE - ($1::int - 1)
-      GROUP BY created_at::date
-    )
-    SELECT to_char(d.day, 'DD/MM') AS label,
-           COALESCE(t.revenue, 0)::float AS revenue,
-           COALESCE(t.sales, 0)::int AS sales
-    FROM dates d LEFT JOIN totals t ON t.day = d.day ORDER BY d.day
-  `, [days]);
-
-  const params: unknown[] = [String(days)];
-  const where = [`created_at >= NOW() - ($1::text || ' days')::interval`];
-  if (status) { params.push(status); where.push(`status = $${params.length}`); }
-  if (tier) { params.push(tier); where.push(`LOWER(COALESCE(vip_tier,'')) = $${params.length}`); }
-  if (search) {
-    params.push(`%${search}%`);
-    const p = `$${params.length}`;
-    where.push(`(COALESCE(discord_user_id,'') ILIKE ${p} OR COALESCE(steam_id,'') ILIKE ${p} OR COALESCE(vip_tier,'') ILIKE ${p} OR COALESCE(mp_payment_id,'') ILIKE ${p})`);
-  }
-
-  const sales = await pool.query(`
-    SELECT id, mp_payment_id, discord_user_id, steam_id, vip_tier,
-           amount, method, status, created_at,
-           CASE WHEN mp_payment_id LIKE 'MANUAL-%' THEN true ELSE false END AS manual
-    FROM payments
-    WHERE ${where.join(" AND ")}
-    ORDER BY created_at DESC
-    LIMIT 500
-  `, params);
-
-  const tiers = await pool.query(`
-    SELECT COALESCE(vip_tier,'Não informado') AS vip_tier,
-           COUNT(*)::int AS sales,
-           COALESCE(SUM(amount::numeric), 0)::float AS revenue
-    FROM payments
-    WHERE status = 'approved' AND created_at >= NOW() - ($1::text || ' days')::interval
-    GROUP BY vip_tier ORDER BY revenue DESC
-  `, [String(days)]);
-
-  res.json({ days, summary: summary.rows[0], trend: trend.rows, sales: sales.rows, tiers: tiers.rows });
+  const requested = Number(req.query.days ?? 30); const days = Number.isFinite(requested) ? Math.min(3650, Math.max(1, Math.floor(requested))) : 30;
+  const status = clean(req.query.status,30).toLowerCase(), tier = clean(req.query.tier,40).toLowerCase(), search = clean(req.query.q,100);
+  const summary = await pool.query(`SELECT COALESCE(SUM(amount::numeric) FILTER (WHERE status='approved'),0)::float AS revenue, COUNT(*) FILTER (WHERE status='approved')::int AS sales, COALESCE(AVG(amount::numeric) FILTER (WHERE status='approved'),0)::float AS avg_ticket, COUNT(*) FILTER (WHERE status='pending')::int AS pending, COALESCE(SUM(amount::numeric) FILTER (WHERE status='refunded'),0)::float AS refunded FROM payments WHERE created_at >= NOW() - ($1::text || ' days')::interval`, [String(days)]);
+  const trend = await pool.query(`WITH dates AS (SELECT generate_series(CURRENT_DATE-($1::int-1),CURRENT_DATE,interval '1 day')::date AS day), totals AS (SELECT created_at::date AS day,COALESCE(SUM(amount::numeric),0)::float AS revenue,COUNT(*)::int AS sales FROM payments WHERE status='approved' AND created_at>=CURRENT_DATE-($1::int-1) GROUP BY created_at::date) SELECT to_char(d.day,'DD/MM') AS label,COALESCE(t.revenue,0)::float AS revenue,COALESCE(t.sales,0)::int AS sales FROM dates d LEFT JOIN totals t ON t.day=d.day ORDER BY d.day`, [days]);
+  const params: unknown[]=[String(days)]; const where=[`created_at >= NOW() - ($1::text || ' days')::interval`];
+  if(status){params.push(status);where.push(`status = $${params.length}`)} if(tier){params.push(tier);where.push(`LOWER(COALESCE(vip_tier,'')) = $${params.length}`)} if(search){params.push(`%${search}%`);const p=`$${params.length}`;where.push(`(COALESCE(discord_user_id,'') ILIKE ${p} OR COALESCE(steam_id,'') ILIKE ${p} OR COALESCE(vip_tier,'') ILIKE ${p} OR COALESCE(mp_payment_id,'') ILIKE ${p})`)}
+  const sales=await pool.query(`SELECT id,mp_payment_id,discord_user_id,steam_id,vip_tier,amount,method,status,created_at,CASE WHEN mp_payment_id LIKE 'MANUAL-%' THEN true ELSE false END AS manual FROM payments WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT 500`,params);
+  const tiers=await pool.query(`SELECT COALESCE(vip_tier,'Não informado') AS vip_tier,COUNT(*)::int AS sales,COALESCE(SUM(amount::numeric),0)::float AS revenue FROM payments WHERE status='approved' AND created_at>=NOW()-($1::text||' days')::interval GROUP BY vip_tier ORDER BY revenue DESC`,[String(days)]);
+  res.json({days,summary:summary.rows[0],trend:trend.rows,sales:sales.rows,tiers:tiers.rows});
 });
-
-router.post("/finance/manual", async (req, res) => {
-  const amount = money(req.body?.amount);
-  const vipTier = clean(req.body?.vipTier, 40) || "manual";
-  const discordUserId = clean(req.body?.discordUserId, 40) || null;
-  const steamId = clean(req.body?.steamId, 40) || null;
-  const method = clean(req.body?.method, 40) || "manual";
-  const status = validStatus(req.body?.status);
-  const createdAt = clean(req.body?.createdAt, 40);
-  const paymentId = `MANUAL-${randomUUID()}`;
-
-  const row = await pool.query(`
-    INSERT INTO payments (mp_payment_id, discord_user_id, steam_id, vip_tier, amount, method, status, created_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE(NULLIF($8,'')::timestamptz,NOW()))
-    RETURNING id, mp_payment_id, discord_user_id, steam_id, vip_tier, amount, method, status, created_at
-  `, [paymentId, discordUserId, steamId, vipTier, amount, method, status, createdAt]);
-  res.status(201).json({ ok: true, sale: row.rows[0] });
-});
-
-router.patch("/finance/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) return void res.status(400).json({ error: "ID inválido" });
-  const current = await pool.query(`SELECT * FROM payments WHERE id=$1 LIMIT 1`, [id]);
-  if (!current.rowCount) return void res.status(404).json({ error: "Venda não encontrada" });
-  const old = current.rows[0];
-  const amount = req.body?.amount === undefined ? Number(old.amount) : money(req.body.amount);
-  const vipTier = req.body?.vipTier === undefined ? old.vip_tier : (clean(req.body.vipTier, 40) || null);
-  const discordUserId = req.body?.discordUserId === undefined ? old.discord_user_id : (clean(req.body.discordUserId, 40) || null);
-  const steamId = req.body?.steamId === undefined ? old.steam_id : (clean(req.body.steamId, 40) || null);
-  const method = req.body?.method === undefined ? old.method : clean(req.body.method, 40);
-  const status = req.body?.status === undefined ? old.status : validStatus(req.body.status);
-
-  const row = await pool.query(`
-    UPDATE payments SET amount=$2, vip_tier=$3, discord_user_id=$4, steam_id=$5, method=$6, status=$7
-    WHERE id=$1
-    RETURNING id, mp_payment_id, discord_user_id, steam_id, vip_tier, amount, method, status, created_at
-  `, [id, amount, vipTier, discordUserId, steamId, method, status]);
-  res.json({ ok: true, sale: row.rows[0] });
-});
-
-router.delete("/finance/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) return void res.status(400).json({ error: "ID inválido" });
-  const row = await pool.query(`SELECT mp_payment_id FROM payments WHERE id=$1 LIMIT 1`, [id]);
-  if (!row.rowCount) return void res.status(404).json({ error: "Lançamento não encontrado" });
-  if (!String(row.rows[0].mp_payment_id ?? "").startsWith("MANUAL-")) {
-    return void res.status(409).json({ error: "Pagamentos automáticos do Mercado Pago não podem ser apagados; altere o status para cancelado ou reembolsado." });
-  }
-  await pool.query(`DELETE FROM payments WHERE id=$1`, [id]);
-  res.json({ ok: true });
-});
-
+router.post("/finance/manual", async (req,res)=>{const amount=money(req.body?.amount),vipTier=clean(req.body?.vipTier,40)||"manual",discordUserId=clean(req.body?.discordUserId,40)||null,steamId=clean(req.body?.steamId,40)||null,method=clean(req.body?.method,40)||"manual",status=validStatus(req.body?.status),createdAt=clean(req.body?.createdAt,40),paymentId=`MANUAL-${randomUUID()}`;const row=await pool.query(`INSERT INTO payments (mp_payment_id,discord_user_id,steam_id,vip_tier,amount,method,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE(NULLIF($8,'')::timestamptz,NOW())) RETURNING id,mp_payment_id,discord_user_id,steam_id,vip_tier,amount,method,status,created_at`,[paymentId,discordUserId,steamId,vipTier,amount,method,status,createdAt]);res.status(201).json({ok:true,sale:row.rows[0]})});
+router.patch("/finance/:id", async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id)||id<=0)return void res.status(400).json({error:"ID inválido"});const current=await pool.query(`SELECT * FROM payments WHERE id=$1 LIMIT 1`,[id]);if(!current.rowCount)return void res.status(404).json({error:"Venda não encontrada"});const old=current.rows[0];const amount=req.body?.amount===undefined?Number(old.amount):money(req.body.amount),vipTier=req.body?.vipTier===undefined?old.vip_tier:(clean(req.body.vipTier,40)||null),discordUserId=req.body?.discordUserId===undefined?old.discord_user_id:(clean(req.body.discordUserId,40)||null),steamId=req.body?.steamId===undefined?old.steam_id:(clean(req.body.steamId,40)||null),method=req.body?.method===undefined?old.method:clean(req.body.method,40),status=req.body?.status===undefined?old.status:validStatus(req.body.status);const row=await pool.query(`UPDATE payments SET amount=$2,vip_tier=$3,discord_user_id=$4,steam_id=$5,method=$6,status=$7 WHERE id=$1 RETURNING id,mp_payment_id,discord_user_id,steam_id,vip_tier,amount,method,status,created_at`,[id,amount,vipTier,discordUserId,steamId,method,status]);res.json({ok:true,sale:row.rows[0]})});
+router.delete("/finance/:id", async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id)||id<=0)return void res.status(400).json({error:"ID inválido"});const row=await pool.query(`SELECT mp_payment_id FROM payments WHERE id=$1 LIMIT 1`,[id]);if(!row.rowCount)return void res.status(404).json({error:"Lançamento não encontrado"});if(!String(row.rows[0].mp_payment_id??"").startsWith("MANUAL-"))return void res.status(409).json({error:"Pagamentos automáticos do Mercado Pago não podem ser apagados; altere o status."});await pool.query(`DELETE FROM payments WHERE id=$1`,[id]);res.json({ok:true})});
 export default router;
