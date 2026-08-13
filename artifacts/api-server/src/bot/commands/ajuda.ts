@@ -62,7 +62,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       },
       {
         name: "🎫 TICKETS",
-        value: "Use o painel para **Suporte**, **Comprar VIP**, **Denunciar Jogador** ou **Apelar Banimento**.",
+        value: [
+          "Use o painel para **Suporte**, **Comprar VIP**, **Denunciar Jogador** ou **Apelar Banimento**.",
+          "📩 Ao fechar um ticket, o histórico é enviado aos participantes e não fica armazenado como histórico consultável pelo bot.",
+        ].join("\n"),
       },
     )
     .setFooter({ text: "Guerra Fria • Sistema oficial do servidor" })
@@ -147,13 +150,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             "O sistema monitora automaticamente padrões de combate suspeitos e envia alertas para investigação da staff.",
             "✅ Não aplica ban automático.",
             "🔕 Jogadores já verificados pela administração são ignorados pelo detector.",
+            "💾 Hits e sequências de combate são analisados em memória; não são armazenados individualmente no banco.",
           ].join("\n"),
         },
         {
           name: "🗺️ MAPA & TICKETS",
           value: [
             "`/criarmapa` — cria/configura a votação de mapa.",
-            "`/ticketlogs` — consulta históricos de tickets armazenados pelo bot.",
+            "📩 Logs de ticket não são mantidos no banco de dados.",
           ].join("\n"),
         },
       )
