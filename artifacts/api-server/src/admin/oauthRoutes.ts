@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 import { exchangeDiscordCode } from "./discordOAuth.js";
 import { fetchDiscordUser } from "./discordUser.js";
 import { isGuerraFriaAdmin } from "./permissions.js";
-import { issueAdminSession, revokeAdminSession } from "./test.js";
+import { issueAdminSession, revokeAdminSession } from "./session.js";
 
 const states = new Map<string, number>();
 const redirectUri = () => process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || "https://guerrafria.up.railway.app/api/admin/auth/callback";
