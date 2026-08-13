@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { adminLogin, adminCallback, adminLogout } from "../admin/oauthRoutes.js";
+import { adminLogin, adminCallback, adminLogout } from "../admin/oauthRoutesV2.js";
 import readRoutes from "../admin/routesRead.js";
 import moderationRoutes from "../admin/routesModeration.js";
 import serverRoutes from "../admin/routesServer.js";
