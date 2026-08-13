@@ -1,4 +1,4 @@
-import app from "./app";
+import app from "./appSafe";
 import { logger } from "./lib/logger";
 import { startBot } from "./bot/index";
 
