@@ -8,8 +8,10 @@ import { leaderboardHtml } from "./routes/leaderboardV2";
 import { adminHtml } from "./admin/html.js";
 import { adminExtraJs } from "./admin/extra.js";
 import { logger } from "./lib/logger";
+import { startStoragePolicy } from "./storagePolicy.js";
 
 const app: Express = express();
+startStoragePolicy();
 
 app.use(
   pinoHttp({
