@@ -14,7 +14,7 @@ type RecentHit = HitSignal & { at: number };
 type PlayerState = { recentKills: RecentKill[]; recentArrowHits: RecentHit[]; score: number; lastScoreAt: number; lastAlertAt: number; };
 
 const states = new Map<string, PlayerState>();
-const verifiedCache = new Map<string, { verified: boolean; until: number }>();
+const verifiedCache = new Map<string, number>();
 const ALERT_COOLDOWN_MS = 60_000;
 const HISTORY_MS = 10 * 60_000;
 const SCORE_DECAY_MS = 3 * 60_000;
@@ -27,13 +27,16 @@ function stateFor(steamId: string): PlayerState {
 
 async function isVerified(steamId: string): Promise<boolean> {
   const now = Date.now();
-  const cached = verifiedCache.get(steamId);
-  if (cached && cached.until > now) return cached.verified;
+  const cachedUntil = verifiedCache.get(steamId);
+  if (cachedUntil && cachedUntil > now) return true;
   const [row] = await db.select({ id: modLogsTable.id }).from(modLogsTable)
     .where(and(eq(modLogsTable.steamId, steamId), eq(modLogsTable.action, "VERIFICAR"))).limit(1);
-  const verified = Boolean(row);
-  verifiedCache.set(steamId, { verified, until: now + 5 * 60_000 });
-  return verified;
+  if (row) {
+    verifiedCache.set(steamId, now + 10 * 60_000);
+    states.delete(steamId);
+    return true;
+  }
+  return false;
 }
 
 function normalizeWeapon(raw?: string): string { return (raw ?? "unknown").toLowerCase().replace(/\.entity$|\.prefab$/g, ""); }
