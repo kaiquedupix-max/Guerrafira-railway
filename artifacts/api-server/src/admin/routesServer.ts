@@ -16,12 +16,12 @@ router.get("/online", async (_req, res) => {
 router.get("/chat", (_req, res) => res.json({ messages: getLiveChat() }));
 router.post("/chat", async (req, res) => {
   const message = clean(req.body?.message, 220);
-  if (!message) return res.status(400).json({ error: "Mensaje vacío." });
+  if (!message) return res.status(400).json({ error: "Mensagem vazia." });
   const admin = res.locals.admin as { username?: string };
   const moderator = clean(admin?.username || "Moderador", 40);
-  const formatted = `<color=#FFD84D>[MODERACIÓN]</color> <color=#A78BFA>${moderator}</color>: ${message}`;
+  const formatted = `<color=#FFD84D>[MODERAÇÃO]</color> <color=#A78BFA>${moderator}</color>: ${message}`;
   const result = await executeRconCommand(`say ${formatted}`);
-  if (result === null) return res.status(503).json({ error: "RCON no disponible." });
+  if (result === null) return res.status(503).json({ error: "RCON indisponível." });
   addModeratorChat(`MOD • ${moderator}`, message);
   res.json({ ok: true });
 });
