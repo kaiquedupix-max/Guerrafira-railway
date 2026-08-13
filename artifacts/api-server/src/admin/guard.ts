@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { getAdminSession } from "./session.js";
+import { getAdminSession } from "./sessionCookie.js";
 import { isGuerraFriaAdmin } from "./permissions.js";
 
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
