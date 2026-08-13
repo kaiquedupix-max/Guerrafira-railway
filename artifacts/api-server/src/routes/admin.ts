@@ -1,0 +1,22 @@
+import { Router } from "express";
+import { adminLogin, adminCallback, adminLogout } from "../admin/oauthRoutes.js";
+import readRoutes from "../admin/routesRead.js";
+import moderationRoutes from "../admin/routesModeration.js";
+import serverRoutes from "../admin/routesServer.js";
+import discordRoutes from "../admin/routesDiscord.js";
+import steamRoutes from "../admin/routesSteam.js";
+import vipRoutes from "../admin/routesVip.js";
+import leaderboardRoutes from "../admin/routesLeaderboard.js";
+
+const router = Router();
+router.get("/auth/login", adminLogin);
+router.get("/auth/callback", adminCallback);
+router.get("/auth/logout", adminLogout);
+router.use(readRoutes);
+router.use("/moderation", moderationRoutes);
+router.use("/server", serverRoutes);
+router.use("/discord", discordRoutes);
+router.use("/steam", steamRoutes);
+router.use("/vip", vipRoutes);
+router.use("/leaderboard", leaderboardRoutes);
+export default router;
