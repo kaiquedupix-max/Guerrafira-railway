@@ -1,0 +1,74 @@
+export const panelModerationParityJs = String.raw`
+(function(){'use strict';
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const toast = (msg,bad=false) => {
+    const t=document.getElementById('toast');
+    if(!t)return;
+    t.textContent=msg;t.classList.remove('hidden');
+    t.style.borderColor=bad?'#943540':'#60428b';
+    clearTimeout(t._parityTimer);t._parityTimer=setTimeout(()=>t.classList.add('hidden'),3500);
+  };
+  async function api(url,opt){
+    const r=await fetch(url,opt||{});let j={};try{j=await r.json()}catch{}
+    if(!r.ok)throw new Error(j.error||('Erro '+r.status));return j;
+  }
+  async function post(url,data){return api(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});}
+
+  async function enhanceDrawer(){
+    const host=document.getElementById('drawerHost');
+    const drawer=host?.querySelector('.drawer');
+    if(!drawer || drawer.dataset.moderationParity==='1')return;
+    drawer.dataset.moderationParity='1';
+    const steamNode=drawer.querySelector('.mono.subtitle');
+    const steamId=(steamNode?.textContent||'').trim();
+    if(!/^7656119\d{10}$/.test(steamId))return;
+
+    let state;
+    try{state=await api('/api/admin/player-state/'+encodeURIComponent(steamId));}catch{return;}
+    if(!state?.banned)return;
+
+    const toolbar=drawer.querySelector('.toolbar');
+    if(toolbar){
+      const badge=document.createElement('span');
+      badge.className='badge';
+      badge.style.cssText='background:rgba(239,68,68,.16);border-color:rgba(239,68,68,.45);color:#ff8a8a';
+      badge.textContent='🔨 Banido';
+      toolbar.appendChild(badge);
+    }
+
+    if(state.ban){
+      const card=document.createElement('div');
+      card.className='stateCard';
+      card.style.cssText='margin:14px 0;border-color:rgba(239,68,68,.38);background:linear-gradient(135deg,rgba(127,29,29,.18),rgba(30,12,34,.75))';
+      const duration=state.ban.duration==='perm'?'Permanente':(state.ban.duration||'Não informado');
+      card.innerHTML='<b style="color:#ff9a9a">Banimento ativo</b><small>Motivo: '+esc(state.ban.reason||'Não informado')+'</small><small>Duração: '+esc(duration)+(state.ban.adminName?' • Aplicado por '+esc(state.ban.adminName):'')+'</small>';
+      const field=drawer.querySelector('.field');
+      if(field)field.parentElement?.insertBefore(card,field);
+    }
+
+    const durationField=document.getElementById('banDuration')?.closest('.field');
+    if(durationField)durationField.style.display='none';
+
+    const banBtn=document.getElementById('actBan');
+    if(banBtn){
+      banBtn.textContent='✅ Desbanir';
+      banBtn.classList.remove('red');
+      banBtn.classList.add('green');
+      banBtn.style.cssText='background:#123b28;border-color:#218a53;color:#caffdf';
+      banBtn.onclick=async()=>{
+        const reason=(document.getElementById('actReason')?.value||'').trim();
+        if(!reason)return toast('Informe o motivo do desbanimento.',true);
+        if(!confirm('Remover o banimento deste jogador?'))return;
+        banBtn.disabled=true;banBtn.textContent='Desbanindo...';
+        try{
+          const r=await post('/api/admin/moderation/unban',{steamId,reason});
+          toast(r.rcon===false?'Desbanimento registrado. O RCON não confirmou a execução.':'Jogador desbanido com sucesso.',r.rcon===false);
+          document.getElementById('closeDrawer')?.click();
+        }catch(e){toast(e.message||'Erro ao desbanir.',true);banBtn.disabled=false;banBtn.textContent='✅ Desbanir';}
+      };
+    }
+  }
+
+  const host=document.getElementById('drawerHost');
+  if(host){new MutationObserver(()=>queueMicrotask(enhanceDrawer)).observe(host,{childList:true,subtree:true});}
+})();`;
