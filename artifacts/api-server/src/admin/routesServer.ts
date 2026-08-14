@@ -8,11 +8,43 @@ router.use(requireAdmin);
 initLiveOps();
 const steamRe = /^7656119\d{10}$/;
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
+let itemCache: Array<{ id: number; shortname: string; name: string; category?: string; stack?: number }> = [];
+let itemCacheAt = 0;
 
 router.get("/online", async (_req, res) => {
   const [players, info] = await Promise.all([getOnlinePlayers().catch(() => []), getServerInfo().catch(() => null)]);
   res.json({ players, info });
 });
+
+router.get("/items", async (req, res) => {
+  const q = clean(req.query.q, 80).toLowerCase();
+  if (!itemCache.length || Date.now() - itemCacheAt > 15 * 60_000) {
+    const raw = await executeRconCommand("gf.items").catch(() => null);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          itemCache = parsed.filter(x => x && x.shortname && x.name);
+          itemCacheAt = Date.now();
+        }
+      } catch {}
+    }
+  }
+
+  if (!itemCache.length) {
+    return res.status(503).json({
+      error: "Catálogo de itens indisponível. Instale o plugin GuerraFriaItemCatalog.cs no servidor Rust.",
+      items: [],
+    });
+  }
+
+  const items = (q
+    ? itemCache.filter(x => String(x.name).toLowerCase().includes(q) || String(x.shortname).toLowerCase().includes(q) || String(x.category ?? "").toLowerCase().includes(q))
+    : itemCache
+  ).slice(0, 80);
+  res.json({ items, total: itemCache.length });
+});
+
 router.get("/chat", (_req, res) => res.json({ messages: getLiveChat() }));
 router.post("/chat", async (req, res) => {
   const message = clean(req.body?.message, 220);
@@ -24,7 +56,6 @@ router.post("/chat", async (req, res) => {
   const safeMessage = message.replace(/"/g, "'");
   const formatted = `<color=#FFD84D>[MODERAÇÃO]</color> <color=#A78BFA>${safeModerator}</color>: ${safeMessage}`;
 
-  // Mostra imediatamente no painel, sem depender da resposta do WebRCON.
   addModeratorChat(`MOD • ${moderator}`, message);
 
   let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
