@@ -74,7 +74,14 @@ commands.set(steamCommand.data.name, steamCommand);
 export async function startBot(): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) { logger.warn("DISCORD_BOT_TOKEN not set — bot will not start"); return; }
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
+  });
   client.once(Events.ClientReady, async (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot online");
     setDiscordClient(c);
@@ -125,6 +132,47 @@ export async function startBot(): Promise<void> {
         }
       } catch {}
     }
+  });
+
+  client.on(Events.GuildMemberAdd, async (member) => {
+    const channelId = process.env.DISCORD_WELCOME_CHANNEL_ID;
+    if (!channelId) return;
+
+    const channel = await member.guild.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isSendable()) {
+      logger.warn({ channelId }, "Welcome channel unavailable");
+      return;
+    }
+
+    const hour = Number(
+      new Intl.DateTimeFormat("pt-BR", {
+        hour: "2-digit",
+        hour12: false,
+        timeZone: "America/Sao_Paulo",
+      }).format(new Date()),
+    );
+    const greeting = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
+
+    await channel.send({
+      content: `🎉 <@${member.id}>`,
+      embeds: [{
+        color: 0xf1c40f,
+        title: `${greeting}, ${member.user.globalName ?? member.user.username}! Seja bem-vindo(a) ao Guerra Fria.`,
+        description:
+          "Agradecemos por fazer parte da nossa comunidade! Antes de começar, leia atentamente o canal de **regras** e fique por dentro das orientações do servidor.\n\n" +
+          "Caso precise de ajuda, abra um ticket para falar com a administração. Esperamos que você tenha uma excelente experiência conosco! 🛡️",
+        thumbnail: { url: member.user.displayAvatarURL({ size: 256 }) },
+        fields: [
+          { name: "👥 Membro", value: `Você é o membro **#${member.guild.memberCount}** do servidor.`, inline: true },
+          { name: "📋 Próximo passo", value: "Leia as regras e aproveite a comunidade.", inline: true },
+        ],
+        footer: { text: "Guerra Fria • Respeito, competição e comunidade" },
+        timestamp: new Date().toISOString(),
+      }],
+      allowedMentions: { users: [member.id] },
+    });
+
+    logger.info({ userId: member.id, channelId }, "Welcome message sent");
   });
 
   client.on(Events.MessageCreate, async (msg) => {
