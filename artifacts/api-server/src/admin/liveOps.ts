@@ -17,8 +17,20 @@ const events = new Map<string, LiveEvent>([
 
 function trimList<T>(arr: T[], max: number) { if (arr.length > max) arr.splice(0, arr.length - max); }
 
+function isPluginTelemetry(text: string): boolean {
+  const s = text.trim();
+  if (!s) return true;
+  if (/\[GF_LEADERBOARD\]/i.test(s)) return true;
+  if (/\[GuerraFriaLeaderboard\]/i.test(s)) return true;
+  if (/^\[[^\]]*(?:leaderboard|oxide|carbon|plugin)[^\]]*\]/i.test(s) && /\{|\bevent\b|\btimestamp\b/i.test(s)) return true;
+  if (/^\[[^\]]+\]\s*\{\s*"(?:event|type|action|timestamp)"\s*:/i.test(s)) return true;
+  return false;
+}
+
 function parseChat(raw: string): { player: string; message: string } | null {
   const text = raw.trim();
+  if (isPluginTelemetry(text)) return null;
+
   try {
     const parsed = JSON.parse(text) as unknown;
     const rows = Array.isArray(parsed) ? parsed : [parsed];
@@ -34,10 +46,12 @@ function parseChat(raw: string): { player: string; message: string } | null {
     }
   } catch {}
 
+  // Só aceita formatos explicitamente reconhecidos como chat. Não existe mais
+  // fallback genérico "qualquer coisa: qualquer coisa", pois logs de plugins
+  // e JSON de telemetria também contêm dois-pontos.
   const patterns = [
     /^\[CHAT\]\s*(?:\[[^\]]+\]\s*)?([^:]{1,60}):\s*(.+)$/i,
     /^\[Chat\]\s+([^:]{1,60}):\s*(.+)$/i,
-    /^([^:\r\n]{1,60})\s*:\s*(.+)$/,
   ];
   for (const re of patterns) {
     const m = text.match(re);
@@ -64,7 +78,6 @@ function markEvent(key: string, raw: string) {
   const now = Date.now();
   const h = history.get(key) ?? [];
   const last = h[h.length - 1] ?? 0;
-  // Evita contar várias linhas do mesmo spawn como eventos diferentes.
   if (!last || now - last > 2 * 60_000) {
     h.push(now); trimList(h, 12); history.set(key, h); recalcPrediction(key);
   }
