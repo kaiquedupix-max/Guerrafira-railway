@@ -15,6 +15,11 @@ export async function getGuerraFriaDisplayName(userId: string, fallback = "Admin
   return member?.displayName?.trim() || member?.user.globalName?.trim() || member?.user.username?.trim() || fallback;
 }
 
+export async function isDiscordAdministrator(userId: string): Promise<boolean> {
+  const member = await getGuerraFriaMember(userId);
+  return Boolean(member?.permissions.has(PermissionFlagsBits.Administrator));
+}
+
 export async function isGuerraFriaAdmin(userId: string): Promise<boolean> {
   const member = await getGuerraFriaMember(userId);
   if (!member) return false;
