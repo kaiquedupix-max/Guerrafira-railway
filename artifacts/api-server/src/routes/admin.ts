@@ -8,6 +8,7 @@ import steamRoutes from "../admin/routesSteam.js";
 import vipRoutes from "../admin/routesVip.js";
 import leaderboardRoutes from "../admin/routesLeaderboard.js";
 import financeRoutes from "../admin/routesFinance.js";
+import warningRoutes from "../admin/routesWarnings.js";
 
 const router = Router();
 
@@ -25,6 +26,7 @@ router.get("/auth/callback", adminCallbackV3);
 router.get("/auth/logout", adminLogoutV3);
 router.use(readRoutes);
 router.use("/moderation", moderationRoutes);
+router.use("/warnings", warningRoutes);
 router.use("/server", serverRoutes);
 router.use("/discord", discordRoutes);
 router.use("/steam", steamRoutes);
