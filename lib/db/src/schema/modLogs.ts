@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -12,6 +12,7 @@ export const modLogsTable = pgTable("mod_logs", {
   adminName: text("admin_name").notNull(),
   banDuration: text("ban_duration"), // "3d" | "7d" | "30d" | "perm" | null
   banExpiresAt: timestamp("ban_expires_at", { withTimezone: true }), // null = permanent
+  publicVisible: boolean("public_visible").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
