@@ -1,10 +1,15 @@
 import type { Request } from "express";
 import { safeAdminHtml } from "./safeHtml.js";
 import { adminExtraJs } from "./extra.js";
-import { memberPickerJs } from "./memberPicker.js";
+import { memberPickerV2Js } from "./memberPickerV2.js";
+import { itemPickerJs } from "./itemPicker.js";
+import { overviewLiteJs } from "./overviewLite.js";
 import { getAdminSession } from "./sessionCookie.js";
 
-const basePage = safeAdminHtml.replace("</body>", `<script>${adminExtraJs}</script><script>${memberPickerJs}</script></body>`);
+const basePage = safeAdminHtml.replace(
+  "</body>",
+  `<script>${adminExtraJs}</script><script>${memberPickerV2Js}</script><script>${itemPickerJs}</script><script>${overviewLiteJs}</script></body>`,
+);
 
 export function renderAdminPage(req: Request): string {
   const session = getAdminSession(req);
