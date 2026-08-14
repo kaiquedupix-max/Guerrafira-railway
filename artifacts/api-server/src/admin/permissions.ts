@@ -15,6 +15,24 @@ export async function getGuerraFriaDisplayName(userId: string, fallback = "Admin
   return member?.displayName?.trim() || member?.user.globalName?.trim() || member?.user.username?.trim() || fallback;
 }
 
+export async function resolveGuerraFriaDisplayNameByStoredName(name: string): Promise<string> {
+  const raw = String(name || "").trim();
+  if (!raw) return "Administrador";
+  const client = discordClient();
+  const guildId = process.env.DISCORD_GUILD_ID;
+  if (!client || !guildId) return raw;
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) return raw;
+  await guild.members.fetch().catch(() => null);
+  const q = raw.toLowerCase();
+  const member = guild.members.cache.find(m =>
+    m.user.username.toLowerCase() === q ||
+    (m.user.globalName || "").toLowerCase() === q ||
+    m.displayName.toLowerCase() === q
+  );
+  return member?.displayName?.trim() || member?.user.globalName?.trim() || raw;
+}
+
 export async function isDiscordAdministrator(userId: string): Promise<boolean> {
   const member = await getGuerraFriaMember(userId);
   return Boolean(member?.permissions.has(PermissionFlagsBits.Administrator));
