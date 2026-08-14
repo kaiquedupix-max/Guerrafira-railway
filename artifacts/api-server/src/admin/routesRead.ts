@@ -4,13 +4,15 @@ import { db, playersTable, modLogsTable, boosterLinksTable, vipSubscriptionsTabl
 import { getServerInfo } from "../bot/utils/rcon.js";
 import { getAdminSession } from "./sessionCookie.js";
 import { requireAdmin } from "./guard.js";
+import { isDiscordAdministrator } from "./permissions.js";
 
 const router = Router();
 router.use(requireAdmin);
 
-router.get("/me", (req, res) => {
+router.get("/me", async (req, res) => {
   const session = getAdminSession(req);
-  res.json({ user: session });
+  const canViewFinance = session ? await isDiscordAdministrator(session.userId) : false;
+  res.json({ user: session, capabilities: { canViewFinance } });
 });
 
 router.get("/overview", async (_req, res) => {
