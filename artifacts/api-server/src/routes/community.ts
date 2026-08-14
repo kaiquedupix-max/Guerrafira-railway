@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db, modLogsTable } from "@workspace/db";
 import { desc } from "drizzle-orm";
 import { getCommunitySession } from "../admin/communitySession.js";
-import { resolveGuerraFriaDisplayNameByStoredName } from "../admin/permissions.js";
+import { getGuerraFriaDisplayName } from "../admin/permissions.js";
 
 const router = Router();
 router.use((req, res, next) => {
@@ -22,16 +22,20 @@ router.get("/me", (_req, res) => {
 
 router.get("/records", async (_req, res) => {
   const rows = await db.select().from(modLogsTable).orderBy(desc(modLogsTable.createdAt)).limit(2000);
-  const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(x.action));
-  const names = [...new Set(filtered.map(x => String(x.adminName || "").trim()).filter(Boolean))];
+  const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
+
+  const ids = [...new Set(filtered.map(x => String(x.adminId || "").trim()).filter(Boolean))];
   const resolved = new Map<string, string>();
-  await Promise.all(names.map(async name => {
-    resolved.set(name, await resolveGuerraFriaDisplayNameByStoredName(name));
+  await Promise.all(ids.map(async id => {
+    const fallback = filtered.find(x => String(x.adminId || "") === id)?.adminName || "Administração";
+    resolved.set(id, await getGuerraFriaDisplayName(id, String(fallback).replace(/\s*\[WEB\]\s*$/i, "")));
   }));
+
   const records = filtered.map(x => ({
     ...x,
-    adminName: resolved.get(String(x.adminName || "").trim()) || x.adminName || "Administração",
+    adminName: resolved.get(String(x.adminId || "").trim()) || String(x.adminName || "Administração").replace(/\s*\[WEB\]\s*$/i, ""),
   }));
+
   res.json({ records });
 });
 
