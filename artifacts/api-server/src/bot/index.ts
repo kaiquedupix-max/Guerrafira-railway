@@ -74,14 +74,15 @@ commands.set(steamCommand.data.name, steamCommand);
 export async function startBot(): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) { logger.warn("DISCORD_BOT_TOKEN not set — bot will not start"); return; }
-  const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-    ],
-  });
+  const intents = [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ];
+  if (process.env.DISCORD_WELCOME_ENABLED === "true") {
+    intents.push(GatewayIntentBits.GuildMembers);
+  }
+  const client = new Client({ intents });
   client.once(Events.ClientReady, async (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot online");
     setDiscordClient(c);
