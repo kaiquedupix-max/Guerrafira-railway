@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, modLogsTable } from "@workspace/db";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getCommunitySession } from "../admin/communitySession.js";
 import { getGuerraFriaDisplayName } from "../admin/permissions.js";
 
@@ -21,7 +21,7 @@ router.get("/me", (_req, res) => {
 });
 
 router.get("/records", async (_req, res) => {
-  const rows = await db.select().from(modLogsTable).orderBy(desc(modLogsTable.createdAt)).limit(2000);
+  const rows = await db.select().from(modLogsTable).where(eq(modLogsTable.publicVisible, true)).orderBy(desc(modLogsTable.createdAt)).limit(2000);
   const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
 
   const ids = [...new Set(filtered.map(x => String(x.adminId || "").trim()).filter(Boolean))];
