@@ -5,6 +5,9 @@ import adminRouter from "./admin";
 import communityRouter from "./community.js";
 import pwaRouter from "./pwa.js";
 import revenueView from "../admin/revenueView.js";
+import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
+
+startPaymentStatusNotifier();
 
 const router: IRouter = Router();
 router.use(healthRouter);
