@@ -282,8 +282,19 @@ export async function handleVipModal(interaction: ModalSubmitInteraction): Promi
   const steamId = interaction.fields.getTextInputValue("steam_id").trim();
   const email   = interaction.fields.getTextInputValue("email").trim();
 
-  if (!/^\d{17}$/.test(steamId)) {
-    await interaction.reply({ content: "❌ Steam ID inválido. Deve ter exatamente 17 dígitos numéricos.", ephemeral: true });
+  if (!/^7656119\d{10}$/.test(steamId)) {
+    await interaction.reply({
+      content: "❌ SteamID64 inválido. Informe um SteamID real com 17 dígitos, começando por `7656119`.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    await interaction.reply({
+      content: "❌ E-mail inválido. Informe um endereço completo, por exemplo: `nome@gmail.com`.",
+      ephemeral: true,
+    });
     return;
   }
 
@@ -321,6 +332,10 @@ export async function handleVipPayPix(interaction: ButtonInteraction): Promise<v
 
   const ctx = pendingVipPurchases.get(interaction.channelId!);
   if (!ctx) { await interaction.editReply("❌ Sessão expirada. Clique em um plano VIP novamente."); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(ctx.email)) {
+    await interaction.editReply("❌ O e-mail desta sessão é inválido. Clique no plano VIP novamente e informe um e-mail completo, como `nome@gmail.com`.");
+    return;
+  }
 
   const vip    = VIP_TIERS[ctx.tier];
   const amount = ctx.customPrice ?? vip.price;
@@ -371,6 +386,10 @@ export async function handleVipPayCard(interaction: ButtonInteraction): Promise<
 
   const ctx = pendingVipPurchases.get(interaction.channelId!);
   if (!ctx) { await interaction.editReply("❌ Sessão expirada. Clique em um plano VIP novamente."); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(ctx.email)) {
+    await interaction.editReply("❌ O e-mail desta sessão é inválido. Clique no plano VIP novamente e informe um e-mail completo, como `nome@gmail.com`.");
+    return;
+  }
 
   const vip    = VIP_TIERS[ctx.tier];
   const amount = ctx.customPrice ?? vip.price;
