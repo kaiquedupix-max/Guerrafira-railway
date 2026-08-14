@@ -2,9 +2,10 @@ import type { Request } from "express";
 import { panelV5Html } from "./panelV5.js";
 import { panelV5Js } from "./panelV5Js.js";
 import { panelV5PolishJs } from "./panelV5Polish.js";
+import { panelAuthRecoveryJs } from "./panelAuthRecovery.js";
 import { getAdminSessionV3 } from "./sessionBearer.js";
 
-const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script></body>`);
+const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSessionV3(req);
