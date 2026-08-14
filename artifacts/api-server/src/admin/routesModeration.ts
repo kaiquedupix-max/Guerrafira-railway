@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { EmbedBuilder } from "discord.js";
 import { db, modLogsTable, playersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { executeRconCommand } from "../bot/utils/rcon.js";
 import { discordClient } from "../bot/client.js";
 import { requireAdmin } from "./guard.js";
@@ -53,18 +53,54 @@ router.post("/kick", async (req, res) => {
   const admin = res.locals.admin as { userId: string; username: string };
   const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
   await db.insert(modLogsTable).values({ action: "KICK", steamId, playerName: p.playerName, reason, adminId: admin.userId, adminName });
+  await sendServerLog(new EmbedBuilder().setColor(0x7c3aed).setTitle("👢 Jogador kickado").addFields(
+    { name: "Jogador", value: p.playerName, inline: true },
+    { name: "SteamID", value: `\`${steamId}\``, inline: true },
+    { name: "Motivo", value: reason },
+    { name: "Admin", value: `<@${admin.userId}> • Painel Web` },
+  ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp());
   res.json({ ok: true });
 });
 
 router.post("/unban", async (req, res) => {
   const steamId = clean(req.body?.steamId, 17);
-  if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." });
-  const [p] = await db.select().from(playersTable).where(eq(playersTable.steamId, steamId)).limit(1);
+  const reason = clean(req.body?.reason, 300);
+  if (!steamRe.test(steamId) || !reason) return res.status(400).json({ error: "SteamID ou motivo inválido." });
+
+  const bans = await db.select().from(modLogsTable)
+    .where(and(eq(modLogsTable.action, "BAN"), eq(modLogsTable.steamId, steamId)))
+    .orderBy(desc(modLogsTable.createdAt));
+  const latestBan = bans[0];
+  if (!latestBan) return res.status(404).json({ error: "Nenhum banimento encontrado para este jogador." });
+
+  const stateRows = await db.select().from(modLogsTable)
+    .where(eq(modLogsTable.steamId, steamId))
+    .orderBy(desc(modLogsTable.createdAt))
+    .limit(100);
+  const latestBanState = stateRows.find(x => x.action === "BAN" || x.action === "DESBANIR" || x.action === "SYSTEM_UNBAN");
+  if (!latestBanState || latestBanState.action !== "BAN") return res.status(409).json({ error: "Este jogador não possui banimento ativo." });
+
+  const result = await executeRconCommand(`unban ${steamId}`);
   const admin = res.locals.admin as { userId: string; username: string };
   const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
-  await executeRconCommand(`unban ${steamId}`);
-  await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId, playerName: p?.playerName ?? steamId, reason: "Desbanido pelo painel web", adminId: admin.userId, adminName });
-  res.json({ ok: true });
+
+  await db.insert(modLogsTable).values({
+    action: "DESBANIR",
+    steamId,
+    playerName: latestBan.playerName,
+    reason,
+    adminId: admin.userId,
+    adminName,
+  });
+
+  await sendServerLog(new EmbedBuilder().setColor(0x22c55e).setTitle("✅ Jogador desbanido").addFields(
+    { name: "Jogador", value: latestBan.playerName, inline: true },
+    { name: "SteamID", value: `\`${steamId}\``, inline: true },
+    { name: "Motivo", value: reason },
+    { name: "Admin", value: `<@${admin.userId}> • Painel Web` },
+  ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp());
+
+  res.json({ ok: true, rcon: result !== null });
 });
 
 router.post("/verify", async (req, res) => {
