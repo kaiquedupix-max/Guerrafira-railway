@@ -7,7 +7,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { db, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, boosterLinksTable } from "@workspace/db";
 import { executeRconCommand } from "../utils/rcon.js";
 
-interface MapOption { name: string; image: string; url: string; }
+interface MapOption { name: string; image: string; }
 interface MapVoteRuntime {
   id: number; messageId: string; channelId: string; endsAt: number; maps: MapOption[];
   timer?: ReturnType<typeof setTimeout>; announcementTimer?: ReturnType<typeof setInterval>;
@@ -22,11 +22,8 @@ export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addAttachmentOption(o => o.setName("imagem1").setDescription("Imagem do Mapa 1").setRequired(true))
-  .addStringOption(o => o.setName("link1").setDescription("Link do Mapa 1").setRequired(true))
   .addAttachmentOption(o => o.setName("imagem2").setDescription("Imagem do Mapa 2").setRequired(true))
-  .addStringOption(o => o.setName("link2").setDescription("Link do Mapa 2").setRequired(true))
   .addAttachmentOption(o => o.setName("imagem3").setDescription("Imagem do Mapa 3").setRequired(true))
-  .addStringOption(o => o.setName("link3").setDescription("Link do Mapa 3").setRequired(true))
   .addStringOption(o => o.setName("duracao").setDescription("Tempo da votação").setRequired(true).addChoices(
     { name: "30 minutos", value: "30" }, { name: "1 hora", value: "60" }, { name: "3 horas", value: "180" },
     { name: "6 horas", value: "360" }, { name: "12 horas", value: "720" }, { name: "24 horas", value: "1440" },
@@ -48,7 +45,7 @@ function headerEmbed(endsAt: number) {
 function mapEmbeds(maps: MapOption[]) {
   const colors = [0xe53935, 0x5865f2, 0x2ecc71];
   return maps.map((m, i) => new EmbedBuilder().setColor(colors[i] ?? 0x5865f2)
-    .setTitle(`🗺️ ${m.name}`).setDescription(`[🔗 Visualizar mapa em tamanho completo](${m.url})`).setImage(m.image));
+    .setTitle(`🗺️ ${m.name}`).setImage(m.image));
 }
 
 function rows(maps: MapOption[]) {
@@ -101,7 +98,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   const maps: MapOption[] = [1, 2, 3].map(n => {
     const attachment = interaction.options.getAttachment(`imagem${n}`, true);
     if (!attachment.contentType?.startsWith("image/")) throw new Error(`imagem${n} não é uma imagem válida.`);
-    return { name: `Mapa ${n}`, image: attachment.url, url: interaction.options.getString(`link${n}`, true) };
+    return { name: `Mapa ${n}`, image: attachment.url };
   });
   const minutes = parseInt(interaction.options.getString("duracao", true), 10); const endsAt = Date.now() + minutes * 60_000;
   const message = await channel.send({ content: "@everyone", allowedMentions: { parse: ["everyone"] }, embeds: [headerEmbed(endsAt), ...mapEmbeds(maps)], components: rows(maps) });
