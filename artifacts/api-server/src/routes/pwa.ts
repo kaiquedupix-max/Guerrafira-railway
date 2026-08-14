@@ -17,9 +17,7 @@ router.get("/pwa/manifest", (_req, res) => {
     background_color: "#07050b",
     theme_color: "#09060f",
     orientation: "portrait-primary",
-    icons: [
-      { src: "/api/pwa/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }
-    ]
+    icons: [{ src: "/api/pwa/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }]
   }));
 });
 
@@ -32,11 +30,12 @@ router.get("/pwa/sw.js", (_req, res) => {
   res.setHeader("Service-Worker-Allowed", "/");
   res.setHeader("Cache-Control", "no-store");
   res.type("application/javascript").send(`
-const CACHE='gf-admin-shell-v1';
-self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/admin','/'])))});
-self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+const CACHE='gf-admin-shell-v2';
+self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/admin','/'])).catch(()=>{}))});
+self.addEventListener('activate',e=>e.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))])));
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;if(new URL(r.url).origin!==location.origin)return;e.respondWith(fetch(r).catch(()=>caches.match(r).then(x=>x||caches.match('/admin'))))});
-self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{const w=ws.find(x=>x.url.includes('/admin'));return w?w.focus():clients.openWindow('/admin')}))});
+self.addEventListener('push',e=>{let d={};try{d=e.data?e.data.json():{}}catch{d={body:e.data?e.data.text():''}};const title=d.title||'Guerra Fria Admin';const options={body:d.body||'Novo alerta administrativo.',icon:'/api/pwa/icon.svg',badge:'/api/pwa/icon.svg',tag:d.tag||'gf-admin-alert',renotify:true,data:{url:d.url||'/admin'},vibrate:[200,100,200]};e.waitUntil(self.registration.showNotification(title,options))});
+self.addEventListener('notificationclick',e=>{e.notification.close();const target=e.notification.data?.url||'/admin';e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{const w=ws.find(x=>x.url.includes('/admin'));if(w){w.navigate(target).catch(()=>{});return w.focus()}return clients.openWindow(target)}))});
 `);
 });
 
