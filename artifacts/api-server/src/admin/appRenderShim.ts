@@ -7,9 +7,10 @@ import { panelOverviewFastJs } from "./panelOverviewFast.js";
 import { panelModerationParityJs } from "./panelModerationParity.js";
 import { panelIntegrityManagerJs } from "./panelIntegrityManager.js";
 import { panelAlertsJs } from "./panelAlerts.js";
+import { panelSlotControlJs } from "./panelSlotControl.js";
 import { getAdminSessionV3 } from "./sessionBearer.js";
 
-const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script></body>`);
+const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script><script>${panelSlotControlJs}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSessionV3(req);
