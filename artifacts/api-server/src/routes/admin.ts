@@ -10,6 +10,7 @@ import leaderboardRoutes from "../admin/routesLeaderboard.js";
 import financeRoutes from "../admin/routesFinance.js";
 import warningRoutes from "../admin/routesWarnings.js";
 import playerStateRoutes from "../admin/routesPlayerState.js";
+import { requireFinanceAccess } from "../admin/financeGuard.js";
 
 const router = Router();
 
@@ -34,5 +35,6 @@ router.use("/discord", discordRoutes);
 router.use("/steam", steamRoutes);
 router.use("/vip", vipRoutes);
 router.use("/leaderboard", leaderboardRoutes);
+router.use("/finance", requireFinanceAccess);
 router.use(financeRoutes);
 export default router;
