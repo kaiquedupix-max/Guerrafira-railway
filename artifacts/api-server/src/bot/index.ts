@@ -85,6 +85,19 @@ export async function startBot(): Promise<void> {
   const client = new Client({ intents });
   client.once(Events.ClientReady, async (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot online");
+    const welcomeChannelId = process.env.DISCORD_WELCOME_CHANNEL_ID;
+    const welcomeChannel = welcomeChannelId
+      ? await c.channels.fetch(welcomeChannelId).catch((err) => {
+          logger.error({ err, channelId: welcomeChannelId }, "Welcome channel fetch failed");
+          return null;
+        })
+      : null;
+    logger.info({
+      enabled: process.env.DISCORD_WELCOME_ENABLED === "true",
+      channelId: welcomeChannelId ?? null,
+      channelFound: Boolean(welcomeChannel),
+      sendable: Boolean(welcomeChannel?.isSendable()),
+    }, "Welcome system initialized");
     setDiscordClient(c);
     c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
     await registerSlashCommands(c);
@@ -137,11 +150,20 @@ export async function startBot(): Promise<void> {
 
   client.on(Events.GuildMemberAdd, async (member) => {
     const channelId = process.env.DISCORD_WELCOME_CHANNEL_ID;
+    logger.info({
+      userId: member.id,
+      guildId: member.guild.id,
+      channelId: channelId ?? null,
+    }, "New guild member received");
+
     if (!channelId) return;
 
-    const channel = await member.guild.channels.fetch(channelId).catch(() => null);
+    const channel = await member.guild.channels.fetch(channelId).catch((err) => {
+      logger.error({ err, channelId, userId: member.id }, "Welcome channel fetch failed");
+      return null;
+    });
     if (!channel?.isSendable()) {
-      logger.warn({ channelId }, "Welcome channel unavailable");
+      logger.warn({ channelId, userId: member.id }, "Welcome channel unavailable");
       return;
     }
 
@@ -154,7 +176,8 @@ export async function startBot(): Promise<void> {
     );
     const greeting = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
 
-    await channel.send({
+    try {
+      await channel.send({
       content: `🎉 <@${member.id}>`,
       embeds: [{
         color: 0xf1c40f,
@@ -171,9 +194,12 @@ export async function startBot(): Promise<void> {
         timestamp: new Date().toISOString(),
       }],
       allowedMentions: { users: [member.id] },
-    });
+      });
 
-    logger.info({ userId: member.id, channelId }, "Welcome message sent");
+      logger.info({ userId: member.id, channelId }, "Welcome message sent");
+    } catch (err) {
+      logger.error({ err, userId: member.id, channelId }, "Welcome message failed");
+    }
   });
 
   client.on(Events.MessageCreate, async (msg) => {
