@@ -17,13 +17,26 @@ router.get("/chat", (_req, res) => res.json({ messages: getLiveChat() }));
 router.post("/chat", async (req, res) => {
   const message = clean(req.body?.message, 220);
   if (!message) return res.status(400).json({ error: "Mensagem vazia." });
+
   const admin = res.locals.admin as { username?: string };
   const moderator = clean(admin?.username || "Moderador", 40);
-  const formatted = `<color=#FFD84D>[MODERAÇÃO]</color> <color=#A78BFA>${moderator}</color>: ${message}`;
-  const result = await executeRconCommand(`say ${formatted}`);
-  if (result === null) return res.status(503).json({ error: "RCON indisponível." });
+  const safeModerator = moderator.replace(/"/g, "'");
+  const safeMessage = message.replace(/"/g, "'");
+  const formatted = `<color=#FFD84D>[MODERAÇÃO]</color> <color=#A78BFA>${safeModerator}</color>: ${safeMessage}`;
+
+  // Mostra imediatamente no painel, sem depender da resposta do WebRCON.
   addModeratorChat(`MOD • ${moderator}`, message);
-  res.json({ ok: true });
+
+  let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
+  if (result === null) {
+    result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
+  }
+
+  res.json({
+    ok: true,
+    rcon: result !== null,
+    warning: result === null ? "A mensagem apareceu no painel, mas o RCON não confirmou o envio ao jogo." : null,
+  });
 });
 router.get("/events", (_req, res) => res.json({ events: getLiveEvents() }));
 
