@@ -7,10 +7,6 @@ interface RconResponse { Identifier: number; Message: string; Type: string; Stac
 type RconEventHandler = (type: string, message: string) => void;
 const rconEventHandlers = new Set<RconEventHandler>();
 
-/**
- * Mantido por compatibilidade. Agora registra um assinante em vez de substituir
- * o anterior, para chat, anti-cheat e eventos poderem ouvir o WebRCON juntos.
- */
 export function setRconEventHandler(handler: RconEventHandler): void { rconEventHandlers.add(handler); }
 export function addRconEventHandler(handler: RconEventHandler): () => void {
   rconEventHandlers.add(handler);
@@ -88,44 +84,13 @@ export async function getOnlinePlayers(): Promise<RconPlayer[]> {
 
 export interface ServerInfo { hostname: string; maxPlayers: number; players: number; queued: number; joining: number; sleepers: number; map: string; gameTime: string; }
 
-function countSleepingResponse(value: string | null): number | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (Array.isArray(parsed)) return parsed.length;
-    if (parsed && typeof parsed === "object") {
-      const obj = parsed as Record<string, unknown>;
-      for (const key of ["Sleepers", "SleepingPlayers", "sleepers", "sleepingPlayers", "Count", "count"]) {
-        const n = Number(obj[key]); if (Number.isFinite(n)) return n;
-      }
-    }
-  } catch {}
-  const countMatch = value.match(/(?:sleeping|sleepers?).*?(\d+)/i);
-  if (countMatch) return Number(countMatch[1]);
-  const steamIds = value.match(/7656119\d{10}/g);
-  if (steamIds) return new Set(steamIds).size;
-  return null;
-}
-
 export async function getServerInfo(): Promise<ServerInfo | null> {
   const infoRaw = await executeRconCommand("serverinfo");
   if (!infoRaw) return null;
   try {
     const raw = JSON.parse(infoRaw) as Record<string, unknown>;
-    let sleepers = Number(raw.Sleepers ?? raw.SleepingPlayers ?? raw.Sleeping ?? raw.sleepers ?? raw.sleepingPlayers ?? 0);
-    if (!Number.isFinite(sleepers)) sleepers = 0;
-
-    if (sleepers === 0) {
-      const sleepingList = await executeRconCommand("sleepingplayerlist");
-      const detected = countSleepingResponse(sleepingList);
-      if (detected !== null) sleepers = detected;
-    }
-    if (sleepers === 0) {
-      const sleepingUsers = await executeRconCommand("sleepingusers");
-      const detected = countSleepingResponse(sleepingUsers);
-      if (detected !== null) sleepers = detected;
-    }
-
+    const sleepersRaw = Number(raw.Sleepers ?? raw.SleepingPlayers ?? raw.Sleeping ?? raw.sleepers ?? raw.sleepingPlayers ?? 0);
+    const sleepers = Number.isFinite(sleepersRaw) ? sleepersRaw : 0;
     return {
       hostname: String(raw.Hostname ?? "Servidor"),
       maxPlayers: Number(raw.MaxPlayers ?? 0),
