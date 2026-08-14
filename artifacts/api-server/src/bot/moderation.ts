@@ -7,6 +7,16 @@ import {
 import { logger } from "../lib/logger.js";
 
 const URL_REGEX = /(?:https?:\/\/|www\.)\S+|discord(?:app)?\.com\/invite\/\S+|discord\.gg\/\S+/i;
+const URL_MATCH_REGEX = /(?:https?:\/\/|www\.)[^\s<>]+|discord(?:app)?\.com\/invite\/[^\s<>]+|discord\.gg\/[^\s<>]+/gi;
+const ALLOWED_GIF_HOSTS = new Set([
+  "tenor.com",
+  "www.tenor.com",
+  "media.tenor.com",
+  "giphy.com",
+  "www.giphy.com",
+  "media.giphy.com",
+  "i.giphy.com",
+]);
 const ALLOWED_LINK_CATEGORY_IDS = new Set([
   "1530056461877641326",
   "1499084541791436862",
@@ -21,6 +31,21 @@ function isAllowedLinkChannel(message: Message): boolean {
   const channel = message.channel;
   if (!("parentId" in channel)) return false;
   return Boolean(channel.parentId && ALLOWED_LINK_CATEGORY_IDS.has(channel.parentId));
+}
+
+function isAllowedGifUrl(rawUrl: string): boolean {
+  try {
+    const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const url = new URL(normalizedUrl);
+    return ALLOWED_GIF_HOSTS.has(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function containsBlockedLink(content: string): boolean {
+  const urls = content.match(URL_MATCH_REGEX) ?? [];
+  return urls.some(url => !isAllowedGifUrl(url));
 }
 
 function normalize(text: string): string {
@@ -145,7 +170,7 @@ function formatWipeDate(date: Date): string {
 async function handleLinkModeration(message: Message): Promise<boolean> {
   if (!message.guild || message.author.bot || isAdmin(message)) return false;
   if (isAllowedLinkChannel(message)) return false;
-  if (!URL_REGEX.test(message.content)) return false;
+  if (!URL_REGEX.test(message.content) || !containsBlockedLink(message.content)) return false;
 
   await message.delete().catch(err => logger.warn({ err, messageId: message.id }, "Failed to delete blocked link"));
 
