@@ -16,7 +16,12 @@ interface MapVoteRuntime {
 const activeVotes = new Map<string, MapVoteRuntime>();
 const VOTE_CHANNEL_ID = "1537001939504734238";
 const CHAT_CHANNEL_ID = "1499084541791436861";
+const VIP_ROLE_ID = "1499084540356853917";
+const BOOSTER_ROLE_ID = "1536607642364018688";
 const ANNOUNCEMENT_INTERVAL = 4 * 60 * 60_000;
+
+const VIP_MENTION = `<@&${VIP_ROLE_ID}>`;
+const BOOSTER_MENTION = `<@&${BOOSTER_ROLE_ID}>`;
 
 export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
@@ -35,7 +40,8 @@ function headerEmbed(endsAt: number) {
     .setDescription(
       "**Vote no mapa que você deseja para o próximo wipe!**\n\n" +
       "📦 **Como votar**\nClique no botão correspondente ao seu mapa favorito. Você pode trocar seu voto enquanto a votação estiver aberta.\n\n" +
-      "⭐ **Bônus para cargos especiais**\nMembros com **VIP ativo** ou **Server Booster ativo** têm seu voto contado como **2 votos** em vez de 1.\n" +
+      "⭐ **Bônus para cargos especiais**\n" +
+      `${VIP_MENTION} e ${BOOSTER_MENTION} têm seu voto contado como **2 votos** em vez de 1.\n` +
       "Se possuir os dois benefícios, o peso continua sendo **2 votos**.\n\n" +
       `⏳ **Encerramento:** <t:${Math.floor(endsAt / 1000)}:R>`
     )
@@ -55,16 +61,35 @@ function rows(maps: MapOption[]) {
   ))];
 }
 
+function voteMessagePayload(vote: { endsAt: number; maps: MapOption[] }) {
+  return {
+    content: `@everyone • ${VIP_MENTION} • ${BOOSTER_MENTION}`,
+    allowedMentions: { parse: ["everyone"] as ("everyone")[], roles: [VIP_ROLE_ID, BOOSTER_ROLE_ID] },
+    embeds: [headerEmbed(vote.endsAt), ...mapEmbeds(vote.maps)],
+    components: rows(vote.maps),
+  };
+}
+
 async function announceVote(client: Client, endsAt: number): Promise<void> {
   if (Date.now() >= endsAt) return;
   const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
-  if (chat?.isSendable()) await chat.send(`🗳️ **VOTAÇÃO DE MAPA ABERTA!**\nAcesse <#${VOTE_CHANNEL_ID}> e escolha o mapa do próximo wipe.\n⭐ **VIPs e Boosters valem 2 votos.**\n⏳ Encerra <t:${Math.floor(endsAt / 1000)}:R>.`).catch(() => {});
+  if (chat?.isSendable()) {
+    await chat.send({
+      content:
+        `🗳️ **VOTAÇÃO DE MAPA ABERTA!**\n` +
+        `Acesse <#${VOTE_CHANNEL_ID}> e escolha o mapa do próximo wipe.\n` +
+        `⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} valem **2 votos**.\n` +
+        `⏳ Encerra <t:${Math.floor(endsAt / 1000)}:R>.`,
+      allowedMentions: { roles: [VIP_ROLE_ID, BOOSTER_ROLE_ID] },
+    }).catch(() => {});
+  }
   await executeRconCommand("say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>Vote no mapa do proximo wipe no Discord: discord.gg/guerrafria</color>").catch(() => null);
 }
 
 function scheduleRuntime(client: Client, vote: MapVoteRuntime): void {
   const old = activeVotes.get(vote.messageId);
-  if (old?.timer) clearTimeout(old.timer); if (old?.announcementTimer) clearInterval(old.announcementTimer);
+  if (old?.timer) clearTimeout(old.timer);
+  if (old?.announcementTimer) clearInterval(old.announcementTimer);
   const remaining = vote.endsAt - Date.now();
   if (remaining <= 0) { finishVote(client, vote.messageId).catch(() => {}); return; }
   vote.timer = setTimeout(() => finishVote(client, vote.messageId).catch(() => {}), remaining);
@@ -74,11 +99,41 @@ function scheduleRuntime(client: Client, vote: MapVoteRuntime): void {
 
 async function loadVote(messageId: string, client?: Client): Promise<MapVoteRuntime | null> {
   const cached = activeVotes.get(messageId); if (cached) return cached;
-  const rows = await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.messageId, messageId), eq(mapVotesTable.status, "active"))).limit(1);
-  const saved = rows[0]; if (!saved) return null;
+  const rowsSaved = await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.messageId, messageId), eq(mapVotesTable.status, "active"))).limit(1);
+  const saved = rowsSaved[0]; if (!saved) return null;
   let maps: MapOption[]; try { maps = JSON.parse(saved.mapsJson) as MapOption[]; } catch { return null; }
   const vote: MapVoteRuntime = { id: saved.id, messageId: saved.messageId, channelId: saved.channelId, endsAt: saved.endsAt.getTime(), maps };
-  if (client) scheduleRuntime(client, vote); return vote;
+  if (client) scheduleRuntime(client, vote);
+  return vote;
+}
+
+/**
+ * Recarrega votações ativas depois de restart/deploy e atualiza a PRÓPRIA mensagem.
+ * Não cria votação nova, não apaga votos e não muda o horário de encerramento.
+ */
+export async function restoreActiveMapVotes(client: Client): Promise<void> {
+  const savedVotes = await db.select().from(mapVotesTable).where(eq(mapVotesTable.status, "active"));
+  for (const saved of savedVotes) {
+    let maps: MapOption[];
+    try { maps = JSON.parse(saved.mapsJson) as MapOption[]; } catch { continue; }
+    const vote: MapVoteRuntime = {
+      id: saved.id,
+      messageId: saved.messageId,
+      channelId: saved.channelId,
+      endsAt: saved.endsAt.getTime(),
+      maps,
+    };
+    if (vote.endsAt <= Date.now()) {
+      await finishVote(client, vote.messageId).catch(() => {});
+      continue;
+    }
+    scheduleRuntime(client, vote);
+    const channel = await client.channels.fetch(vote.channelId).catch(() => null) as TextChannel | null;
+    if (!channel?.isTextBased()) continue;
+    const message = await channel.messages.fetch(vote.messageId).catch(() => null);
+    if (!message) continue;
+    await message.edit(voteMessagePayload(vote)).catch(() => {});
+  }
 }
 
 async function getVoteWeight(discordUserId: string): Promise<{ weight: number; vip: boolean; booster: boolean }> {
@@ -100,13 +155,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (!attachment.contentType?.startsWith("image/")) throw new Error(`imagem${n} não é uma imagem válida.`);
     return { name: `Mapa ${n}`, image: attachment.url };
   });
-  const minutes = parseInt(interaction.options.getString("duracao", true), 10); const endsAt = Date.now() + minutes * 60_000;
-  const message = await channel.send({ content: "@everyone", allowedMentions: { parse: ["everyone"] }, embeds: [headerEmbed(endsAt), ...mapEmbeds(maps)], components: rows(maps) });
+  const minutes = parseInt(interaction.options.getString("duracao", true), 10);
+  const endsAt = Date.now() + minutes * 60_000;
+  const message = await channel.send(voteMessagePayload({ endsAt, maps }));
   const [saved] = await db.insert(mapVotesTable).values({ messageId: message.id, channelId, mapsJson: JSON.stringify(maps), endsAt: new Date(endsAt), status: "active", createdBy: interaction.user.id }).returning();
   if (!saved) throw new Error("Falha ao persistir votação de mapa");
   scheduleRuntime(interaction.client, { id: saved.id, messageId: message.id, channelId, endsAt, maps });
   await announceVote(interaction.client, endsAt);
-  await interaction.editReply(`✅ Votação criada em <#${channelId}>.\n⭐ VIP e Booster = **2 votos**.\n💾 Votação e votos salvos no banco — reinícios do bot não interrompem mais a votação.`);
+  await interaction.editReply(`✅ Votação criada em <#${channelId}>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.\n💾 Votação e votos salvos no banco — reinícios do bot não interrompem mais a votação.`);
 }
 
 export async function handleMapVote(interaction: ButtonInteraction): Promise<void> {
@@ -116,24 +172,34 @@ export async function handleMapVote(interaction: ButtonInteraction): Promise<voi
   const option = Number(interaction.customId.split(":")[1]); if (!Number.isInteger(option) || !vote.maps[option]) return;
   const bonus = await getVoteWeight(interaction.user.id);
   const existing = await db.select().from(mapVoteBallotsTable).where(and(eq(mapVoteBallotsTable.mapVoteId, vote.id), eq(mapVoteBallotsTable.discordUserId, interaction.user.id))).limit(1);
-  if (existing[0]) await db.update(mapVoteBallotsTable).set({ optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster, updatedAt: new Date() }).where(eq(mapVoteBallotsTable.id, existing[0].id));
-  else await db.insert(mapVoteBallotsTable).values({ mapVoteId: vote.id, discordUserId: interaction.user.id, optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster });
-  const badge = bonus.vip && bonus.booster ? "⭐ VIP + 🚀 Booster" : bonus.vip ? "⭐ VIP" : bonus.booster ? "🚀 Booster" : "👤 voto padrão";
+  if (existing[0]) {
+    await db.update(mapVoteBallotsTable).set({ optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster, updatedAt: new Date() }).where(eq(mapVoteBallotsTable.id, existing[0].id));
+  } else {
+    await db.insert(mapVoteBallotsTable).values({ mapVoteId: vote.id, discordUserId: interaction.user.id, optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster });
+  }
+  const badge = bonus.vip && bonus.booster ? `${VIP_MENTION} + ${BOOSTER_MENTION}` : bonus.vip ? VIP_MENTION : bonus.booster ? BOOSTER_MENTION : "👤 voto padrão";
   await interaction.reply({ content: `✅ Voto registrado em **${vote.maps[option].name}**.\n${badge} • seu voto vale **${bonus.weight} voto${bonus.weight > 1 ? "s" : ""}**.\nVocê pode alterar sua escolha até o encerramento.`, ephemeral: true });
 }
 
 async function finishVote(client: Client, messageId: string): Promise<void> {
   const vote = await loadVote(messageId); if (!vote) return;
-  const runtime = activeVotes.get(messageId); if (runtime?.timer) clearTimeout(runtime.timer); if (runtime?.announcementTimer) clearInterval(runtime.announcementTimer); activeVotes.delete(messageId);
+  const runtime = activeVotes.get(messageId);
+  if (runtime?.timer) clearTimeout(runtime.timer);
+  if (runtime?.announcementTimer) clearInterval(runtime.announcementTimer);
+  activeVotes.delete(messageId);
   const ballots = await db.select().from(mapVoteBallotsTable).where(eq(mapVoteBallotsTable.mapVoteId, vote.id));
-  const counts = vote.maps.map(() => 0); for (const ballot of ballots) if (counts[ballot.optionIndex] !== undefined) counts[ballot.optionIndex] += ballot.weight;
+  const counts = vote.maps.map(() => 0);
+  for (const ballot of ballots) if (counts[ballot.optionIndex] !== undefined) counts[ballot.optionIndex] += ballot.weight;
   await db.update(mapVotesTable).set({ status: "completed" }).where(eq(mapVotesTable.id, vote.id));
-  const max = Math.max(...counts); const winners = counts.map((v, i) => v === max ? i : -1).filter(i => i >= 0);
-  const channel = await client.channels.fetch(vote.channelId).catch(() => null) as TextChannel | null; if (!channel?.isSendable()) return;
-  const msg = await channel.messages.fetch(messageId).catch(() => null); if (msg) await msg.edit({ components: [] }).catch(() => {});
+  const max = Math.max(...counts);
+  const winners = counts.map((v, i) => v === max ? i : -1).filter(i => i >= 0);
+  const channel = await client.channels.fetch(vote.channelId).catch(() => null) as TextChannel | null;
+  if (!channel?.isSendable()) return;
+  const msg = await channel.messages.fetch(messageId).catch(() => null);
+  if (msg) await msg.edit({ components: [] }).catch(() => {});
   const result = ballots.length === 0 ? "Nenhum voto foi registrado." : winners.length === 1 ? `🏆 **${vote.maps[winners[0]].name}** venceu a votação!` : `🤝 Empate entre: **${winners.map(i => vote.maps[i].name).join(" • ")}**.`;
   const embed = new EmbedBuilder().setColor(0xe53935).setTitle("🏁 VOTAÇÃO ENCERRADA — RESULTADO")
-    .setDescription(`${result}\n\n⭐ Votos de **VIPs e Boosters** foram contabilizados com peso **2**.`)
+    .setDescription(`${result}\n\n⭐ Votos de ${VIP_MENTION} e ${BOOSTER_MENTION} foram contabilizados com peso **2**.`)
     .addFields(...vote.maps.map((m, i) => ({ name: `🗺️ ${m.name}`, value: `**${counts[i]} voto(s)**`, inline: true })))
     .setFooter({ text: `Guerra Fria • ${ballots.length} participante(s)` }).setTimestamp();
   await channel.send({ embeds: [embed] });
