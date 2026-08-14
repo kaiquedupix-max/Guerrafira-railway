@@ -5,8 +5,17 @@ import { logger } from "../../lib/logger.js";
 interface RconMessage { Identifier: number; Message: string; Name: string; }
 interface RconResponse { Identifier: number; Message: string; Type: string; Stacktrace: string; }
 type RconEventHandler = (type: string, message: string) => void;
-let rconEventHandler: RconEventHandler | null = null;
-export function setRconEventHandler(handler: RconEventHandler): void { rconEventHandler = handler; }
+const rconEventHandlers = new Set<RconEventHandler>();
+
+/**
+ * Mantido por compatibilidade. Agora registra um assinante em vez de substituir
+ * o anterior, para chat, anti-cheat e eventos poderem ouvir o WebRCON juntos.
+ */
+export function setRconEventHandler(handler: RconEventHandler): void { rconEventHandlers.add(handler); }
+export function addRconEventHandler(handler: RconEventHandler): () => void {
+  rconEventHandlers.add(handler);
+  return () => rconEventHandlers.delete(handler);
+}
 
 let ws: WebSocket | null = null;
 let wsReady = false;
@@ -35,7 +44,12 @@ function _doConnect(): Promise<boolean> {
         const msg = JSON.parse(data.toString()) as RconResponse;
         const pending = pendingResolvers.get(msg.Identifier);
         if (pending) { clearTimeout(pending.timer); pendingResolvers.delete(msg.Identifier); pending.resolve(msg.Message); return; }
-        if (rconEventHandler && msg.Message) try { rconEventHandler(msg.Type ?? "", msg.Message); } catch (err) { logger.error({ err }, "RCON event handler error"); }
+        if (msg.Message) {
+          for (const handler of rconEventHandlers) {
+            try { handler(msg.Type ?? "", msg.Message); }
+            catch (err) { logger.error({ err }, "RCON event handler error"); }
+          }
+        }
       } catch {}
     });
     socket.on("error", err => { logger.error({ err }, "RCON WebSocket error"); wsReady = false; });
