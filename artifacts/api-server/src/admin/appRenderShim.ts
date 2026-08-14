@@ -1,9 +1,9 @@
 import type { Request } from "express";
-import { panelV4Html } from "./panelV4.js";
-import { panelV4Js } from "./panelV4Js.js";
+import { panelV5Html } from "./panelV5.js";
+import { panelV5Js } from "./panelV5Js.js";
 import { getAdminSession } from "./sessionCookie.js";
 
-const page = panelV4Html.replace("</body>", `<script>${panelV4Js}</script></body>`);
+const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSession(req);
