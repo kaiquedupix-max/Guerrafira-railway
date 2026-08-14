@@ -339,7 +339,7 @@ export async function handleVipPayPix(interaction: ButtonInteraction): Promise<v
     status: "pending", ticketChannelId: interaction.channelId ?? undefined,
   });
 
-  pendingVipPurchases.delete(interaction.channelId!);
+  // Mantém a sessão enquanto o ticket estiver aberto para permitir trocar a forma de pagamento.
 
   const qrBuffer   = await generateQrCodeBuffer(pix.qrCode);
   const attachment = new AttachmentBuilder(qrBuffer, { name: "pix-qr.png" });
@@ -389,7 +389,7 @@ export async function handleVipPayCard(interaction: ButtonInteraction): Promise<
     status: "pending", ticketChannelId: interaction.channelId ?? undefined,
   });
 
-  pendingVipPurchases.delete(interaction.channelId!);
+  // Mantém a sessão enquanto o ticket estiver aberto para permitir trocar a forma de pagamento.
 
   const linkRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setLabel("💳 Ir para o Checkout").setStyle(ButtonStyle.Link).setURL(pref.checkoutUrl),
