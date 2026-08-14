@@ -409,21 +409,18 @@ export async function handleVipPayCard(interaction: ButtonInteraction): Promise<
   logger.info({ preferenceId: pref.preferenceId, tier: ctx.tier, amount }, "Card preference created");
 }
 
-/** Botão "📋 Copiar Código PIX" — envia o código em mensagem ephemeral */
+/** Botão "📋 Copiar Código PIX" — envia somente o código como texto puro.
+ * No Discord mobile, embeds não oferecem "Copiar texto"; mensagens comuns oferecem.
+ */
 export async function handlePixCopy(interaction: ButtonInteraction): Promise<void> {
   const code = pixCodeStore.get(interaction.channelId!);
   if (!code) {
     await interaction.reply({ content: "❌ Código PIX não encontrado. Gere um novo pagamento.", ephemeral: true });
     return;
   }
+
   await interaction.reply({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x2ecc71)
-        .setTitle("📋  Código PIX — Copia e Cola")
-        .setDescription(`Selecione o texto abaixo, copie e cole no seu banco:\n\n\`\`\`${code}\`\`\``)
-        .setFooter({ text: "Guerra Fria • Só você está vendo esta mensagem" }),
-    ],
+    content: code,
     ephemeral: true,
   });
 }
