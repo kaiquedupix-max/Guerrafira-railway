@@ -8,6 +8,39 @@ const router = Router();
 router.use(requireAdmin);
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
 
+router.get("/members", async (req, res) => {
+  const client = discordClient();
+  const guildId = process.env.DISCORD_GUILD_ID;
+  const q = clean(req.query.q, 60);
+  if (!client || !guildId) return res.status(503).json({ error: "Discord indisponível." });
+
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) return res.status(404).json({ error: "Servidor do Discord não encontrado." });
+
+  let members;
+  try {
+    members = q
+      ? await guild.members.search({ query: q, limit: 25 })
+      : await guild.members.fetch({ limit: 25 });
+  } catch {
+    members = guild.members.cache;
+  }
+
+  const query = q.toLowerCase();
+  const rows = Array.from(members.values())
+    .filter(m => !m.user.bot)
+    .filter(m => !query || m.displayName.toLowerCase().includes(query) || m.user.username.toLowerCase().includes(query) || m.id.includes(query))
+    .slice(0, 25)
+    .map(m => ({
+      id: m.id,
+      username: m.user.username,
+      displayName: m.displayName,
+      avatar: m.displayAvatarURL({ size: 64 }),
+    }));
+
+  res.json({ members: rows });
+});
+
 router.post("/raffle", async (req, res) => {
   const client = discordClient();
   if (!client) return res.status(503).json({ error: "Bot do Discord ainda não está pronto." });
