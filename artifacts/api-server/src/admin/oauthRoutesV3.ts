@@ -6,13 +6,15 @@ import { getGuerraFriaDisplayName, isGuerraFriaAdmin } from "./permissions.js";
 import { issueAdminSessionV3, revokeAdminSessionV3 } from "./sessionBearer.js";
 import { issueCommunitySession, revokeCommunitySession } from "./communitySession.js";
 
-const states = new Map<string, { expires: number; target: "admin" | "community" | "home" }>();
+type Target = "admin" | "community" | "home" | "leaderboard";
+const states = new Map<string, { expires: number; target: Target }>();
 const redirectUri = () => process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || "https://guerrafria.up.railway.app/api/admin/auth/callback";
 
 export function adminLoginV3(req: Request, res: Response): void {
   const clientId = process.env.DISCORD_CLIENT_ID?.trim();
   if (!clientId) return void res.status(500).send("DISCORD_CLIENT_ID não configurado.");
-  const target = req.query.target === "community" ? "community" : req.query.target === "home" ? "home" : "admin";
+  const raw=String(req.query.target||"");
+  const target:Target=raw==="community"?"community":raw==="home"?"home":raw==="leaderboard"?"leaderboard":"admin";
   const state = randomUUID();
   states.set(state, { expires: Date.now() + 10 * 60 * 1000, target });
   const q = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri(), scope: "identify", state });
@@ -22,29 +24,24 @@ export function adminLoginV3(req: Request, res: Response): void {
 export async function adminCallbackV3(req: Request, res: Response): Promise<void> {
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
-  const stored = states.get(state);
-  states.delete(state);
+  const stored = states.get(state); states.delete(state);
   if (!code || !stored || stored.expires < Date.now()) return void res.status(400).send("Login expirado. Tente novamente.");
-
   const token = await exchangeDiscordCode(code, redirectUri());
   if (!token?.access_token) return void res.status(401).send("Falha ao autenticar com o Discord.");
   const user = await fetchDiscordUser(token.access_token);
   if (!user) return void res.status(401).send("Não foi possível identificar sua conta.");
   const isAdmin = await isGuerraFriaAdmin(user.id);
   const displayName = await getGuerraFriaDisplayName(user.id, user.global_name || user.username);
-
-  if (stored.target === "community" || stored.target === "home") {
+  if (stored.target !== "admin") {
     issueCommunitySession(res, user.id, displayName, isAdmin);
-    return void res.redirect(stored.target === "home" ? "/" : "/comunidade");
+    const destination=stored.target==="community"?"/comunidade":stored.target==="leaderboard"?"/leaderboard":"/";
+    return void res.redirect(destination);
   }
-
   if (!isAdmin) return void res.status(403).send("Acesso negado. Sua conta não possui permissão administrativa no Guerra Fria.");
   const sessionToken = issueAdminSessionV3(res, user.id, displayName);
   res.redirect(`/admin?auth=${encodeURIComponent(sessionToken)}`);
 }
 
 export function adminLogoutV3(_req: Request, res: Response): void {
-  revokeAdminSessionV3(res);
-  revokeCommunitySession(res);
-  res.redirect("/");
+  revokeAdminSessionV3(res); revokeCommunitySession(res); res.redirect("/");
 }
