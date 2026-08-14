@@ -18,12 +18,11 @@ const events = new Map<string, LiveEvent>([
 function trimList<T>(arr: T[], max: number) { if (arr.length > max) arr.splice(0, arr.length - max); }
 
 function isPluginTelemetry(text: string): boolean {
-  const s = text.trim();
+  const s = text.trim().toLowerCase();
   if (!s) return true;
-  if (/\[GF_LEADERBOARD\]/i.test(s)) return true;
-  if (/\[GuerraFriaLeaderboard\]/i.test(s)) return true;
-  if (/^\[[^\]]*(?:leaderboard|oxide|carbon|plugin)[^\]]*\]/i.test(s) && /\{|\bevent\b|\btimestamp\b/i.test(s)) return true;
-  if (/^\[[^\]]+\]\s*\{\s*"(?:event|type|action|timestamp)"\s*:/i.test(s)) return true;
+  if (s.includes("[gf_leaderboard]")) return true;
+  if (s.includes("[guerrafrialeaderboard]")) return true;
+  if ((s.includes("leaderboard") || s.includes("plugin")) && (s.includes("\"event\"") || s.includes("\"timestamp\""))) return true;
   return false;
 }
 
@@ -46,16 +45,9 @@ function parseChat(raw: string): { player: string; message: string } | null {
     }
   } catch {}
 
-  // Só aceita formatos explicitamente reconhecidos como chat. Não existe mais
-  // fallback genérico "qualquer coisa: qualquer coisa", pois logs de plugins
-  // e JSON de telemetria também contêm dois-pontos.
-  const patterns = [
-    /^\[CHAT\]\s*(?:\[[^\]]+\]\s*)?([^:]{1,60}):\s*(.+)$/i,
-    /^\[Chat\]\s+([^:]{1,60}):\s*(.+)$/i,
-  ];
-  for (const re of patterns) {
-    const m = text.match(re);
-    if (m && m[1] && m[2] && !/^server$/i.test(m[1].trim())) return { player: m[1].trim(), message: m[2].trim() };
+  const chatPrefix = text.match(/^\[CHAT\]\s*(?:\[[^\]]+\]\s*)?([^:]{1,60}):\s*(.+)$/i);
+  if (chatPrefix && chatPrefix[1] && chatPrefix[2] && !/^server$/i.test(chatPrefix[1].trim())) {
+    return { player: chatPrefix[1].trim(), message: chatPrefix[2].trim() };
   }
   return null;
 }
