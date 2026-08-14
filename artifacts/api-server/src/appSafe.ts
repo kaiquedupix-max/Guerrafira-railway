@@ -8,6 +8,7 @@ import { leaderboardHtml } from "./routes/leaderboardV2";
 import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
 import { renderHome } from "./admin/homePage.js";
+import { withSiteChrome } from "./admin/siteChrome.js";
 import { getCommunitySession } from "./admin/communitySession.js";
 import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js";
 import { logger } from "./lib/logger";
@@ -45,10 +46,15 @@ app.use((req, res, next) => {
 
 app.get("/", (req, res) => res.status(200).type("html").send(renderHome(req)));
 app.get("/leaderboard", (req, res) => {
-  if (!getCommunitySession(req)) return res.redirect("/");
-  return res.status(200).type("html").send(leaderboardHtml);
+  const session = getCommunitySession(req);
+  if (!session) return res.redirect("/");
+  return res.status(200).type("html").send(withSiteChrome(leaderboardHtml, "leaderboard", { isAdmin: session.isAdmin, username: session.username }));
 });
-app.get("/comunidade", (req, res) => res.status(200).type("html").send(renderCommunityPage(req)));
+app.get("/comunidade", (req, res) => {
+  const session = getCommunitySession(req);
+  const html = renderCommunityPage(req);
+  return res.status(200).type("html").send(session ? withSiteChrome(html, "integrity", { isAdmin: session.isAdmin, username: session.username }) : html);
+});
 
 app.get("/admin", (req, res) => {
   let admin = getAdminSessionV3(req);
@@ -62,7 +68,7 @@ app.get("/admin", (req, res) => {
     return res.redirect("/api/admin/auth/login?target=admin");
   }
 
-  return res.status(200).type("html").send(renderAdmin(req));
+  return res.status(200).type("html").send(withSiteChrome(renderAdmin(req), "admin", { isAdmin: true, username: admin.username }));
 });
 
 app.get("/status", (_req, res) => res.status(200).json({ status: "ok", service: "guerra-fria" }));
