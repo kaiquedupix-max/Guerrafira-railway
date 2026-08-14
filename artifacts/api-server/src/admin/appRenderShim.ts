@@ -1,10 +1,9 @@
 import type { Request } from "express";
-import { cleanAdminHtml } from "./panelClean.js";
-import { cleanAdminJs } from "./panelCleanJs.js";
-import { panelStabilityJs } from "./panelStability.js";
+import { panelV4Html } from "./panelV4.js";
+import { panelV4Js } from "./panelV4Js.js";
 import { getAdminSession } from "./sessionCookie.js";
 
-const page = cleanAdminHtml.replace("</body>", `<script>${cleanAdminJs}</script><script>${panelStabilityJs}</script></body>`);
+const page = panelV4Html.replace("</body>", `<script>${panelV4Js}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSession(req);
@@ -15,5 +14,5 @@ export function renderAdmin(req: Request): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-  return page.replace('<div id="username" class="user">Administrador</div>', `<div id="username" class="user">${username}</div>`);
+  return page.replace('<div id="username">Administrador</div>', `<div id="username">${username}</div>`);
 }
