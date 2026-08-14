@@ -4,9 +4,10 @@ import { panelV5Js } from "./panelV5Js.js";
 import { panelV5PolishJs } from "./panelV5Polish.js";
 import { panelAuthRecoveryJs } from "./panelAuthRecovery.js";
 import { panelOverviewFastJs } from "./panelOverviewFast.js";
+import { panelModerationParityJs } from "./panelModerationParity.js";
 import { getAdminSessionV3 } from "./sessionBearer.js";
 
-const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script></body>`);
+const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script><script>${panelModerationParityJs}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSessionV3(req);
