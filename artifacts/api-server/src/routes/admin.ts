@@ -10,6 +10,7 @@ import leaderboardRoutes from "../admin/routesLeaderboard.js";
 import financeRoutes from "../admin/routesFinance.js";
 import warningRoutes from "../admin/routesWarnings.js";
 import playerStateRoutes from "../admin/routesPlayerState.js";
+import integrityManageRoutes from "../admin/routesIntegrityManage.js";
 import { requireFinanceAccess } from "../admin/financeGuard.js";
 
 const router = Router();
@@ -30,6 +31,7 @@ router.use(readRoutes);
 router.use("/moderation", moderationRoutes);
 router.use("/warnings", warningRoutes);
 router.use("/player-state", playerStateRoutes);
+router.use("/integrity", integrityManageRoutes);
 router.use("/server", serverRoutes);
 router.use("/discord", discordRoutes);
 router.use("/steam", steamRoutes);
