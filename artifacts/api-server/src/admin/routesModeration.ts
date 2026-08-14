@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { executeRconCommand } from "../bot/utils/rcon.js";
 import { discordClient } from "../bot/client.js";
 import { requireAdmin } from "./guard.js";
+import { getGuerraFriaDisplayName } from "./permissions.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -30,7 +31,8 @@ router.post("/ban", async (req, res) => {
   const expiresAt = days ? new Date(Date.now() + days * 86400000) : null;
   const result = await executeRconCommand(`banid ${steamId} "${name.replace(/"/g, "'")}" "[${duration.toUpperCase()}] ${reason.replace(/"/g, "'")} | Recurso: discord.gg/guerrafria"`);
   const admin = res.locals.admin as { userId: string; username: string };
-  await db.insert(modLogsTable).values({ action: "BAN", steamId, playerName: name, reason, adminId: admin.userId, adminName: `${admin.username} [WEB]`, banDuration: duration, banExpiresAt: expiresAt });
+  const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
+  await db.insert(modLogsTable).values({ action: "BAN", steamId, playerName: name, reason, adminId: admin.userId, adminName, banDuration: duration, banExpiresAt: expiresAt });
   await sendServerLog(new EmbedBuilder().setColor(0xe74c3c).setTitle("🔨 Banimento aplicado").addFields(
     { name: "Jogador", value: name, inline: true },
     { name: "SteamID", value: `\`${steamId}\``, inline: true },
@@ -49,7 +51,8 @@ router.post("/kick", async (req, res) => {
   const result = await executeRconCommand(`kick "${p.playerName.replace(/"/g, "'")}" "${reason.replace(/"/g, "'")}"`);
   if (result === null) return res.status(503).json({ error: "RCON indisponível." });
   const admin = res.locals.admin as { userId: string; username: string };
-  await db.insert(modLogsTable).values({ action: "KICK", steamId, playerName: p.playerName, reason, adminId: admin.userId, adminName: `${admin.username} [WEB]` });
+  const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
+  await db.insert(modLogsTable).values({ action: "KICK", steamId, playerName: p.playerName, reason, adminId: admin.userId, adminName });
   res.json({ ok: true });
 });
 
@@ -58,8 +61,9 @@ router.post("/unban", async (req, res) => {
   if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." });
   const [p] = await db.select().from(playersTable).where(eq(playersTable.steamId, steamId)).limit(1);
   const admin = res.locals.admin as { userId: string; username: string };
+  const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
   await executeRconCommand(`unban ${steamId}`);
-  await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId, playerName: p?.playerName ?? steamId, reason: "Desbanido pelo painel web", adminId: admin.userId, adminName: `${admin.username} [WEB]` });
+  await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId, playerName: p?.playerName ?? steamId, reason: "Desbanido pelo painel web", adminId: admin.userId, adminName });
   res.json({ ok: true });
 });
 
@@ -80,7 +84,8 @@ router.post("/verify", async (req, res) => {
   const command = (process.env.VERIFIED_GAME_ADD_CMD?.trim() || "oxide.usergroup add {steamid} vr").replace(/\{steam[Ii][Dd]\}/g, steamId);
   const rcon = await executeRconCommand(command);
   const admin = res.locals.admin as { userId: string; username: string };
-  await db.insert(modLogsTable).values({ action: "VERIFICAR", steamId, playerName: p.playerName, reason: `Triagem concluída — Discord: ${member.user.tag}`, adminId: admin.userId, adminName: `${admin.username} [WEB]` });
+  const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
+  await db.insert(modLogsTable).values({ action: "VERIFICAR", steamId, playerName: p.playerName, reason: `Triagem concluída — Discord: ${member.displayName || member.user.globalName || member.user.username}`, adminId: admin.userId, adminName });
   await sendServerLog(new EmbedBuilder().setColor(0x22c55e).setTitle("🛡️ Jogador verificado").addFields(
     { name: "Jogador", value: p.playerName, inline: true },
     { name: "SteamID", value: `\`${steamId}\``, inline: true },
