@@ -38,7 +38,7 @@ async function scan(): Promise<void> {
     await notifySubscribedAdmins({
       kind: "payment",
       title: `${emoji} Pagamento ${label}`,
-      message: `${tier} • ${money(row.amount)}${method}\nStatus alterado para **${label}**.${row.steamId ? `\nSteamID: ${row.steamId}` : ""}`,
+      message: `${tier} • ${money(row.amount)}${method}\nStatus alterado para ${label}.${row.steamId ? `\nSteamID: ${row.steamId}` : ""}`,
       steamId: row.steamId || undefined,
       severity,
     });
