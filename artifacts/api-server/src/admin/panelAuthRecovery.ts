@@ -1,10 +1,12 @@
 export const panelAuthRecoveryJs = String.raw`
 (function(){
+  let verified=false;
   async function recoverAdmin(){
     try{
       const r=await fetch('/api/admin/me',{cache:'no-store',credentials:'same-origin',headers:{'Cache-Control':'no-cache'}});
       if(!r.ok) return;
       const j=await r.json().catch(()=>({}));
+      verified=true;
       const login=document.getElementById('login');
       const app=document.getElementById('app');
       const username=document.getElementById('username');
@@ -17,6 +19,7 @@ export const panelAuthRecoveryJs = String.raw`
     recoverAdmin();
     setTimeout(recoverAdmin,400);
     setTimeout(recoverAdmin,1200);
+    setInterval(()=>{ if(verified) recoverAdmin(); },4000);
   });
   window.addEventListener('pageshow',recoverAdmin);
 })();
