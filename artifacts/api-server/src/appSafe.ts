@@ -34,29 +34,38 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use((req, res, next) => {
+  if (req.path.startsWith("/admin") || req.path.startsWith("/api/admin")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+  next();
+});
+
 app.get("/", (req, res) => res.status(200).type("html").send(renderHome(req)));
 app.get("/leaderboard", (req, res) => {
   if (!getCommunitySession(req)) return res.redirect("/");
-  res.status(200).type("html").send(leaderboardHtml);
+  return res.status(200).type("html").send(leaderboardHtml);
 });
 app.get("/comunidade", (req, res) => res.status(200).type("html").send(renderCommunityPage(req)));
+
 app.get("/admin", (req, res) => {
-  // Quem já autenticou no portal e foi validado como admin não precisa
-  // passar pelo OAuth novamente. Promovemos a sessão pública para admin.
-  if (!getAdminSessionV3(req)) {
+  let admin = getAdminSessionV3(req);
+
+  if (!admin) {
     const community = getCommunitySession(req);
     if (community?.isAdmin) {
-      const token = issueAdminSessionV3(res, community.userId, community.username);
-      return res.redirect(`/admin?auth=${encodeURIComponent(token)}`);
+      issueAdminSessionV3(res, community.userId, community.username);
+      return res.redirect("/admin");
     }
+    return res.redirect("/api/admin/auth/login?target=admin");
   }
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
+
   return res.status(200).type("html").send(renderAdmin(req));
 });
-app.get("/status", (_req, res) => res.status(200).json({ status: "ok", service: "guerra-fria" }));
 
+app.get("/status", (_req, res) => res.status(200).json({ status: "ok", service: "guerra-fria" }));
 app.use("/api", router);
 app.use("/webhook", webhookRouter);
 
