@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { executeRconCommand, getOnlinePlayers, getServerInfo } from "../bot/utils/rcon.js";
+import { getSlotControlSettings, updateSlotControlSettings } from "../bot/slotManager.js";
 import { requireAdmin } from "./guard.js";
 import { addModeratorChat, getLiveChat, getLiveEvents, initLiveOps } from "./liveOps.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
+import { notifySubscribedAdmins } from "./adminNotifications.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -15,6 +17,54 @@ let itemCacheAt = 0;
 router.get("/online", async (_req, res) => {
   const [players, info] = await Promise.all([getOnlinePlayers().catch(() => []), getServerInfo().catch(() => null)]);
   res.json({ players, info });
+});
+
+router.get("/slot-control", async (_req, res) => {
+  try {
+    const [settings, info] = await Promise.all([
+      getSlotControlSettings(),
+      getServerInfo().catch(() => null),
+    ]);
+    res.json({ settings, info });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Não foi possível carregar o controle de slots." });
+  }
+});
+
+router.post("/slot-control", async (req, res) => {
+  const admin = res.locals.admin as { userId?: string; username?: string };
+  try {
+    const mode = req.body?.mode === "manual" ? "manual" : "automatic";
+    const minSlots = Number(req.body?.minSlots);
+    const maxSlots = Number(req.body?.maxSlots);
+    const manualSlots = Number(req.body?.manualSlots);
+    const displayName = admin.userId
+      ? await getGuerraFriaDisplayName(admin.userId, admin.username || "Administrador")
+      : (admin.username || "Administrador");
+
+    const result = await updateSlotControlSettings({
+      mode,
+      minSlots,
+      maxSlots,
+      manualSlots,
+      updatedBy: displayName,
+    });
+
+    const description = mode === "automatic"
+      ? `${displayName} ativou o controle automático de slots (${result.settings.minSlots}–${result.settings.maxSlots}).`
+      : `${displayName} definiu o controle manual em ${result.settings.manualSlots} slots.`;
+
+    void notifySubscribedAdmins({
+      kind: "system",
+      title: "🎛️ Controle de slots alterado",
+      message: description,
+      severity: "info",
+    }).catch(() => {});
+
+    res.json({ ok: true, ...result });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || "Configuração de slots inválida." });
+  }
 });
 
 router.get("/items", async (req, res) => {
