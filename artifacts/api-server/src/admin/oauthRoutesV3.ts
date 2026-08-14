@@ -4,28 +4,15 @@ import { exchangeDiscordCode } from "./discordOAuth.js";
 import { fetchDiscordUser } from "./discordUser.js";
 import { getGuerraFriaDisplayName, isGuerraFriaAdmin } from "./permissions.js";
 import { issueAdminSessionV3, revokeAdminSessionV3 } from "./sessionBearer.js";
-import { getCommunitySession, issueCommunitySession, revokeCommunitySession } from "./communitySession.js";
+import { issueCommunitySession, revokeCommunitySession } from "./communitySession.js";
 
-const states = new Map<string, { expires: number; target: "admin" | "community" }>();
+const states = new Map<string, { expires: number; target: "admin" | "community" | "home" }>();
 const redirectUri = () => process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || "https://guerrafria.up.railway.app/api/admin/auth/callback";
 
-export async function adminLoginV3(req: Request, res: Response): Promise<void> {
-  const target = req.query.target === "community" ? "community" : "admin";
-
-  if (target === "admin") {
-    const community = getCommunitySession(req);
-    if (community?.isAdmin) {
-      const stillAdmin = await isGuerraFriaAdmin(community.userId);
-      if (stillAdmin) {
-        const displayName = await getGuerraFriaDisplayName(community.userId, community.username);
-        const sessionToken = issueAdminSessionV3(res, community.userId, displayName);
-        return void res.redirect(`/admin?auth=${encodeURIComponent(sessionToken)}`);
-      }
-    }
-  }
-
+export function adminLoginV3(req: Request, res: Response): void {
   const clientId = process.env.DISCORD_CLIENT_ID?.trim();
   if (!clientId) return void res.status(500).send("DISCORD_CLIENT_ID não configurado.");
+  const target = req.query.target === "community" ? "community" : req.query.target === "home" ? "home" : "admin";
   const state = randomUUID();
   states.set(state, { expires: Date.now() + 10 * 60 * 1000, target });
   const q = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri(), scope: "identify", state });
@@ -46,12 +33,12 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
   const isAdmin = await isGuerraFriaAdmin(user.id);
   const displayName = await getGuerraFriaDisplayName(user.id, user.global_name || user.username);
 
-  if (stored.target === "community") {
+  if (stored.target === "community" || stored.target === "home") {
     issueCommunitySession(res, user.id, displayName, isAdmin);
-    return void res.redirect("/comunidade");
+    return void res.redirect(stored.target === "home" ? "/" : "/comunidade");
   }
 
-  if (!isAdmin) return void res.status(403).send("Acesso negado. Sua conta não é administradora do Guerra Fria.");
+  if (!isAdmin) return void res.status(403).send("Acesso negado. Sua conta não possui permissão administrativa no Guerra Fria.");
   const sessionToken = issueAdminSessionV3(res, user.id, displayName);
   res.redirect(`/admin?auth=${encodeURIComponent(sessionToken)}`);
 }
@@ -59,5 +46,5 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
 export function adminLogoutV3(_req: Request, res: Response): void {
   revokeAdminSessionV3(res);
   revokeCommunitySession(res);
-  res.redirect("/?admin_logout=1");
+  res.redirect("/");
 }
