@@ -13,9 +13,9 @@ const router = Router();
 
 router.use((req, _res, next) => {
   const auth = req.get("authorization") ?? "";
-  if ((!req.cookies || !req.cookies.gf_admin) && auth.toLowerCase().startsWith("bearer ")) {
+  if (auth.toLowerCase().startsWith("bearer ")) {
     const token = auth.slice(7).trim();
-    req.cookies = { ...(req.cookies ?? {}), gf_admin: token };
+    if (token) req.cookies = { ...(req.cookies ?? {}), gf_admin: token };
   }
   next();
 });
