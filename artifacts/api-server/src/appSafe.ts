@@ -6,6 +6,7 @@ import router from "./routes";
 import webhookRouter from "./routes/webhook.js";
 import { leaderboardHtml } from "./routes/leaderboardV2";
 import { renderAdmin } from "./admin/appRenderShim.js";
+import { renderCommunityPage } from "./admin/communityPage.js";
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
 
@@ -32,11 +33,12 @@ app.use(express.urlencoded({ extended: true }));
 
 const leaderboardPage = leaderboardHtml.replace(
   "</body>",
-  '<a href="/api/admin/auth/login" style="position:fixed;right:18px;bottom:18px;z-index:9999;text-decoration:none;background:#6d28d9;color:white;border:1px solid #a78bfa;padding:11px 15px;border-radius:11px;font:800 11px system-ui;box-shadow:0 14px 36px #0008">🛡️ Entrar com Discord</a></body>',
+  '<a href="/api/admin/auth/login?target=community" style="position:fixed;right:18px;bottom:18px;z-index:9999;text-decoration:none;background:#6d28d9;color:white;border:1px solid #a78bfa;padding:11px 15px;border-radius:11px;font:800 11px system-ui;box-shadow:0 14px 36px #0008">🛡️ Entrar com Discord</a></body>',
 );
 
 app.get("/", (_req, res) => res.status(200).type("html").send(leaderboardPage));
 app.get("/leaderboard", (_req, res) => res.status(200).type("html").send(leaderboardPage));
+app.get("/comunidade", (req, res) => res.status(200).type("html").send(renderCommunityPage(req)));
 app.get("/admin", (req, res) => res.status(200).type("html").send(renderAdmin(req)));
 app.get("/status", (_req, res) => res.status(200).json({ status: "ok", service: "guerra-fria" }));
 
