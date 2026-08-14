@@ -1,1 +1,0 @@
-Use renderAdminPage(req) for GET /admin so authenticated sessions are rendered server-side.
