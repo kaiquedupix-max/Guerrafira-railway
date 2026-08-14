@@ -2,6 +2,7 @@ import { Router } from "express";
 import { executeRconCommand, getOnlinePlayers, getServerInfo } from "../bot/utils/rcon.js";
 import { requireAdmin } from "./guard.js";
 import { addModeratorChat, getLiveChat, getLiveEvents, initLiveOps } from "./liveOps.js";
+import { getGuerraFriaDisplayName } from "./permissions.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -30,18 +31,8 @@ router.get("/items", async (req, res) => {
       } catch {}
     }
   }
-
-  if (!itemCache.length) {
-    return res.status(503).json({
-      error: "Catálogo de itens indisponível. Instale o plugin GuerraFriaItemCatalog.cs no servidor Rust.",
-      items: [],
-    });
-  }
-
-  const items = (q
-    ? itemCache.filter(x => String(x.name).toLowerCase().includes(q) || String(x.shortname).toLowerCase().includes(q) || String(x.category ?? "").toLowerCase().includes(q))
-    : itemCache
-  ).slice(0, 80);
+  if (!itemCache.length) return res.status(503).json({ error: "Catálogo de itens indisponível. Instale o plugin GuerraFriaItemCatalog.cs no servidor Rust.", items: [] });
+  const items = (q ? itemCache.filter(x => String(x.name).toLowerCase().includes(q) || String(x.shortname).toLowerCase().includes(q) || String(x.category ?? "").toLowerCase().includes(q)) : itemCache).slice(0, 80);
   res.json({ items, total: itemCache.length });
 });
 
@@ -50,24 +41,18 @@ router.post("/chat", async (req, res) => {
   const message = clean(req.body?.message, 220);
   if (!message) return res.status(400).json({ error: "Mensagem vazia." });
 
-  const admin = res.locals.admin as { username?: string };
-  const moderator = clean(admin?.username || "Moderador", 40);
-  const safeModerator = moderator.replace(/"/g, "'");
+  const admin = res.locals.admin as { userId?: string; username?: string };
+  const displayName = admin.userId ? await getGuerraFriaDisplayName(admin.userId, admin.username || "Administrador") : (admin.username || "Administrador");
+  const safeAdmin = clean(displayName, 40).replace(/"/g, "'");
   const safeMessage = message.replace(/"/g, "'");
-  const formatted = `<color=#FFD84D>[MODERAÇÃO]</color> <color=#A78BFA>${safeModerator}</color>: ${safeMessage}`;
 
-  addModeratorChat(`MOD • ${moderator}`, message);
+  const formatted = `<color=#FFD84D>[GUERRA FRIA]</color> <color=#FF3B30>[ADMINISTRAÇÃO]</color> <color=#FF9500>${safeAdmin}</color>: <color=#E9D5FF>${safeMessage}</color>`;
+  addModeratorChat(`ADMINISTRAÇÃO • ${safeAdmin}`, message);
 
   let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
-  if (result === null) {
-    result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
-  }
+  if (result === null) result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
 
-  res.json({
-    ok: true,
-    rcon: result !== null,
-    warning: result === null ? "A mensagem apareceu no painel, mas o RCON não confirmou o envio ao jogo." : null,
-  });
+  res.json({ ok: true, rcon: result !== null, warning: result === null ? "A mensagem apareceu no painel, mas o RCON não confirmou o envio ao jogo." : null });
 });
 router.get("/events", (_req, res) => res.json({ events: getLiveEvents() }));
 
@@ -78,38 +63,13 @@ router.post("/say", async (req, res) => {
   res.json({ ok: result !== null, result });
 });
 router.post("/give", async (req, res) => {
-  const steamId = clean(req.body?.steamId, 17);
-  const item = clean(req.body?.item, 80);
-  const amount = Math.max(1, Math.min(100000, Number(req.body?.amount) || 1));
+  const steamId = clean(req.body?.steamId, 17), item = clean(req.body?.item, 80), amount = Math.max(1, Math.min(100000, Number(req.body?.amount) || 1));
   if (!steamRe.test(steamId) || !/^[a-z0-9._-]+$/i.test(item)) return res.status(400).json({ error: "SteamID ou item inválido." });
   const result = await executeRconCommand(`inventory.giveto ${steamId} ${item} ${amount}`);
   res.json({ ok: result !== null, result });
 });
-router.post("/clear-inventory", async (req, res) => {
-  const steamId = clean(req.body?.steamId, 17);
-  if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." });
-  const result = await executeRconCommand(`inventory.clearinventory ${steamId}`);
-  res.json({ ok: result !== null, result });
-});
-router.post("/teleport", async (req, res) => {
-  const from = clean(req.body?.from, 17);
-  const to = clean(req.body?.to, 17);
-  if (!steamRe.test(from) || !steamRe.test(to)) return res.status(400).json({ error: "SteamID inválido." });
-  const result = await executeRconCommand(`teleport ${from} ${to}`);
-  res.json({ ok: result !== null, result });
-});
-router.post("/spawn", async (req, res) => {
-  const entity = clean(req.body?.entity, 120);
-  if (!/^[a-z0-9_./-]+$/i.test(entity)) return res.status(400).json({ error: "Entidade inválida." });
-  const result = await executeRconCommand(`spawn ${entity}`);
-  res.json({ ok: result !== null, result });
-});
-router.post("/rcon", async (req, res) => {
-  const command = clean(req.body?.command, 500);
-  if (!command) return res.status(400).json({ error: "Comando vazio." });
-  const blocked = /^(quit|restart|server\.identity|rcon\.)\b/i.test(command);
-  if (blocked) return res.status(403).json({ error: "Este comando crítico foi bloqueado no painel web." });
-  const result = await executeRconCommand(command);
-  res.json({ ok: result !== null, result });
-});
+router.post("/clear-inventory", async (req, res) => { const steamId = clean(req.body?.steamId, 17); if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." }); const result = await executeRconCommand(`inventory.clearinventory ${steamId}`); res.json({ ok: result !== null, result }); });
+router.post("/teleport", async (req, res) => { const from = clean(req.body?.from, 17), to = clean(req.body?.to, 17); if (!steamRe.test(from) || !steamRe.test(to)) return res.status(400).json({ error: "SteamID inválido." }); const result = await executeRconCommand(`teleport ${from} ${to}`); res.json({ ok: result !== null, result }); });
+router.post("/spawn", async (req, res) => { const entity = clean(req.body?.entity, 120); if (!/^[a-z0-9_./-]+$/i.test(entity)) return res.status(400).json({ error: "Entidade inválida." }); const result = await executeRconCommand(`spawn ${entity}`); res.json({ ok: result !== null, result }); });
+router.post("/rcon", async (req, res) => { const command = clean(req.body?.command, 500); if (!command) return res.status(400).json({ error: "Comando vazio." }); const blocked = /^(quit|restart|server\.identity|rcon\.)\b/i.test(command); if (blocked) return res.status(403).json({ error: "Este comando crítico foi bloqueado no painel web." }); const result = await executeRconCommand(command); res.json({ ok: result !== null, result }); });
 export default router;
