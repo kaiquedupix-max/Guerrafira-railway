@@ -3,6 +3,7 @@ import { db, modLogsTable, playersTable } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { executeRconCommand } from "../bot/utils/rcon.js";
 import { requireAdmin } from "./guard.js";
+import { getGuerraFriaDisplayName } from "./permissions.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -27,6 +28,7 @@ router.post("/apply", async (req, res) => {
   const previous = await db.select().from(modLogsTable).where(and(eq(modLogsTable.steamId, steamId), eq(modLogsTable.action, "WARN")));
   const number = previous.length + 1;
   const admin = res.locals.admin as { userId: string; username: string };
+  const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
 
   await db.insert(modLogsTable).values({
     action: "WARN",
@@ -34,7 +36,7 @@ router.post("/apply", async (req, res) => {
     playerName: player.playerName,
     reason: discordUserId ? `${reason} | Discord: ${discordUserId} | Advertência ${number}/3` : `${reason} | Advertência ${number}/3`,
     adminId: admin.userId,
-    adminName: `${admin.username} [WEB]`,
+    adminName,
   });
 
   await executeRconCommand(`say <color=#FF9A2F>[ADVERTÊNCIA ${number}/3]</color> ${player.playerName}: ${reason.replace(/"/g, "'")}`).catch(() => {});
@@ -47,7 +49,7 @@ router.post("/apply", async (req, res) => {
       playerName: player.playerName,
       reason: "Banimento automático após 3 advertências.",
       adminId: admin.userId,
-      adminName: `${admin.username} [WEB]`,
+      adminName,
       banDuration: "perm",
       banExpiresAt: null,
     });
