@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { EmbedBuilder } from "discord.js";
 import { db, modLogsTable, playersTable } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { executeRconCommand } from "../bot/utils/rcon.js";
+import { discordClient } from "../bot/client.js";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
 
@@ -9,6 +11,14 @@ const router = Router();
 router.use(requireAdmin);
 const steamRe = /^7656119\d{10}$/;
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
+
+async function sendLog(embed: EmbedBuilder): Promise<void> {
+  const client = discordClient();
+  const channelId = process.env.DISCORD_LOG_CHANNEL_ID;
+  if (!client || !channelId) return;
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (channel?.isSendable()) await channel.send({ embeds: [embed] }).catch(() => {});
+}
 
 router.get("/:steamId", async (req, res) => {
   const steamId = clean(req.params.steamId, 17);
@@ -39,6 +49,23 @@ router.post("/apply", async (req, res) => {
     adminName,
   });
 
+  await sendLog(
+    new EmbedBuilder()
+      .setColor(0xff9a2f)
+      .setTitle(`⚠️ Advertência aplicada • ${number}/3`)
+      .setDescription("Uma advertência administrativa foi registrada no sistema Guerra Fria.")
+      .addFields(
+        { name: "Jogador", value: player.playerName, inline: true },
+        { name: "SteamID", value: `\`${steamId}\``, inline: true },
+        { name: "Advertências", value: `**${number}/3**`, inline: true },
+        { name: "Motivo", value: reason },
+        ...(discordUserId ? [{ name: "Discord do jogador", value: `<@${discordUserId}>`, inline: true }] : []),
+        { name: "Responsável", value: `<@${admin.userId}> • **${adminName}**`, inline: true },
+      )
+      .setFooter({ text: "Guerra Fria • Administração" })
+      .setTimestamp(),
+  );
+
   await executeRconCommand(`say <color=#FF9A2F>[ADVERTÊNCIA ${number}/3]</color> ${player.playerName}: ${reason.replace(/"/g, "'")}`).catch(() => {});
 
   if (number >= 3) {
@@ -53,6 +80,22 @@ router.post("/apply", async (req, res) => {
       banDuration: "perm",
       banExpiresAt: null,
     });
+
+    await sendLog(
+      new EmbedBuilder()
+        .setColor(0xef4444)
+        .setTitle("🔨 Banimento permanente automático")
+        .setDescription("O jogador atingiu **3 advertências** e foi banido permanentemente pelo sistema.")
+        .addFields(
+          { name: "Jogador", value: player.playerName, inline: true },
+          { name: "SteamID", value: `\`${steamId}\``, inline: true },
+          { name: "Motivo", value: "3 advertências acumuladas" },
+          { name: "Responsável pela 3ª advertência", value: `<@${admin.userId}> • **${adminName}**` },
+        )
+        .setFooter({ text: "Guerra Fria • Administração" })
+        .setTimestamp(),
+    );
+
     return res.json({ ok: true, warnings: number, banned: true });
   }
 
