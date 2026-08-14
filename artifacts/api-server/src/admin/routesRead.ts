@@ -2,7 +2,7 @@ import { Router } from "express";
 import { desc } from "drizzle-orm";
 import { db, playersTable, modLogsTable, boosterLinksTable, vipSubscriptionsTable } from "@workspace/db";
 import { getServerInfo } from "../bot/utils/rcon.js";
-import { getAdminSession } from "./sessionCookie.js";
+import { getAdminSessionV3 } from "./sessionBearer.js";
 import { requireAdmin } from "./guard.js";
 import { isDiscordAdministrator } from "./permissions.js";
 
@@ -10,9 +10,12 @@ const router = Router();
 router.use(requireAdmin);
 
 router.get("/me", async (req, res) => {
-  const session = getAdminSession(req);
+  const session = getAdminSessionV3(req);
   const canViewFinance = session ? await isDiscordAdministrator(session.userId) : false;
-  res.json({ user: session, capabilities: { canViewFinance } });
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.status(200).json({ user: session, capabilities: { canViewFinance } });
 });
 
 router.get("/overview", async (_req, res) => {
