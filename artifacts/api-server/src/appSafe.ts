@@ -9,6 +9,7 @@ import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
 import { renderHome } from "./admin/homePage.js";
 import { getCommunitySession } from "./admin/communitySession.js";
+import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js";
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
 
@@ -39,7 +40,21 @@ app.get("/leaderboard", (req, res) => {
   res.status(200).type("html").send(leaderboardHtml);
 });
 app.get("/comunidade", (req, res) => res.status(200).type("html").send(renderCommunityPage(req)));
-app.get("/admin", (req, res) => res.status(200).type("html").send(renderAdmin(req)));
+app.get("/admin", (req, res) => {
+  // Quem já autenticou no portal e foi validado como admin não precisa
+  // passar pelo OAuth novamente. Promovemos a sessão pública para admin.
+  if (!getAdminSessionV3(req)) {
+    const community = getCommunitySession(req);
+    if (community?.isAdmin) {
+      const token = issueAdminSessionV3(res, community.userId, community.username);
+      return res.redirect(`/admin?auth=${encodeURIComponent(token)}`);
+    }
+  }
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  return res.status(200).type("html").send(renderAdmin(req));
+});
 app.get("/status", (_req, res) => res.status(200).json({ status: "ok", service: "guerra-fria" }));
 
 app.use("/api", router);
