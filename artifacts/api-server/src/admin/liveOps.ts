@@ -17,6 +17,36 @@ const events = new Map<string, LiveEvent>([
 
 function trimList<T>(arr: T[], max: number) { if (arr.length > max) arr.splice(0, arr.length - max); }
 
+const recentChat = new Map<string, number>();
+
+function normalizePlayer(player: string): string {
+  return player
+    .replace(/\[7656119\d{10}\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeMessage(message: string): string {
+  return message.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function shouldIgnoreChat(player: string, message: string): boolean {
+  const normalizedPlayer = normalizePlayer(player);
+  if (!normalizedPlayer || normalizedPlayer === "server") return true;
+
+  const key = `${normalizedPlayer}:${normalizeMessage(message)}`;
+  const now = Date.now();
+  const lastSeen = recentChat.get(key);
+  recentChat.set(key, now);
+
+  for (const [savedKey, timestamp] of recentChat) {
+    if (now - timestamp > 15_000) recentChat.delete(savedKey);
+  }
+
+  return lastSeen !== undefined && now - lastSeen < 5_000;
+}
+
 function isPluginTelemetry(text: string): boolean {
   const s = text.trim().toLowerCase();
   if (!s) return true;
@@ -92,8 +122,8 @@ export function initLiveOps(): void {
   setRconEventHandler((type, raw) => {
     inspectEvent(raw);
     const parsed = parseChat(raw);
-    if (parsed) {
-      chat.push({ id: seq++, at: new Date().toISOString(), type: type || "chat", player: parsed.player, message: parsed.message, raw: raw.slice(0, 1000) });
+    if (parsed && !shouldIgnoreChat(parsed.player, parsed.message)) {
+      chat.push({ id: seq++, at: new Date().toISOString(), type: type || "chat", player: parsed.player.replace(/\[7656119\d{10}\]/g, "").trim(), message: parsed.message, raw: raw.slice(0, 1000) });
       trimList(chat, 250);
     }
   });
