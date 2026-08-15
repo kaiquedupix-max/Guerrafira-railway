@@ -65,8 +65,14 @@ export async function grantVip(opts: {
     try {
       const guild = await client.guilds.fetch(guildId);
       const member = await guild.members.fetch(discordUserId).catch(() => null);
-      if (member) await member.roles.add(roleId, `VIP ${tier} concedido (${source})`);
-    } catch (err) { logger.error({ err, discordUserId, roleId, guildId }, "Failed to assign VIP Discord role"); }
+      if (!member) throw new Error("Membro não encontrado no servidor Discord");
+      if (!member.roles.cache.has(roleId)) await member.roles.add(roleId, `VIP ${tier} concedido (${source})`);
+    } catch (err) {
+      const rollback = buildRconCmd(`VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
+      if (rollback) await executeVipRcon(rollback, "revoke").catch(() => {});
+      logger.error({ err, discordUserId, roleId, guildId }, "VIP Discord role failed; Rust grant rolled back");
+      throw new Error("O VIP não foi entregue no Discord; a alteração no Rust foi revertida para nova tentativa.");
+    }
   }
 
   await db.insert(vipSubscriptionsTable).values({ discordUserId, steamId, vipTier: tier, source, durationDays, startsAt: now, expiresAt });
@@ -83,12 +89,20 @@ export async function revokeVip(opts: {
   const { subscriptionId, tier, steamId, discordUserId, client } = opts;
   logger.info({ subscriptionId, tier, steamId }, "▶ revokeVip started");
 
-  const revokeCmd = buildRconCmd(`VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
-  if (!revokeCmd) throw new Error(`Comando RCON de remoção do VIP ${tier} não configurado.`);
-  await executeVipRcon(revokeCmd, "revoke");
-  logger.info({ cmd: revokeCmd }, "RCON revoke command confirmed");
-
   const now = new Date();
+  const sameTier = await db.select().from(vipSubscriptionsTable).where(and(
+    eq(vipSubscriptionsTable.steamId, steamId),
+    eq(vipSubscriptionsTable.vipTier, tier),
+    gt(vipSubscriptionsTable.expiresAt, now),
+    eq(vipSubscriptionsTable.gameVipRemoved, false),
+  ));
+  const hasOtherSameTier = sameTier.some(s => s.id !== subscriptionId);
+  if (!hasOtherSameTier) {
+    const revokeCmd = buildRconCmd(`VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
+    if (!revokeCmd) throw new Error(`Comando RCON de remoção do VIP ${tier} não configurado.`);
+    await executeVipRcon(revokeCmd, "revoke");
+  }
+
   const allForDiscord = discordUserId && discordUserId !== "manual-web"
     ? await db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.discordUserId, discordUserId))
     : [];
@@ -136,6 +150,15 @@ export function startVipExpiryChecker(client: Client): void {
       await executeVipRcon(command, "grant").catch(err =>
         logger.error({ err, steamId: sub.steamId, tier: sub.vipTier }, "Active VIP reconciliation failed"),
       );
+      const roleId = process.env.DISCORD_VIP_ROLE_ID, guildId = process.env.DISCORD_GUILD_ID;
+      if (roleId && guildId && sub.discordUserId && !sub.discordUserId.startsWith("manual")) {
+        const guild = await client.guilds.fetch(guildId).catch(() => null);
+        const member = guild ? await guild.members.fetch(sub.discordUserId).catch(() => null) : null;
+        if (member && !member.roles.cache.has(roleId)) {
+          await member.roles.add(roleId, "Reconciliação automática de VIP").catch(err =>
+            logger.error({ err, discordUserId: sub.discordUserId }, "VIP Discord role reconciliation failed"));
+        }
+      }
     }
 
     const expired = await db.select().from(vipSubscriptionsTable).where(and(
