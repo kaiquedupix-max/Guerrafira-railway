@@ -34,6 +34,20 @@ export interface PixResult {
   expiresAt:     string;
 }
 
+export interface PixFailure {
+  error: string;
+  providerStatus?: number;
+}
+
+function readableMpError(rawText: string): string {
+  try {
+    const data = JSON.parse(rawText) as { message?: string; error?: string; cause?: Array<{ description?: string; code?: string }> };
+    const detail = data.cause?.find(item => item.description)?.description || data.message || data.error;
+    if (detail) return String(detail).replace(/[\r\n\t]/g, " ").slice(0, 220);
+  } catch {}
+  return "O Mercado Pago recusou a criação do pagamento.";
+}
+
 export async function createPixPayment(opts: {
   amount:        number;
   description:   string;
@@ -41,9 +55,9 @@ export async function createPixPayment(opts: {
   discordUserId: string;
   steamId:       string;
   vipTier:       string;
-}): Promise<PixResult | null> {
+}): Promise<PixResult | PixFailure> {
   const token = getToken();
-  if (!token) return null;
+  if (!token) return { error: "Configuração do Mercado Pago indisponível." };
 
   logger.info({ amount: opts.amount, vipTier: opts.vipTier, email: opts.email }, "Creating MP PIX payment");
 
@@ -60,7 +74,6 @@ export async function createPixPayment(opts: {
       email:          opts.email,
       first_name:     "Comprador",
       last_name:      "GuerraFria",
-      identification: { type: "CPF", number: "19119119100" },
     },
     metadata: {
       discord_user_id: opts.discordUserId,
@@ -71,19 +84,28 @@ export async function createPixPayment(opts: {
   };
 
   try {
-    const res = await fetch(`${MP_BASE}/v1/payments`, {
-      method: "POST",
-      headers: {
-        Authorization:        `Bearer ${token}`,
-        "Content-Type":       "application/json",
-        "X-Idempotency-Key": `pix-${opts.discordUserId}-${opts.vipTier}-${Date.now()}`,
-      },
-      body: JSON.stringify(body),
-    });
-    const rawText = await res.text();
+    const idempotencyKey = `pix-${opts.discordUserId}-${opts.vipTier}-${Date.now()}`;
+    let res: Response | null = null;
+    let rawText = "";
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      res = await fetch(`${MP_BASE}/v1/payments`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify(body),
+      });
+      rawText = await res.text();
+      if (res.ok || (res.status !== 429 && res.status < 500)) break;
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 900));
+    }
+    if (!res) return { error: "O Mercado Pago não respondeu." };
     if (!res.ok) {
-      logger.error({ status: res.status, body: rawText }, "MP PIX payment error");
-      return null;
+      const providerError = readableMpError(rawText);
+      logger.error({ status: res.status, providerError, body: rawText.slice(0, 1000) }, "MP PIX payment error");
+      return { error: providerError, providerStatus: res.status };
     }
     const data = JSON.parse(rawText) as {
       id: number;
@@ -91,6 +113,12 @@ export async function createPixPayment(opts: {
       date_of_expiration?: string;
       point_of_interaction: { transaction_data: { qr_code: string; qr_code_base64: string } };
     };
+
+    const transactionData = data.point_of_interaction?.transaction_data;
+    if (!data.id || !transactionData?.qr_code) {
+      logger.error({ paymentId: data.id, status: data.status }, "MP PIX response missing QR code");
+      return { error: "O Mercado Pago criou o pedido, mas não retornou o código Pix." };
+    }
 
     const expiresAt = data.date_of_expiration ?? requestedExpiration;
     logger.info(
@@ -100,14 +128,14 @@ export async function createPixPayment(opts: {
 
     return {
       paymentId:    String(data.id),
-      qrCode:       data.point_of_interaction.transaction_data.qr_code,
-      qrCodeBase64: data.point_of_interaction.transaction_data.qr_code_base64,
+      qrCode:       transactionData.qr_code,
+      qrCodeBase64: transactionData.qr_code_base64 ?? "",
       amount:       opts.amount,
       expiresAt,
     };
   } catch (err) {
     logger.error({ err }, "MP PIX payment exception");
-    return null;
+    return { error: "Falha de comunicação com o Mercado Pago. Tente novamente." };
   }
 }
 
