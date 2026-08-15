@@ -16,7 +16,8 @@ import { logger } from "../lib/logger.js";
 const DEFAULT_MIN_SLOTS = Math.max(1, parseInt(process.env.SERVER_MIN_SLOTS ?? "100", 10) || 100);
 const DEFAULT_MAX_SLOTS = Math.max(DEFAULT_MIN_SLOTS, parseInt(process.env.SERVER_MAX_SLOTS ?? "250", 10) || 250);
 const STEP = 10;
-const INTERVAL = 60_000;
+const INTERVAL = 15_000;
+const SHRINK_HOLD_MS = 5 * 60_000;
 const HARD_MAX = 1000;
 
 export type SlotControlMode = "automatic" | "manual";
@@ -31,6 +32,7 @@ export interface SlotControlSettings {
 }
 
 let currentSlots: number | null = null;
+let lastExpansionAt = 0;
 let tableReady = false;
 
 async function ensureSettingsTable(): Promise<void> {
@@ -84,14 +86,22 @@ export async function getSlotControlSettings(): Promise<SlotControlSettings> {
 
 async function setSlots(newSlots: number): Promise<boolean> {
   const target = Math.max(1, Math.min(HARD_MAX, Math.round(newSlots)));
-  const result = await executeRconCommand(`server.maxplayers ${target}`);
-  if (result === null) {
-    logger.warn({ target }, "Slot change RCON command failed");
-    return false;
+  const before = currentSlots;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await executeRconCommand(`server.maxplayers ${target}`).catch(() => null);
+    if (result !== null) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const confirmed = await getServerInfo().catch(() => null);
+      if (confirmed?.maxPlayers === target) {
+        currentSlots = target;
+        logger.info({ from: before, to: target, attempt }, "Server slots updated and confirmed");
+        return true;
+      }
+    }
+    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 700));
   }
-  logger.info({ from: currentSlots, to: target }, "Server slots updated via RCON");
-  currentSlots = target;
-  return true;
+  logger.error({ from: before, target }, "Slot change was not confirmed by serverinfo");
+  return false;
 }
 
 export async function updateSlotControlSettings(input: {
@@ -154,7 +164,7 @@ export function startSlotManager(client: Client): void {
     const info = await getServerInfo();
     if (!info) return;
     const settings = await getSlotControlSettings();
-    const { players, queued } = info;
+    const { players, queued, joining } = info;
 
     // Always trust the real server value when available. This keeps the bot and
     // panel synchronized even if someone changed maxplayers outside the panel.
@@ -174,10 +184,13 @@ export function startSlotManager(client: Client): void {
       await setSlots(Math.max(minSlots, players));
     } else if (currentSlots > maxSlots && maxSlots >= players) {
       await setSlots(maxSlots);
-    } else if ((queued > 0 || players >= currentSlots) && currentSlots < maxSlots) {
+    } else if ((queued > 0 || joining > 0 || players >= currentSlots) && currentSlots < maxSlots) {
       const target = clamp(currentSlots + STEP, minSlots, maxSlots);
-      if (await setSlots(target)) logger.info({ players, queued, to: target }, "Queue/full detected — slots expanded");
-    } else if (queued === 0 && currentSlots > minSlots && players <= currentSlots - STEP) {
+      if (await setSlots(target)) {
+        lastExpansionAt = Date.now();
+        logger.info({ players, queued, joining, to: target }, "Queue/full pressure detected — slots expanded");
+      }
+    } else if (queued === 0 && joining === 0 && Date.now() - lastExpansionAt >= SHRINK_HOLD_MS && currentSlots > minSlots && players <= currentSlots - STEP) {
       const target = clamp(currentSlots - STEP, minSlots, maxSlots);
       if (target >= players && await setSlots(target)) logger.info({ players, to: target }, "No queue — slots reduced");
     }
@@ -187,5 +200,5 @@ export function startSlotManager(client: Client): void {
 
   setTimeout(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), 10_000);
   setInterval(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), INTERVAL);
-  logger.info({ defaultMin: DEFAULT_MIN_SLOTS, defaultMax: DEFAULT_MAX_SLOTS, step: STEP }, "Slot manager started with panel control");
+  logger.info({ defaultMin: DEFAULT_MIN_SLOTS, defaultMax: DEFAULT_MAX_SLOTS, step: STEP, intervalMs: INTERVAL, shrinkHoldMs: SHRINK_HOLD_MS }, "Slot manager started with panel control");
 }
