@@ -66,6 +66,8 @@ export function parseKillEvent(type: string, message: string): boolean {
   const killerId = typeof obj.attacker_steamid === "string" ? obj.attacker_steamid : typeof obj.killer_id === "string" ? obj.killer_id : undefined;
   const victimId = typeof obj.victim_steamid === "string" ? obj.victim_steamid : typeof obj.victim_id === "string" ? obj.victim_id : undefined;
   if (!killerId || !victimId) return false;
+  // Estatísticas e detector aceitam somente jogadores Steam reais; NPCs e entidades ficam fora do ranking.
+  if (!/^7656119\\d{10}$/.test(killerId) || !/^7656119\\d{10}$/.test(victimId) || killerId === victimId) return false;
 
   const killerName = typeof obj.attacker === "string" ? obj.attacker : typeof obj.killer === "string" ? obj.killer : "Unknown";
   const victimName = typeof obj.victim === "string" ? obj.victim : "Unknown";
