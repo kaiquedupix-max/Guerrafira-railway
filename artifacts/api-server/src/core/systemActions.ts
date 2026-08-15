@@ -117,7 +117,15 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
     { name: "Jogador", value: row.playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Discord", value: `<@${input.discordUserId}>`, inline: true }, { name: "Responsável", value: actorLabel(input.actor) }
   ).setFooter({ text: "Guerra Fria • Verificação" }).setTimestamp());
-  return { playerName: row.playerName, roleAssigned: Boolean(roleId) };
+
+  const safePlayerName = safe(row.playerName, 80);
+  const safeAdminName = safe(input.actor.name, 60);
+  const notification = `say <color=#00FF88>[VERIFICAÇÃO CONCLUÍDA]</color> | <color=#FF8800>${safePlayerName}</color> foi verificado pelo administrador <color=#FF4444>${safeAdminName}</color>. <color=#00FF88>O jogador foi considerado LIMPO.</color>`;
+  const gameNotified = await executeRconRequired(notification).then(() => true).catch(error => {
+    logger.error({ error, steamId: input.steamId }, "Verified player game notification failed");
+    return false;
+  });
+  return { playerName: row.playerName, roleAssigned: Boolean(roleId), gameNotified };
 }
 
 export async function unverifyPlayer(input: { steamId: string; discordUserId?: string; actor: ActionActor }) {
