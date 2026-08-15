@@ -9,7 +9,7 @@ import { searchPlayers, getPlayerBySteamId } from "../utils/players.js";
 import { buildVerifyEmbed } from "../utils/embeds.js";
 import { executeRconCommand } from "../utils/rcon.js";
 import { db, modLogsTable } from "@workspace/db";
-import { logger } from "../../lib/logger.js";
+import { ActionError, verifyPlayer } from "../../core/systemActions.js";
 
 export const data = new SlashCommandBuilder()
   .setName("verificar")
@@ -26,58 +26,15 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const steamId = interaction.options.getString("jogador", true);
-  const discordUser = interaction.options.getUser("membro", true);
-  const player = await getPlayerBySteamId(steamId);
-  if (!player) {
-    await interaction.editReply("❌ Jogador não encontrado no banco de dados. Verifique se o jogador já entrou no servidor ao menos uma vez.");
-    return;
+  try {
+    const discordUser = interaction.options.getUser("membro", true);
+    const result = await verifyPlayer({
+      steamId: interaction.options.getString("jogador", true),
+      discordUserId: discordUser.id,
+      actor: { id: interaction.user.id, name: interaction.user.tag, source: "discord" },
+    });
+    await interaction.editReply(`✅ **${result.playerName}** foi verificado no Rust e no Discord.`);
+  } catch (error) {
+    await interaction.editReply(`❌ ${error instanceof ActionError ? error.message : "Falha interna na verificação."}`);
   }
-
-  const verifiedRoleId = process.env.DISCORD_VERIFIED_ROLE_ID;
-  let roleAssigned = false;
-  if (verifiedRoleId && interaction.guild) {
-    try {
-      const member = await interaction.guild.members.fetch(discordUser.id);
-      if (!member.roles.cache.has(verifiedRoleId)) {
-        await member.roles.add(verifiedRoleId, `Verificado por ${interaction.user.tag}`);
-        roleAssigned = true;
-      }
-    } catch (err) {
-      logger.error({ err, discordUserId: discordUser.id }, "Failed to assign verified role");
-      await interaction.editReply(`⚠️ Não foi possível atribuir o cargo. Certifique-se de que:\n• O bot tem permissão de **Gerenciar Cargos**.\n• O cargo <@&${verifiedRoleId}> está **abaixo** do cargo do bot na hierarquia.`);
-      return;
-    }
-  }
-
-  const verifiedGameTemplate = process.env.VERIFIED_GAME_ADD_CMD?.trim() || "oxide.usergroup add {steamid} vr";
-  const verifiedGameCommand = verifiedGameTemplate.replace(/\{steam[Ii][Dd]\}/g, player.steamId);
-  const rconResult = await executeRconCommand(verifiedGameCommand).catch((err) => {
-    logger.error({ err, steamId: player.steamId, command: verifiedGameCommand }, "Failed to add player to verified Rust group");
-    return null;
-  });
-
-  await db.insert(modLogsTable).values({ action: "VERIFICAR", steamId: player.steamId, playerName: player.playerName, reason: `Triagem de anti-cheat concluída — sem irregularidades | Discord: ${discordUser.tag}`, adminId: interaction.user.id, adminName: interaction.user.tag });
-
-  const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
-  if (logChannelId) {
-    const ch = await interaction.client.channels.fetch(logChannelId).catch(() => null);
-    if (ch?.isSendable()) await ch.send({ embeds: [buildVerifyEmbed({ playerName: player.playerName, steamId: player.steamId, discordUser, admin: interaction.user })] });
-  }
-
-  let reply = `✅ **${player.playerName}** foi verificado com sucesso.\n🛡️ Registro enviado ao canal de logs.`;
-  if (verifiedRoleId) reply += roleAssigned ? `\n🎖️ O cargo <@&${verifiedRoleId}> foi atribuído a <@${discordUser.id}>.` : `\n🎖️ <@${discordUser.id}> já possuía o cargo <@&${verifiedRoleId}>.`;
-  else reply += `\n⚠️ Configure \`DISCORD_VERIFIED_ROLE_ID\` para atribuir o cargo automaticamente no Discord.`;
-  reply += rconResult === null ? `\n⚠️ Não foi possível confirmar o grupo **vr** no Rust porque o RCON está indisponível.` : `\n🎮 O jogador foi adicionado ao grupo **vr** no Rust.`;
-  await interaction.editReply(reply);
-
-  const adminDisplayName = (interaction.member as { displayName?: string } | null)?.displayName ?? interaction.user.displayName;
-  await executeRconCommand(
-    `say <color=#00FF88>[VERIFICAÇÃO CONCLUÍDA]</color> | ` +
-    `<color=#FF8800>${player.playerName}</color> foi verificado pelo administrador ` +
-    `<color=#FF4444>${adminDisplayName}</color>. ` +
-    `<color=#00FF88>O jogador foi considerado LIMPO.</color>`
-  ).catch(() => {});
-
-  logger.info({ steamId: player.steamId, playerName: player.playerName, discordUserId: discordUser.id, roleAssigned, verifiedGameCommand, admin: interaction.user.tag }, "Player verified");
 }
