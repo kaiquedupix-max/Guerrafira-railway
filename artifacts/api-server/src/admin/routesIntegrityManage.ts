@@ -3,13 +3,24 @@ import { db, modLogsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
+import { getSteamProfileSummaries } from "./steamProfiles.js";
 
 const router = Router();
 router.use(requireAdmin);
 
 router.get("/records", async (_req, res) => {
   const rows = await db.select().from(modLogsTable).orderBy(desc(modLogsTable.createdAt)).limit(3000);
-  const records = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
+  const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
+  const steamProfiles = await getSteamProfileSummaries(filtered.map(x => String(x.steamId || "")));
+  const records = filtered.map(x => {
+    const steam = steamProfiles.get(String(x.steamId || ""));
+    return {
+      ...x,
+      steamProfileUrl: steam?.profileUrl ?? `https://steamcommunity.com/profiles/${x.steamId}`,
+      steamAvatarUrl: steam?.avatarUrl ?? null,
+      steamPersonaName: steam?.personaName ?? null,
+    };
+  });
   res.json({ records });
 });
 
