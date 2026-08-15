@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, boosterLinksTable, modLogsTable, vipSubscriptionsTable } from "@workspace/db";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { ActionError, unverifyPlayer } from "../core/systemActions.js";
 import { requireAdmin } from "./guard.js";
 
@@ -13,12 +13,17 @@ router.get("/:steamId", async (req, res) => {
   const steamId = clean(req.params.steamId, 17);
   if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." });
   const now = Date.now();
-  const [links, vips, history, warnings] = await Promise.all([
+  const [links, vips, history] = await Promise.all([
     db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId)).limit(1),
     db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.steamId, steamId)).orderBy(desc(vipSubscriptionsTable.expiresAt)),
     db.select().from(modLogsTable).where(eq(modLogsTable.steamId, steamId)).orderBy(desc(modLogsTable.createdAt)).limit(200),
-    db.select().from(modLogsTable).where(and(eq(modLogsTable.steamId, steamId), eq(modLogsTable.action, "WARN"))),
   ]);
+
+  const removedWarningIds = new Set(history
+    .filter(x => x.action === "WARN_REMOVED")
+    .map(x => String(x.reason ?? "").match(/warningId:(\d+)/)?.[1])
+    .filter((id): id is string => Boolean(id)));
+  const activeWarnings = history.filter(x => x.action === "WARN" && !removedWarningIds.has(String(x.id)));
 
   const latestVerification = history.find(x => x.action === "VERIFICAR" || x.action === "REMOVER_VERIFICADO");
   const verified = latestVerification?.action === "VERIFICAR";
@@ -34,7 +39,7 @@ router.get("/:steamId", async (req, res) => {
     booster: links[0] ? { active: links[0].active, discordUserId: links[0].discordUserId } : { active: false, discordUserId: null },
     vip: activeVip ? { active: true, id: activeVip.id, tier: activeVip.vipTier, expiresAt: activeVip.expiresAt, discordUserId: activeVip.discordUserId } : { active: false },
     verified,
-    warnings: warnings.length,
+    warnings: activeWarnings.length,
     banned,
     ban: latestBan ? {
       duration: latestBan.banDuration,
