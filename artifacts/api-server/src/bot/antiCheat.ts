@@ -15,9 +15,9 @@ type PlayerState = { recentKills: RecentKill[]; recentArrowHits: RecentHit[]; sc
 
 const states = new Map<string, PlayerState>();
 const verifiedCache = new Map<string, number>();
-const ALERT_COOLDOWN_MS = 60_000;
+const ALERT_COOLDOWN_MS = Number(process.env.ANTICHEAT_ALERT_COOLDOWN_MS || 8 * 60_000);
 const HISTORY_MS = 10 * 60_000;
-const SCORE_DECAY_MS = 3 * 60_000;
+const SCORE_DECAY_MS = Number(process.env.ANTICHEAT_SCORE_DECAY_MS || 2 * 60_000);
 
 function stateFor(steamId: string): PlayerState {
   let state = states.get(steamId);
@@ -58,7 +58,7 @@ function weaponLabel(raw?: string): string {
 function decayScore(state: PlayerState, now: number): void {
   const elapsed = now - state.lastScoreAt;
   if (elapsed < SCORE_DECAY_MS) return;
-  state.score = Math.max(0, state.score - Math.floor(elapsed / SCORE_DECAY_MS));
+  state.score = Math.max(0, state.score - (2 * Math.floor(elapsed / SCORE_DECAY_MS)));
   state.lastScoreAt = now;
 }
 
@@ -70,8 +70,8 @@ async function persistentStats(steamId: string) {
 }
 
 function levelFor(score: number): { label: string; color: number } {
-  if (score >= 8) return { label: "🔴 CRÍTICO", color: 0xe74c3c };
-  if (score >= 4) return { label: "🟠 SUSPEITO", color: 0xe67e22 };
+  if (score >= 16) return { label: "🔴 CRÍTICO", color: 0xe74c3c };
+  if (score >= 9) return { label: "🟠 SUSPEITO", color: 0xe67e22 };
   return { label: "🟡 ATENÇÃO", color: 0xf1c40f };
 }
 
@@ -118,13 +118,13 @@ export async function analyzeKill(signal: KillSignal): Promise<void> {
 
   const stats = await persistentStats(signal.attackerSteamId).catch(() => ({ kills: 0, deaths: 0, headshots: 0 }));
   const hsRate = stats.kills > 0 ? stats.headshots / stats.kills : 0;
-  if (stats.kills >= 10 && hsRate > 0.60) { reasons.push(`HS acima de 60%: ${(hsRate * 100).toFixed(1)}% com ${stats.kills} kills`); points += hsRate >= 0.70 ? 3 : 2; }
+  if (stats.kills >= 30 && hsRate > 0.75) { reasons.push(`HS acima de 75%: ${(hsRate * 100).toFixed(1)}% com ${stats.kills} kills`); points += hsRate >= 0.85 ? 3 : 2; }
 
   const last3 = state.recentKills.slice(-3);
-  if (last3.length === 3 && last3.every(k => k.headshot) && last3[2].at - last3[0].at <= 30_000) { reasons.push("3 kills seguidas de headshot em até 30 segundos"); points += 2; }
-  if (last3.length === 3 && last3[2].at - last3[0].at <= 8_000) { reasons.push("3 kills em até 8 segundos"); points += 3; }
+  if (last3.length === 3 && last3.every(k => k.headshot) && last3[2].at - last3[0].at <= 18_000) { reasons.push("3 kills seguidas de headshot em até 18 segundos"); points += 2; }
+  if (last3.length === 3 && last3[2].at - last3[0].at <= 5_000) { reasons.push("3 kills em até 5 segundos"); points += 3; }
   const last4 = state.recentKills.slice(-4);
-  if (last4.length === 4 && last4[3].at - last4[0].at <= 15_000) { reasons.push("4 kills em até 15 segundos"); points += 4; }
+  if (last4.length === 4 && last4[3].at - last4[0].at <= 10_000) { reasons.push("4 kills em até 10 segundos"); points += 4; }
   const last6 = state.recentKills.slice(-6);
   if (last6.length >= 5 && last6.filter(k => k.headshot).length >= 5 && last6[last6.length - 1]!.at - last6[0]!.at <= 90_000) { reasons.push("5 headshots nas últimas 6 kills em até 90 segundos"); points += 3; }
 
@@ -133,7 +133,8 @@ export async function analyzeKill(signal: KillSignal): Promise<void> {
 
   if (!reasons.length) return;
   state.score += points; state.lastScoreAt = now;
-  if (now - state.lastAlertAt < ALERT_COOLDOWN_MS) return;
+  const highConfidence = points >= 5;
+  if (state.score < 9 || (reasons.length < 2 && !highConfidence) || now - state.lastAlertAt < ALERT_COOLDOWN_MS) return;
   state.lastAlertAt = now;
   await sendAlert({ ...signal, reasons, score: state.score, stats }).catch(err => logger.error({ err }, "Anti-cheat kill alert failed"));
 }
@@ -156,7 +157,8 @@ export async function analyzeArrowHit(signal: HitSignal): Promise<void> {
   if ((signal.distance ?? 0) >= 150 && signal.headshot) { reasons.push(`Flechada na cabeça a ${(signal.distance ?? 0).toFixed(0)}m`); points += 2; }
   if (!reasons.length) return;
   state.score += points; state.lastScoreAt = now;
-  if (now - state.lastAlertAt < ALERT_COOLDOWN_MS) return;
+  const highConfidence = points >= 5;
+  if (state.score < 9 || (reasons.length < 2 && !highConfidence) || now - state.lastAlertAt < ALERT_COOLDOWN_MS) return;
   state.lastAlertAt = now;
   const stats = await persistentStats(signal.attackerSteamId).catch(() => ({ kills: 0, deaths: 0, headshots: 0 }));
   await sendAlert({ ...signal, reasons, score: state.score, stats }).catch(err => logger.error({ err }, "Anti-cheat arrow alert failed"));
