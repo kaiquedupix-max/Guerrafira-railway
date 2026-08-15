@@ -2,7 +2,6 @@ import { Router } from "express";
 import { db, vipSubscriptionsTable, modLogsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { discordClient } from "../bot/client.js";
-import { executeRconCommand } from "../bot/utils/rcon.js";
 import { grantVip, revokeVip, type VipTier } from "../bot/vip.js";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
@@ -21,13 +20,14 @@ router.post("/grant", async (req, res) => {
   const days = Math.max(1, Math.min(365, Number(req.body?.days) || 30));
   if (!steamRe.test(steamId) || !["bronze","prata","ouro"].includes(tier)) return res.status(400).json({ error: "Dados inválidos." });
 
-  if (discordUserId) {
-    await grantVip({ discordUserId, steamId, tier, durationDays: days, source: "purchase", client });
-  } else {
-    const template = process.env[`VIP_${tier.toUpperCase()}_GRANT_CMD`];
-    if (template) await executeRconCommand(template.replace(/\{steam[Ii][Dd]\}/g, steamId));
-    await db.insert(vipSubscriptionsTable).values({ discordUserId: "manual-web", steamId, vipTier: tier, source: "purchase", durationDays: days, startsAt: new Date(), expiresAt: new Date(Date.now() + days * 86400000) });
-  }
+  await grantVip({
+    discordUserId: discordUserId || "manual-web",
+    steamId,
+    tier,
+    durationDays: days,
+    source: "purchase",
+    client,
+  });
 
   const admin = res.locals.admin as { userId: string; username: string };
   const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
