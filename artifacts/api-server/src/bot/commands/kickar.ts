@@ -11,7 +11,7 @@ import {
 } from "../utils/players.js";
 import { executeRconCommand } from "../utils/rcon.js";
 import { db, modLogsTable } from "@workspace/db";
-import { logger } from "../../lib/logger.js";
+import { ActionError, kickPlayer } from "../../core/systemActions.js";
 
 const APPEAL_LINK = "discord.gg/guerrafria";
 
@@ -46,57 +46,16 @@ export async function autocomplete(
   );
 }
 
-export async function execute(
-  interaction: ChatInputCommandInteraction
-): Promise<void> {
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-  const steamId = interaction.options.getString("jogador", true);
-  const reason  = interaction.options.getString("motivo", true);
-
-  const player = await getPlayerBySteamId(steamId);
-  if (!player) {
-    await interaction.editReply("❌ Jogador não encontrado no banco de dados.");
-    return;
+  try {
+    const result = await kickPlayer({
+      steamId: interaction.options.getString("jogador", true),
+      reason: interaction.options.getString("motivo", true),
+      actor: { id: interaction.user.id, name: interaction.user.tag, source: "discord" },
+    });
+    await interaction.editReply(`✅ **${result.playerName}** foi expulso com confirmação do servidor.`);
+  } catch (error) {
+    await interaction.editReply(`❌ ${error instanceof ActionError ? error.message : "Falha interna ao expulsar o jogador."}`);
   }
-
-  if (!player.isOnline) {
-    await interaction.editReply(
-      `⚠️ **${player.playerName}** está **offline**.\n\nNão é possível expulsar um jogador desconectado. Use \`/banir\` se necessário.`
-    );
-    return;
-  }
-
-  const rconReason = `${reason} | Recurso: ${APPEAL_LINK}`;
-
-  const rconResult = await executeRconCommand(
-    `kick "${player.playerName}" "${rconReason}"`
-  );
-
-  if (rconResult === null) {
-    await interaction.editReply(
-      "❌ Não foi possível conectar ao RCON. O kick não foi aplicado."
-    );
-    return;
-  }
-
-  // Mantém o histórico interno para consultas administrativas,
-  // mas não publica kick no canal Registros do Servidor.
-  await db.insert(modLogsTable).values({
-    action: "KICK",
-    steamId: player.steamId,
-    playerName: player.playerName,
-    reason,
-    adminId: interaction.user.id,
-    adminName: interaction.user.tag,
-  });
-
-  await interaction.editReply(
-    `✅ **${player.playerName}** foi expulso do servidor.\n📋 Motivo: ${reason}`
-  );
-
-  logger.info(
-    { steamId: player.steamId, playerName: player.playerName, reason, admin: interaction.user.tag },
-    "Player kicked"
-  );
 }
