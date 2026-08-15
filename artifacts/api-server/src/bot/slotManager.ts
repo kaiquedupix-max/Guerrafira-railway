@@ -17,7 +17,7 @@ const DEFAULT_MIN_SLOTS = Math.max(1, parseInt(process.env.SERVER_MIN_SLOTS ?? "
 const DEFAULT_MAX_SLOTS = Math.max(DEFAULT_MIN_SLOTS, parseInt(process.env.SERVER_MAX_SLOTS ?? "250", 10) || 250);
 const STEP = 10;
 const INTERVAL = 15_000;
-const SHRINK_HOLD_MS = 5 * 60_000;
+const SHRINK_HOLD_MS = 60_000;
 const HARD_MAX = 1000;
 
 export type SlotControlMode = "automatic" | "manual";
@@ -57,6 +57,11 @@ async function ensureSettingsTable(): Promise<void> {
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function capacityForPopulation(players: number, minSlots: number, maxSlots: number): number {
+  const roundedDemand = Math.ceil(Math.max(0, players) / STEP) * STEP;
+  return clamp(Math.max(minSlots, roundedDemand), minSlots, maxSlots);
 }
 
 export async function getSlotControlSettings(): Promise<SlotControlSettings> {
@@ -137,12 +142,13 @@ export async function updateSlotControlSettings(input: {
   if (mode === "manual") {
     applied = await setSlots(manualSlots);
   } else if (info) {
-    // Returning to automatic mode immediately brings an out-of-range value
-    // back inside the configured limits, without ever reducing below players.
     const real = info.maxPlayers || currentSlots || minSlots;
     currentSlots = real;
-    if (real < minSlots) applied = await setSlots(Math.max(minSlots, players));
-    else if (real > maxSlots && maxSlots >= players) applied = await setSlots(maxSlots);
+    const pressure = info.queued > 0 || info.joining > 0 || players >= real;
+    const target = pressure
+      ? clamp(real + STEP, minSlots, maxSlots)
+      : capacityForPopulation(players, minSlots, maxSlots);
+    if (target !== real) applied = await setSlots(target);
   }
 
   return { settings: await getSlotControlSettings(), applied, serverPlayers: players };
@@ -190,9 +196,11 @@ export function startSlotManager(client: Client): void {
         lastExpansionAt = Date.now();
         logger.info({ players, queued, joining, to: target }, "Queue/full pressure detected — slots expanded");
       }
-    } else if (queued === 0 && joining === 0 && Date.now() - lastExpansionAt >= SHRINK_HOLD_MS && currentSlots > minSlots && players <= currentSlots - STEP) {
-      const target = clamp(currentSlots - STEP, minSlots, maxSlots);
-      if (target >= players && await setSlots(target)) logger.info({ players, to: target }, "No queue — slots reduced");
+    } else if (queued === 0 && joining === 0 && Date.now() - lastExpansionAt >= SHRINK_HOLD_MS) {
+      const target = capacityForPopulation(players, minSlots, maxSlots);
+      if (target < currentSlots && await setSlots(target)) {
+        logger.info({ players, from: currentSlots, to: target }, "No queue — slots adjusted to population");
+      }
     }
 
     updatePresence(client, players, currentSlots ?? info.maxPlayers ?? minSlots);
