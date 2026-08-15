@@ -4,6 +4,7 @@ export const paymentsTable = pgTable("payments", {
   id:              serial("id").primaryKey(),
   mpPaymentId:     varchar("mp_payment_id", { length: 64 }),
   mpPreferenceId:  varchar("mp_preference_id", { length: 128 }),
+  mpExternalReference: varchar("mp_external_reference", { length: 128 }),
   discordUserId:   varchar("discord_user_id", { length: 64 }).notNull(),
   steamId:         varchar("steam_id", { length: 32 }),
   email:           varchar("email", { length: 128 }),
