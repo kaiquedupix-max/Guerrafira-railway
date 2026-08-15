@@ -346,7 +346,10 @@ export async function handleVipPayPix(interaction: ButtonInteraction): Promise<v
     email: ctx.email, discordUserId: ctx.discordUserId, steamId: ctx.steamId, vipTier: ctx.tier,
   });
 
-  if (!pix) { await interaction.editReply("❌ Erro ao gerar o PIX. Tente novamente ou entre em contato com um administrador."); return; }
+  if ("error" in pix) {
+    await interaction.editReply(`❌ Não foi possível gerar o PIX: **${pix.error}**\n\nTente novamente em alguns instantes. Se continuar, escolha cartão ou avise a administração.`);
+    return;
+  }
 
   await db.insert(paymentsTable).values({
     mpPaymentId: pix.paymentId, discordUserId: ctx.discordUserId, steamId: ctx.steamId,
