@@ -97,8 +97,8 @@ router.post("/chat", async (req, res) => {
   const safeAdmin = clean(displayName, 40).replace(/"/g, "'");
   const safeMessage = message.replace(/"/g, "'");
 
-  const formatted = `<color=red>[Moderação]</color> <color=orange>${safeAdmin}:</color> <color=green>${safeMessage}</color>`;
-  addModeratorChat(`Moderação • ${safeAdmin}`, message);
+  const formatted = `<color=red>[Administração]</color> <color=orange>${safeAdmin}:</color> <color=#D8B4FE>${safeMessage}</color>`;
+  addModeratorChat(`Administração • ${safeAdmin}`, message);
 
   let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
   if (result === null) result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
