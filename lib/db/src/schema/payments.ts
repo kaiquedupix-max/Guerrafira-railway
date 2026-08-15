@@ -15,4 +15,5 @@ export const paymentsTable = pgTable("payments", {
   ticketChannelId: varchar("ticket_channel_id", { length: 64 }),
   createdAt:       timestamp("created_at").defaultNow().notNull(),
   updatedAt:       timestamp("updated_at").defaultNow().notNull(),
+  vipGrantedAt:    timestamp("vip_granted_at"),
 });
