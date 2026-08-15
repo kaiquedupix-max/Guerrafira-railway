@@ -144,7 +144,7 @@ export async function updateSlotControlSettings(input: {
   } else if (info) {
     const real = info.maxPlayers || currentSlots || minSlots;
     currentSlots = real;
-    const pressure = info.queued > 0 || info.joining > 0 || players >= real;
+    const pressure = info.queued > 0 || players >= real;
     const target = pressure
       ? clamp(real + STEP, minSlots, maxSlots)
       : capacityForPopulation(players, minSlots, maxSlots);
@@ -170,7 +170,7 @@ export function startSlotManager(client: Client): void {
     const info = await getServerInfo();
     if (!info) return;
     const settings = await getSlotControlSettings();
-    const { players, queued, joining } = info;
+    const { players, queued } = info;
 
     // Always trust the real server value when available. This keeps the bot and
     // panel synchronized even if someone changed maxplayers outside the panel.
@@ -190,13 +190,13 @@ export function startSlotManager(client: Client): void {
       await setSlots(Math.max(minSlots, players));
     } else if (currentSlots > maxSlots && maxSlots >= players) {
       await setSlots(maxSlots);
-    } else if ((queued > 0 || joining > 0 || players >= currentSlots) && currentSlots < maxSlots) {
+    } else if ((queued > 0 || players >= currentSlots) && currentSlots < maxSlots) {
       const target = clamp(currentSlots + STEP, minSlots, maxSlots);
       if (await setSlots(target)) {
         lastExpansionAt = Date.now();
-        logger.info({ players, queued, joining, to: target }, "Queue/full pressure detected — slots expanded");
+        logger.info({ players, queued, to: target }, "Real queue/full capacity detected — slots expanded");
       }
-    } else if (queued === 0 && joining === 0 && Date.now() - lastExpansionAt >= SHRINK_HOLD_MS) {
+    } else if (queued === 0 && Date.now() - lastExpansionAt >= SHRINK_HOLD_MS) {
       const target = capacityForPopulation(players, minSlots, maxSlots);
       if (target < currentSlots && await setSlots(target)) {
         logger.info({ players, from: currentSlots, to: target }, "No queue — slots adjusted to population");
