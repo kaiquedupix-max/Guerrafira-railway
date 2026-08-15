@@ -3,6 +3,7 @@ import { db, modLogsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { getCommunitySession } from "../admin/communitySession.js";
 import { getGuerraFriaDisplayName } from "../admin/permissions.js";
+import { getSteamProfileSummaries } from "../admin/steamProfiles.js";
 
 const router = Router();
 router.use((req, res, next) => {
@@ -31,10 +32,17 @@ router.get("/records", async (_req, res) => {
     resolved.set(id, await getGuerraFriaDisplayName(id, String(fallback).replace(/\s*\[WEB\]\s*$/i, "")));
   }));
 
-  const records = filtered.map(x => ({
-    ...x,
-    adminName: resolved.get(String(x.adminId || "").trim()) || String(x.adminName || "Administração").replace(/\s*\[WEB\]\s*$/i, ""),
-  }));
+  const steamProfiles = await getSteamProfileSummaries(filtered.map(x => String(x.steamId || "")));
+  const records = filtered.map(x => {
+    const steam = steamProfiles.get(String(x.steamId || ""));
+    return {
+      ...x,
+      steamProfileUrl: steam?.profileUrl ?? `https://steamcommunity.com/profiles/${x.steamId}`,
+      steamAvatarUrl: steam?.avatarUrl ?? null,
+      steamPersonaName: steam?.personaName ?? null,
+      adminName: resolved.get(String(x.adminId || "").trim()) || String(x.adminName || "Administração").replace(/\s*\[WEB\]\s*$/i, ""),
+    };
+  });
 
   res.json({ records });
 });
