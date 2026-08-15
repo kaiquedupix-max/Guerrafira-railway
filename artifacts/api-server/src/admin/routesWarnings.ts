@@ -6,6 +6,7 @@ import { executeRconCommand } from "../bot/utils/rcon.js";
 import { discordClient } from "../bot/client.js";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
+import { banPlayer, ActionError } from "../core/systemActions.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -69,17 +70,18 @@ router.post("/apply", async (req, res) => {
   await executeRconCommand(`say <color=#FF9A2F>[ADVERTÊNCIA ${number}/3]</color> ${player.playerName}: ${reason.replace(/"/g, "'")}`).catch(() => {});
 
   if (number >= 3) {
-    await executeRconCommand(`banid ${steamId} "${player.playerName.replace(/"/g, "'")}" "[3 ADVERTÊNCIAS] Banimento permanente | ${reason.replace(/"/g, "'")}"`).catch(() => {});
-    await db.insert(modLogsTable).values({
-      action: "BAN",
-      steamId,
-      playerName: player.playerName,
-      reason: "Banimento automático após 3 advertências.",
-      adminId: admin.userId,
-      adminName,
-      banDuration: "perm",
-      banExpiresAt: null,
-    });
+    try {
+      await banPlayer({
+        steamId,
+        playerName: player.playerName,
+        duration: "perm",
+        reason: "Banimento automático após 3 advertências.",
+        actor: { id: admin.userId, name: adminName, source: "web" },
+      });
+    } catch (error) {
+      const e = error instanceof ActionError ? error : new ActionError("Advertência registrada, mas o banimento automático não foi confirmado.", 503);
+      return res.status(e.status).json({ error: e.message, warnings: number, banned: false });
+    }
 
     await sendLog(
       new EmbedBuilder()
