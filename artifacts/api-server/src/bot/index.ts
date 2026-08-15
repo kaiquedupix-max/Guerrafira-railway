@@ -19,6 +19,7 @@ import { buildAutoUnbanEmbed, buildStatusEmbed } from "./utils/embeds.js";
 import { db, modLogsTable } from "@workspace/db";
 import { setDiscordClient } from "./client.js";
 import { startVipExpiryChecker } from "./vip.js";
+import { startBoosterSystem } from "./booster.js";
 import { setupVipStore } from "./vipStore.js";
 import { startSlotManager } from "./slotManager.js";
 import { startLeaderboardChannel } from "./leaderboardChannel.js";
@@ -78,10 +79,8 @@ export async function startBot(): Promise<void> {
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
   ];
-  if (process.env.DISCORD_WELCOME_ENABLED === "true") {
-    intents.push(GatewayIntentBits.GuildMembers);
-  }
   const client = new Client({ intents });
   client.once(Events.ClientReady, async (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot online");
@@ -101,7 +100,7 @@ export async function startBot(): Promise<void> {
     setDiscordClient(c);
     c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
     await registerSlashCommands(c);
-    startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c);
+    startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); await startBoosterSystem(c);
     await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
   });
 
