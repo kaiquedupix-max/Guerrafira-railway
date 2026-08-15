@@ -75,39 +75,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   const discordUserId = memberUser?.id ?? "";
 
   try {
-    if (discordUserId) {
-      await grantVip({
-        discordUserId,
-        steamId: player.steamId,
-        tier,
-        durationDays: days,
-        source: "purchase",
-        client: interaction.client,
-      });
-    } else {
-      const { executeRconCommand } = await import("../utils/rcon.js");
-      const { db, vipSubscriptionsTable } = await import("@workspace/db");
-
-      const buildRconCmd = (envKey: string, id: string) => {
-        const template = process.env[envKey];
-        if (!template) return null;
-        return template.replace(/\{steam[Ii][Dd]\}/g, id);
-      };
-
-      const cmd = buildRconCmd(`VIP_${tier.toUpperCase()}_GRANT_CMD`, player.steamId);
-      if (cmd) await executeRconCommand(cmd);
-
-      const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-      await db.insert(vipSubscriptionsTable).values({
-        discordUserId: "manual",
-        steamId: player.steamId,
-        vipTier: tier,
-        source: "purchase",
-        durationDays: days,
-        startsAt: new Date(),
-        expiresAt,
-      });
-    }
+    await grantVip({
+      discordUserId: discordUserId || "manual",
+      steamId: player.steamId,
+      tier,
+      durationDays: days,
+      source: "purchase",
+      client: interaction.client,
+    });
   } catch (err) {
     logger.error({ err, tier, steamId: player.steamId }, "darvip command error");
     await interaction.editReply("❌ Ocorreu um erro ao conceder o VIP. Verifique os logs internos.");
