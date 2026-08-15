@@ -50,13 +50,17 @@ export async function handleBoosterVerifyButton(interaction: ButtonInteraction):
   if (!member?.premiumSince) { await interaction.reply({ content: "❌ Você não está impulsionando o servidor no momento. Inicie o Booster e tente novamente.", ephemeral: true }); return; }
   const existing = await getDiscordLink(interaction.user.id);
   if (existing) {
+    if (existing.manuallyDisabled) {
+      await interaction.reply({ content: "🔒 Seu Booster foi desativado pela administração. Abra um ticket para solicitar a reativação.", ephemeral: true });
+      return;
+    }
     if (existing.active) {
       await interaction.reply({ content: `✅ **Seu Booster já está verificado.**\n\n🎮 SteamID vinculado: \`${existing.steamId}\`\n\n🔒 Por segurança, não é possível trocar o SteamID pelo painel. Se precisar alterar, abra um ticket com a administração.`, ephemeral: true });
       return;
     }
     await interaction.deferReply({ ephemeral: true });
     const result = await executeRconCommand(grantCommand(existing.steamId)).catch(() => null);
-    await db.update(boosterLinksTable).set({ active: true, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
+    await db.update(boosterLinksTable).set({ active: true, manuallyDisabled: false, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, interaction.user.id));
     await interaction.editReply(`🚀 **Booster ativado com sua Steam vinculada!**\n\n🎮 SteamID: \`${existing.steamId}\`\n${result === null ? "⚠️ Não foi possível confirmar o grupo **bs** via RCON." : "✅ Você foi adicionado ao grupo **bs** no Rust."}\n\n🔒 Para alterar a Steam vinculada, abra um ticket com a administração.`);
     return;
   }
@@ -76,19 +80,20 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
   if (existingDiscord) { await interaction.editReply(`🔒 Esta conta já possui a Steam \`${existingDiscord.steamId}\` vinculada. Por segurança, não é possível alterar o SteamID por aqui. Abra um ticket com a administração.`); return; }
   const existingSteam = await getSteamLink(steamId);
   if (existingSteam && existingSteam.discordUserId !== interaction.user.id) { await interaction.editReply("❌ Este **SteamID já está vinculado a outra conta do Discord**. Abra um ticket se acredita que isso é um erro."); return; }
-  await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, updatedAt: new Date() });
+  await db.insert(boosterLinksTable).values({ discordUserId: interaction.user.id, steamId, active: true, manuallyDisabled: false, updatedAt: new Date() });
   const command = grantCommand(steamId);
   const result = await executeRconCommand(command).catch((err) => { logger.error({ err, steamId, command }, "Failed to add Booster to Rust group"); return null; });
   await interaction.editReply(`🚀 **Booster verificado com sucesso!**\n\n🎮 SteamID: \`${steamId}\`\n${result === null ? "⚠️ Booster salvo, mas o RCON não confirmou o grupo **bs** no jogo.\n" : "✅ Você foi adicionado ao grupo **bs** no jogo.\n"}📦 Dentro do Rust, use **\`/kit\`** para acessar seu kit.\n\n🔒 Este SteamID ficou vinculado à sua conta do Discord. Para alterá-lo, abra um ticket com a administração.`);
 }
 
-async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean): Promise<void> {
+async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean, manuallyDisabled: boolean): Promise<void> {
+  if (manuallyDisabled) return;
   const guildId = process.env.DISCORD_GUILD_ID?.trim(); if (!guildId) return;
   const guild = await client.guilds.fetch(guildId).catch(() => null); if (!guild) return;
   const member = await guild.members.fetch(discordUserId).catch(() => null);
   const boosting = Boolean(member?.premiumSince);
   if (boosting) {
-    if (!previouslyActive) await db.update(boosterLinksTable).set({ active: true, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
+    if (!previouslyActive) await db.update(boosterLinksTable).set({ active: true, manuallyDisabled: false, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
     await executeRconCommand(grantCommand(steamId)).catch((err) => logger.error({ err, discordUserId, steamId }, "Failed to add Booster group during sync"));
   } else if (previouslyActive) {
     await executeRconCommand(revokeCommand(steamId)).catch((err) => logger.error({ err, discordUserId, steamId }, "Failed to remove Booster group during sync"));
@@ -99,7 +104,7 @@ async function syncOne(client: Client, discordUserId: string, steamId: string, p
 
 async function syncAll(client: Client): Promise<void> {
   const links = await db.select().from(boosterLinksTable);
-  for (const link of links) await syncOne(client, link.discordUserId, link.steamId, link.active).catch(err => logger.error({ err, discordUserId: link.discordUserId }, "Booster sync failed"));
+  for (const link of links) await syncOne(client, link.discordUserId, link.steamId, link.active, link.manuallyDisabled).catch(err => logger.error({ err, discordUserId: link.discordUserId }, "Booster sync failed"));
 }
 
 export async function startBoosterSystem(client: Client): Promise<void> {
