@@ -89,14 +89,20 @@ export async function getServerInfo(): Promise<ServerInfo | null> {
   if (!infoRaw) return null;
   try {
     const raw = JSON.parse(infoRaw) as Record<string, unknown>;
-    const sleepersRaw = Number(raw.Sleepers ?? raw.SleepingPlayers ?? raw.Sleeping ?? raw.sleepers ?? raw.sleepingPlayers ?? 0);
-    const sleepers = Number.isFinite(sleepersRaw) ? sleepersRaw : 0;
+    const numberFrom = (...values: unknown[]): number => {
+      for (const value of values) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+      }
+      return 0;
+    };
+    const sleepers = numberFrom(raw.Sleepers, raw.SleepingPlayers, raw.Sleeping, raw.sleepers, raw.sleepingPlayers);
     return {
-      hostname: String(raw.Hostname ?? "Servidor"),
-      maxPlayers: Number(raw.MaxPlayers ?? 0),
-      players: Number(raw.Players ?? 0),
-      queued: Number(raw.Queued ?? 0),
-      joining: Number(raw.Joining ?? 0),
+      hostname: String(raw.Hostname ?? raw.hostname ?? "Servidor"),
+      maxPlayers: numberFrom(raw.MaxPlayers, raw.maxPlayers, raw.maxplayers, raw.Capacity),
+      players: numberFrom(raw.Players, raw.players, raw.PlayerCount, raw.playerCount),
+      queued: numberFrom(raw.Queued, raw.queued, raw.Queue, raw.queue, raw.QueuedPlayers, raw.queuedPlayers, raw.QueueSize, raw.queueSize),
+      joining: numberFrom(raw.Joining, raw.joining, raw.JoiningPlayers, raw.joiningPlayers),
       sleepers,
       map: String(raw.Map ?? "—"),
       gameTime: String(raw.GameTime ?? "—"),
