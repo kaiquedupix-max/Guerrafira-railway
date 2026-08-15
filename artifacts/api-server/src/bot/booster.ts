@@ -87,13 +87,12 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
 }
 
 async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean, manuallyDisabled: boolean): Promise<void> {
-  if (manuallyDisabled) return;
+  if (manuallyDisabled || !previouslyActive) return;
   const guildId = process.env.DISCORD_GUILD_ID?.trim(); if (!guildId) return;
   const guild = await client.guilds.fetch(guildId).catch(() => null); if (!guild) return;
   const member = await guild.members.fetch(discordUserId).catch(() => null);
   const boosting = Boolean(member?.premiumSince);
   if (boosting) {
-    if (!previouslyActive) await db.update(boosterLinksTable).set({ active: true, manuallyDisabled: false, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
     await executeRconCommand(grantCommand(steamId)).catch((err) => logger.error({ err, discordUserId, steamId }, "Failed to add Booster group during sync"));
   } else if (previouslyActive) {
     await executeRconCommand(revokeCommand(steamId)).catch((err) => logger.error({ err, discordUserId, steamId }, "Failed to remove Booster group during sync"));
