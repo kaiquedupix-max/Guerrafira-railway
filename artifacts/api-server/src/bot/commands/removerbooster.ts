@@ -25,7 +25,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   }
   const command = `oxide.usergroup remove ${steamId} bs`;
   const rconOk = await executeRconCommand(command).then(() => true).catch(() => false);
-  await db.update(boosterLinksTable).set({ active: false, updatedAt: new Date() }).where(eq(boosterLinksTable.steamId, steamId));
+  await db.update(boosterLinksTable).set({ active: false, manuallyDisabled: true, updatedAt: new Date() }).where(eq(boosterLinksTable.steamId, steamId));
   await interaction.editReply(`✅ Booster desativado para \`${steamId}\`.\n${rconOk ? "🎮 Grupo **bs** removido no Rust." : "⚠️ Não foi possível confirmar a alteração via RCON."}\n🔒 A Steam continua vinculada a <@${link.discordUserId}>. Para trocar o SteamID, é necessário abrir um ticket com a administração.`);
   logger.info({ steamId, discordUserId: link.discordUserId, admin: interaction.user.tag, rconOk }, "Booster disabled; Steam link kept");
 }
