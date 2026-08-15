@@ -13,6 +13,18 @@ router.use(requireAdmin);
 const steamRe = /^7656119\d{10}$/;
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
 
+
+async function getActiveWarnings(steamId: string) {
+  const rows = await db.select().from(modLogsTable)
+    .where(eq(modLogsTable.steamId, steamId))
+    .orderBy(desc(modLogsTable.createdAt));
+  const removedIds = new Set(rows
+    .filter(row => row.action === "WARN_REMOVED")
+    .map(row => String(row.reason ?? "").match(/warningId:(\d+)/)?.[1])
+    .filter((id): id is string => Boolean(id)));
+  return rows.filter(row => row.action === "WARN" && !removedIds.has(String(row.id)));
+}
+
 async function sendLog(embed: EmbedBuilder): Promise<void> {
   const client = discordClient();
   const channelId = process.env.DISCORD_LOG_CHANNEL_ID;
@@ -24,7 +36,7 @@ async function sendLog(embed: EmbedBuilder): Promise<void> {
 router.get("/:steamId", async (req, res) => {
   const steamId = clean(req.params.steamId, 17);
   if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." });
-  const rows = await db.select().from(modLogsTable).where(and(eq(modLogsTable.steamId, steamId), eq(modLogsTable.action, "WARN"))).orderBy(desc(modLogsTable.createdAt));
+  const rows = await getActiveWarnings(steamId);
   res.json({ warnings: rows, count: rows.length });
 });
 
@@ -36,7 +48,7 @@ router.post("/apply", async (req, res) => {
 
   const [player] = await db.select().from(playersTable).where(eq(playersTable.steamId, steamId)).limit(1);
   if (!player) return res.status(404).json({ error: "Jogador não encontrado." });
-  const previous = await db.select().from(modLogsTable).where(and(eq(modLogsTable.steamId, steamId), eq(modLogsTable.action, "WARN")));
+  const previous = await getActiveWarnings(steamId);
   const number = previous.length + 1;
   const admin = res.locals.admin as { userId: string; username: string };
   const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
@@ -102,6 +114,43 @@ router.post("/apply", async (req, res) => {
   }
 
   res.json({ ok: true, warnings: number, banned: false });
+});
+
+router.post("/remove", async (req, res) => {
+  const steamId = clean(req.body?.steamId, 17);
+  const reason = clean(req.body?.reason, 300);
+  if (!steamRe.test(steamId) || !reason) return res.status(400).json({ error: "SteamID ou motivo inválido." });
+
+  const active = await getActiveWarnings(steamId);
+  const warning = active[0];
+  if (!warning) return res.status(409).json({ error: "O jogador não possui advertência ativa." });
+
+  const admin = res.locals.admin as { userId: string; username: string };
+  const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
+  await db.insert(modLogsTable).values({
+    action: "WARN_REMOVED",
+    steamId,
+    playerName: warning.playerName,
+    reason: `warningId:${warning.id} | ${reason}`,
+    adminId: admin.userId,
+    adminName,
+  });
+
+  const remaining = active.length - 1;
+  await sendLog(new EmbedBuilder()
+    .setColor(0x22c55e)
+    .setTitle("✅ Advertência removida")
+    .addFields(
+      { name: "Jogador", value: warning.playerName, inline: true },
+      { name: "SteamID", value: `\`${steamId}\``, inline: true },
+      { name: "Advertências restantes", value: `**${remaining}/3**`, inline: true },
+      { name: "Motivo da remoção", value: reason },
+      { name: "Responsável", value: `<@${admin.userId}> • **${adminName}**` },
+    )
+    .setFooter({ text: "Guerra Fria • Administração" })
+    .setTimestamp());
+
+  res.json({ ok: true, warnings: remaining, removedWarningId: warning.id });
 });
 
 export default router;
