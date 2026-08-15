@@ -10,7 +10,7 @@ import { db, modLogsTable } from "@workspace/db";
 import { executeRconCommand } from "../utils/rcon.js";
 import { buildUnbanEmbed } from "../utils/embeds.js";
 import { logger } from "../../lib/logger.js";
-import { getGuerraFriaDisplayName } from "../../admin/permissions.js";
+import { ActionError, unbanPlayer } from "../../core/systemActions.js";
 
 async function getBannedPlayers(query: string) {
   const bans = await db.select().from(modLogsTable).where(eq(modLogsTable.action, "BAN"));
@@ -52,41 +52,15 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const steamId = interaction.options.getString("jogador", true);
-  const reason = interaction.options.getString("motivo", true);
-
-  if (steamId === "none") {
-    await interaction.editReply("❌ Nenhum jogador banido selecionado.");
-    return;
+  if (steamId === "none") { await interaction.editReply("❌ Nenhum jogador banido selecionado."); return; }
+  try {
+    const result = await unbanPlayer({
+      steamId,
+      reason: interaction.options.getString("motivo", true),
+      actor: { id: interaction.user.id, name: interaction.user.tag, source: "discord" },
+    });
+    await interaction.editReply(`✅ **${result.playerName}** foi desbanido com confirmação do servidor.`);
+  } catch (error) {
+    await interaction.editReply(`❌ ${error instanceof ActionError ? error.message : "Falha interna ao desbanir."}`);
   }
-
-  const bans = await db.select().from(modLogsTable).where(and(eq(modLogsTable.action, "BAN"), eq(modLogsTable.steamId, steamId)));
-  const latestBan = bans.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
-  if (!latestBan) {
-    await interaction.editReply("❌ Registro de banimento não encontrado para este jogador.");
-    return;
-  }
-
-  const rconResult = await executeRconCommand(`unban ${steamId}`);
-  const adminName = await getGuerraFriaDisplayName(interaction.user.id, interaction.user.globalName || interaction.user.username);
-
-  await db.insert(modLogsTable).values({
-    action: "DESBANIR",
-    steamId: latestBan.steamId,
-    playerName: latestBan.playerName,
-    reason,
-    adminId: interaction.user.id,
-    adminName,
-  });
-
-  const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
-  if (logChannelId) {
-    const ch = await interaction.client.channels.fetch(logChannelId).catch(() => null);
-    if (ch?.isSendable()) {
-      await ch.send({ embeds: [buildUnbanEmbed({ playerName: latestBan.playerName, steamId: latestBan.steamId, reason, admin: interaction.user })] });
-    }
-  }
-
-  const rconWarning = rconResult === null ? "\n\n⚠️ *RCON indisponível — desbanimento registrado no banco mas pode não ter sido aplicado no servidor.*" : "";
-  await interaction.editReply(`✅ **${latestBan.playerName}** (\`${steamId}\`) foi desbanido com sucesso.\n📋 Motivo: ${reason}${rconWarning}`);
-  logger.info({ steamId, playerName: latestBan.playerName, reason, admin: adminName }, "Player unbanned");
 }
