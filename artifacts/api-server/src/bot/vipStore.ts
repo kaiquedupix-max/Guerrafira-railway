@@ -124,6 +124,25 @@ async function clearVipStoreChannel(channel: TextChannel): Promise<number> {
   return deletedTotal;
 }
 
+async function sendStoreMessage(
+  channel: TextChannel,
+  payload: Parameters<TextChannel["send"]>[0],
+  label: string,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await channel.send(payload);
+      return;
+    } catch (err) {
+      lastError = err;
+      logger.warn({ err, label, attempt }, "VIP store message failed; retrying");
+      await new Promise(resolve => setTimeout(resolve, attempt * 2_000));
+    }
+  }
+  throw lastError;
+}
+
 function registerStoreInteractionHandler(client: Client): void {
   if (storeInteractionHandlerRegistered) return;
   storeInteractionHandlerRegistered = true;
@@ -182,9 +201,12 @@ export async function setupVipStore(client: Client): Promise<void> {
     const deleted = await clearVipStoreChannel(channel);
     logger.info({ channelId, deleted }, "VIP store channel cleared before publishing cards");
   } catch (err) {
-    logger.error({ err, channelId }, "VIP store channel cleanup failed; cards were not republished");
-    return;
+    // A loja nunca deve ficar vazia só porque uma mensagem antiga não pôde ser removida.
+    logger.error({ err, channelId }, "VIP store cleanup incomplete; publishing cards anyway");
   }
+
+  // Dá tempo para o Discord concluir a exclusão em lote antes dos novos envios.
+  await new Promise(resolve => setTimeout(resolve, 1_500));
 
   const header = new EmbedBuilder()
     .setColor(0x111827)
@@ -195,14 +217,18 @@ export async function setupVipStore(client: Client): Promise<void> {
     )
     .setFooter({ text: `${STORE_MARKER} • Compra segura e ativação automática` });
 
-  await channel.send({ embeds: [header] });
+  try {
+    await sendStoreMessage(channel, { embeds: [header] }, "header");
+  } catch (err) {
+    logger.error({ err, channelId }, "VIP store header could not be published");
+  }
 
   let sentCount = 0;
 
   for (const card of VIP_CARDS) {
     try {
       const { embed, row } = buildCard(card, true);
-      await channel.send({ embeds: [embed], components: [row] });
+      await sendStoreMessage(channel, { embeds: [embed], components: [row] }, `card-${card.tier}-with-image`);
       sentCount += 1;
       logger.info({ tier: card.tier, channelId }, "VIP store card published");
     } catch (err) {
@@ -210,7 +236,7 @@ export async function setupVipStore(client: Client): Promise<void> {
 
       try {
         const { embed, row } = buildCard(card, false);
-        await channel.send({ embeds: [embed], components: [row] });
+        await sendStoreMessage(channel, { embeds: [embed], components: [row] }, `card-${card.tier}-without-image`);
         sentCount += 1;
         logger.info({ tier: card.tier, channelId }, "VIP store card published without image");
       } catch (retryErr) {
