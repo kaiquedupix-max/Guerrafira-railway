@@ -403,7 +403,7 @@ export async function handleVipPayCard(interaction: ButtonInteraction): Promise<
   if (!pref) { await interaction.editReply("❌ Erro ao gerar o checkout. Tente novamente ou use o PIX."); return; }
 
   await db.insert(paymentsTable).values({
-    mpPreferenceId: pref.preferenceId, discordUserId: ctx.discordUserId, steamId: ctx.steamId,
+    mpPreferenceId: pref.preferenceId, mpExternalReference: pref.externalReference, discordUserId: ctx.discordUserId, steamId: ctx.steamId,
     email: ctx.email, vipTier: ctx.tier, amount: String(amount), method: "credit_card",
     status: "pending", ticketChannelId: interaction.channelId ?? undefined,
   });
