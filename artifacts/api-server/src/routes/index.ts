@@ -6,8 +6,10 @@ import communityRouter from "./community.js";
 import pwaRouter from "./pwa.js";
 import revenueView from "../admin/revenueView.js";
 import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
+import { startCardPaymentReconciler } from "./paymentReconciler.js";
 
 startPaymentStatusNotifier();
+startCardPaymentReconciler();
 
 const router: IRouter = Router();
 router.use(healthRouter);
