@@ -40,7 +40,7 @@ router.post("/booster", async (req, res) => {
   const [current] = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, discordUserId)).limit(1);
   if (!current) return res.status(404).json({ error: "Discord sem Steam vinculada." });
   await executeRconCommand(`oxide.usergroup ${active ? "add" : "remove"} ${current.steamId} bs`);
-  await db.update(boosterLinksTable).set({ active, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
+  await db.update(boosterLinksTable).set({ active, manuallyDisabled: !active, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
   res.json({ ok: true });
 });
 
