@@ -10,11 +10,9 @@
 
 import { Router, type Request, type Response } from "express";
 import { EmbedBuilder } from "discord.js";
-import { eq } from "drizzle-orm";
-import { db, paymentsTable } from "@workspace/db";
-import { grantVip, type VipTier } from "../bot/vip.js";
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
+import { fetchMpPayment, processMpPayment } from "./paymentReconciler.js";
 
 const router = Router();
 
@@ -118,25 +116,6 @@ async function sendDiscordWebhookLog(opts: {
   }
 }
 
-async function fetchMpPayment(paymentId: string): Promise<Record<string, unknown> | null> {
-  const token = process.env.MP_ACCESS_TOKEN;
-  if (!token) {
-    logger.error("MP_ACCESS_TOKEN não configurado — não é possível confirmar pagamento");
-    return null;
-  }
-
-  const res = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!res.ok) {
-    logger.error({ status: res.status, paymentId }, "Failed to fetch MP payment details");
-    return null;
-  }
-
-  return res.json() as Promise<Record<string, unknown>>;
-}
-
 router.post("/mercadopago", async (req: Request, res: Response) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const dataId = getDataId(req, body);
@@ -166,82 +145,7 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     await sendDiscordWebhookLog({ body, req, dataId, payment: mpData });
 
     if (!mpData) return;
-
-    const status = mpData.status as string;
-    const mpPayId = String(mpData.id);
-    const metadata = (mpData.metadata ?? {}) as Record<string, string>;
-    const mpPrefId = (mpData.preference_id as string | undefined) ?? "";
-
-    let rec = await db
-      .select()
-      .from(paymentsTable)
-      .where(eq(paymentsTable.mpPaymentId, mpPayId))
-      .then((r) => r[0]);
-
-    if (!rec && mpPrefId) {
-      rec = await db
-        .select()
-        .from(paymentsTable)
-        .where(eq(paymentsTable.mpPreferenceId, mpPrefId))
-        .then((r) => r[0]);
-    }
-
-    if (!rec) {
-      logger.warn({ mpPayId, mpPrefId, status }, "Payment record not found in DB — cannot process");
-      return;
-    }
-
-    await db
-      .update(paymentsTable)
-      .set({ status, updatedAt: new Date() })
-      .where(eq(paymentsTable.id, rec.id));
-
-    if (status === "approved") {
-      const steamId = rec.steamId ?? metadata.steam_id ?? "";
-      const discordUserId = rec.discordUserId ?? metadata.discord_user_id ?? "";
-      const vipTier = (rec.vipTier ?? metadata.vip_tier ?? "") as VipTier;
-
-      if (!steamId || !discordUserId || !vipTier) {
-        logger.error({ recId: rec.id }, "Missing required fields for VIP grant");
-        return;
-      }
-
-      const client = discordClient();
-      if (!client) {
-        logger.error("Discord client not available — cannot grant VIP");
-        return;
-      }
-
-      await grantVip({
-        discordUserId,
-        steamId,
-        tier: vipTier,
-        durationDays: 30,
-        source: "purchase",
-        client,
-      });
-
-      if (rec.ticketChannelId) {
-        const ch = await client.channels.fetch(rec.ticketChannelId).catch(() => null);
-        if (ch?.isSendable()) {
-          await ch.send(
-            `✅ **Pagamento aprovado!** Seu **VIP ${vipTier}** foi ativado.\n` +
-            `🎮 Steam ID: \`${steamId}\` • 📅 Válido por **30 dias**. Obrigado! 🙌`,
-          );
-        }
-      }
-    } else if (status === "rejected" || status === "cancelled") {
-      const client = discordClient();
-      if (rec.ticketChannelId && client) {
-        const ch = await client.channels.fetch(rec.ticketChannelId).catch(() => null);
-        if (ch?.isSendable()) {
-          await ch.send(
-            `❌ Pagamento **${status === "rejected" ? "recusado" : "cancelado"}**. ` +
-            "Tente novamente ou escolha outro método.",
-          );
-        }
-      }
-    }
+    await processMpPayment(mpData);
   } catch (err) {
     logger.error({ err }, "Webhook processing error");
   }
