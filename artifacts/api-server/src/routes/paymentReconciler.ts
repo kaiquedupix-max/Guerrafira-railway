@@ -187,19 +187,22 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
   }
 }
 
-async function reconcilePendingCards(): Promise<void> {
+async function reconcilePendingPayments(): Promise<void> {
   if (reconciliationRunning) return;
   reconciliationRunning = true;
   try {
     const pending = await db.select().from(paymentsTable).where(and(
-      eq(paymentsTable.method, "credit_card"),
-      inArray(paymentsTable.status, ["pending", "in_process"]),
+      inArray(paymentsTable.status, ["pending", "in_process", "approved"]),
       isNull(paymentsTable.vipGrantedAt),
-    )).orderBy(desc(paymentsTable.createdAt)).limit(100);
+    )).orderBy(desc(paymentsTable.createdAt)).limit(150);
 
     for (const row of pending) {
       let candidates: MpPayment[] = [];
-      if (row.mpExternalReference) candidates = await findByExternalReference(row.mpExternalReference);
+      if (row.mpPaymentId) {
+        const direct = await fetchMpPayment(row.mpPaymentId);
+        if (direct) candidates = [direct];
+      }
+      if (!candidates.length && row.mpExternalReference) candidates = await findByExternalReference(row.mpExternalReference);
       if (!candidates.length && row.mpPreferenceId) candidates = await findByPreference(row.mpPreferenceId);
       const approved = candidates.find(payment => String(payment.status) === "approved");
       const newest = approved ?? candidates[0];
@@ -213,8 +216,8 @@ async function reconcilePendingCards(): Promise<void> {
 export function startCardPaymentReconciler(): void {
   if (reconciliationStarted) return;
   reconciliationStarted = true;
-  setTimeout(() => reconcilePendingCards().catch(err =>
-    logger.error({ err }, "Initial card reconciliation failed")), 15_000);
-  setInterval(() => reconcilePendingCards().catch(err =>
-    logger.error({ err }, "Card reconciliation failed")), 30_000);
+  setTimeout(() => reconcilePendingPayments().catch(err =>
+    logger.error({ err }, "Initial payment reconciliation failed")), 15_000);
+  setInterval(() => reconcilePendingPayments().catch(err =>
+    logger.error({ err }, "Payment reconciliation failed")), 30_000);
 }
