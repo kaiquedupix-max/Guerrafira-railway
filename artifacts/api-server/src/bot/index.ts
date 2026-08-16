@@ -216,7 +216,7 @@ export async function startBot(): Promise<void> {
 }
 
 async function handleConnectButton(interaction: Parameters<typeof handleTicketCreate>[0]): Promise<void> {
-  const host = process.env.RCON_HOST ?? "?"; const gamePort = process.env.GAME_PORT ?? "28015";
+  const host = "elgae-sp1-m004.elgaehost.com.br"; const gamePort = "3008";
   await interaction.reply({ embeds: [{ color: 0x2ecc71, title: "🎮  Conectar ao Servidor", description: `Clique no link abaixo ou cole no console do jogo (F1):\n\n**\`steam://connect/${host}:${gamePort}\`**\n\nF1 → \`client.connect ${host}:${gamePort}\``, footer: { text: "Guerra Fria" } }], ephemeral: true });
 }
 
