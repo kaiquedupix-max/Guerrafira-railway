@@ -26,6 +26,36 @@ const ANNOUNCEMENT_INTERVAL = 4 * 60 * 60_000;
 const VIP_MENTION = `<@&${VIP_ROLE_ID}>`;
 const BOOSTER_MENTION = `<@&${BOOSTER_ROLE_ID}>`;
 
+function announcementChannelIds(includeGeneralChat = false): string[] {
+  const configured = [
+    process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID,
+    ...(process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_IDS || "").split(/[\s,;]+/),
+  ];
+  if (includeGeneralChat) configured.push(process.env.DISCORD_CHAT_CHANNEL_ID || CHAT_CHANNEL_ID);
+  return [...new Set(configured.map(value => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+async function sendWipeAnnouncement(client: Client, phase: "offline" | "online", map: MapOption): Promise<void> {
+  const online = phase === "online";
+  const embed = new EmbedBuilder()
+    .setColor(online ? 0xd6a934 : 0xb45309)
+    .setTitle(online ? "✅ SERVIDOR WIPADO — JÁ ESTÁ ONLINE" : "🧊 SERVIDOR DESLIGADO PARA WIPE")
+    .setDescription(online
+      ? `O Guerra Fria iniciou já wipeado com **${map.name}**.\n\nSeed: \`${map.seed}\` • Size: \`${map.size}\`\n\nO leaderboard também foi resetado automaticamente.`
+      : `O servidor foi desligado e o wipe de **${map.name}** começou.\n\nAguarde a confirmação de que ele voltou online.`)
+    .setFooter({ text: online ? "Guerra Fria • Bom wipe!" : "Guerra Fria • Wipe em andamento" })
+    .setTimestamp();
+  const components = online
+    ? [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("status_connect").setLabel("🎮 Conectar ao servidor").setStyle(ButtonStyle.Success))]
+    : [];
+  const ids = announcementChannelIds(online);
+  await Promise.all(ids.map(async id => {
+    const channel = await client.channels.fetch(id).catch(() => null);
+    if (!channel?.isSendable()) return;
+    await channel.send({ content: "@everyone", allowedMentions: { parse: ["everyone"] }, embeds: [embed], components }).catch(() => {});
+  }));
+}
+
 export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -266,11 +296,12 @@ async function processScheduledWipes(client:Client):Promise<void>{
   const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));
   for(const row of due){
     let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue} const winner=row.winnerIndex??0; const map=maps[winner];if(!map)continue;
-    const chat=await client.channels.fetch(CHAT_CHANNEL_ID).catch(()=>null) as TextChannel|null;
+    const chat=await client.channels.fetch(process.env.DISCORD_CHAT_CHANNEL_ID || CHAT_CHANNEL_ID).catch(()=>null) as TextChannel|null;
     try{
-      await executePreparedProceduralWipe("map",map.seed,map.size,{id:"AUTOMATION",name:"Wipe automático"},true);
+      await executePreparedProceduralWipe("map",map.seed,map.size,{id:"AUTOMATION",name:"Wipe automático"},true,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)});
       await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
-      await chat?.send({content:"@everyone",allowedMentions:{parse:["everyone"]},embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ SERVIDOR WIPADO — JÁ ESTÁ ONLINE").setDescription(`O Guerra Fria iniciou com **${map.name}**.\n\nSeed: \`${map.seed}\` • Size: \`${map.size}\`\n\nClique no botão abaixo para conectar.`).setFooter({text:"Guerra Fria • Bom wipe!"}).setTimestamp()],components:[new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("status_connect").setLabel("🎮 Conectar ao servidor").setStyle(ButtonStyle.Success))]}).catch(()=>{});
+      try{const {refreshLeaderboardChannel}=await import("../leaderboardChannel.js");await refreshLeaderboardChannel(client)}catch{}
+      await sendWipeAnnouncement(client,"online",map);
       await executeRconCommand("say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>Wipe concluido. Bom jogo!</color>").catch(()=>null);
     }catch(error){
       const reason=error instanceof Error?error.message:"Falha desconhecida";
