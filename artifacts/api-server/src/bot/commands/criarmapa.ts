@@ -7,6 +7,7 @@ import { and, eq, gt, isNull, lte } from "drizzle-orm";
 import { db, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, boosterLinksTable } from "@workspace/db";
 import { executeRconCommand } from "../utils/rcon.js";
 import { diagnoseHost, executePreparedProceduralWipe } from "../../core/hostWipe.js";
+import { getWipeLockState } from "../../core/wipeLock.js";
 
 interface MapOption { name: string; image?: string; seed: number; size: number; }
 export interface MapImageUpload { name: string; mime: string; data: string; }
@@ -28,7 +29,7 @@ const BOOSTER_MENTION = `<@&${BOOSTER_ROLE_ID}>`;
 export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addStringOption(o => o.setName("data").setDescription("Data do encerramento/wipe (AAAA-MM-DD), sempre às 16h").setRequired(true))
+  .addStringOption(o => o.setName("data").setDescription("Data: votação 18h e wipe 18h30 (AAAA-MM-DD)").setRequired(true))
   .addIntegerOption(o => o.setName("seed1").setDescription("Seed do Mapa 1").setRequired(true).setMinValue(0).setMaxValue(2147483647))
   .addIntegerOption(o => o.setName("size1").setDescription("Size do Mapa 1").setRequired(true).setMinValue(1000).setMaxValue(6000))
   .addIntegerOption(o => o.setName("seed2").setDescription("Seed do Mapa 2").setRequired(true).setMinValue(0).setMaxValue(2147483647))
@@ -50,10 +51,10 @@ export function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeA
 }
 export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error("Informe a data no formato AAAA-MM-DD.");
-  const [year,month,day]=date.split("-").map(Number);const at16=Date.UTC(year,month-1,day,19,0,0);const check=new Date(at16);
+  const [year,month,day]=date.split("-").map(Number);const voteAt=Date.UTC(year,month-1,day,21,0,0);const check=new Date(voteAt);
   if(check.getUTCFullYear()!==year||check.getUTCMonth()!==month-1||check.getUTCDate()!==day)throw new Error("Data inválida.");
-  if(at16<=Date.now()+5*60_000)throw new Error("Escolha uma data futura com pelo menos 5 minutos de antecedência.");
-  return{voteEndsAt:at16,wipeAt:at16};
+  if(voteAt<=Date.now()+5*60_000)throw new Error("Escolha uma data futura com pelo menos 5 minutos de antecedência.");
+  return{voteEndsAt:voteAt,wipeAt:voteAt+30*60_000};
 }
 
 function headerEmbed(endsAt: number) {
@@ -256,7 +257,8 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
 let wipeProcessing=false;const wipeWarnings=new Set<string>();
 async function processScheduledWipes(client:Client):Promise<void>{
-  if(wipeProcessing||process.env.WIPE_EXECUTION_ENABLED!=="true"||process.env.WIPE_AUTOMATION_ENABLED!=="true")return;wipeProcessing=true;
+  if(wipeProcessing||process.env.WIPE_EXECUTION_ENABLED!=="true"||process.env.WIPE_AUTOMATION_ENABLED!=="true")return;
+  if(!(await getWipeLockState()).unlocked)return;wipeProcessing=true;
   try{
   const now=new Date();const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));
   for(const row of upcoming){let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue}const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);const chat=await client.channels.fetch(CHAT_CHANNEL_ID).catch(()=>null)as TextChannel|null;await Promise.allSettled([chat?.send(`🧊 **WIPE EM ${label.toUpperCase()}**\nO servidor reiniciará com **${map.name}** — seed \`${map.seed}\`, size \`${map.size}\`.`),executeRconCommand(`say <color=#ff8c00>[GUERRA FRIA]</color> <color=#ffd65a>Wipe em ${label}. Prepare-se!</color>`)]);}}}
