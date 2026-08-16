@@ -22,7 +22,11 @@ function buildRconCmd(envKey: string, steamId: string): string | null {
     logger.warn({ envKey }, "RCON command env var not set — VIP action skipped in-game");
     return null;
   }
-  // Mantém compatibilidade com as variáveis antigas do Railway após a\n  // migração do servidor de Oxide para Carbon.\n  return template\n    .replace(/^oxide\./i, "c.")\n    .replace(/\{steam[Ii][Dd]\}/g, steamId);
+  // Mantém compatibilidade com as variáveis antigas do Railway após a
+  // migração do servidor de Oxide para Carbon.
+  return template
+    .replace(/^oxide\./i, "c.")
+    .replace(/\{steam[Ii][Dd]\}/g, steamId);
 }
 
 async function executeVipRcon(command: string, action: "grant" | "revoke"): Promise<void> {
