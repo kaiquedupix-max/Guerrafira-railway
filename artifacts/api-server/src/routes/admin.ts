@@ -12,6 +12,7 @@ import warningRoutes from "../admin/routesWarnings.js";
 import playerStateRoutes from "../admin/routesPlayerState.js";
 import integrityManageRoutes from "../admin/routesIntegrityManage.js";
 import notificationRoutes from "../admin/routesNotifications.js";
+import wipeRoutes from "../admin/routesWipe.js";
 import { requireFinanceAccess } from "../admin/financeGuard.js";
 
 const router = Router();
@@ -34,6 +35,7 @@ router.use("/warnings", warningRoutes);
 router.use("/player-state", playerStateRoutes);
 router.use("/integrity", integrityManageRoutes);
 router.use("/notifications", notificationRoutes);
+router.use(wipeRoutes);
 router.use("/server", serverRoutes);
 router.use("/discord", discordRoutes);
 router.use("/steam", steamRoutes);
