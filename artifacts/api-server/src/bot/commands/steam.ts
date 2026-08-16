@@ -134,10 +134,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     }
 
     if (boosterActive && oldSteamId) {
-      await executeRconCommand(`oxide.usergroup remove ${oldSteamId} bs`).catch((err) =>
+      await executeRconCommand(`c.usergroup remove ${oldSteamId} bs`).catch((err) =>
         logger.error({ err, oldSteamId, userId: user.id }, "Failed to remove old Booster group during Steam change"),
       );
-      await executeRconCommand(`oxide.usergroup add ${newSteamId} bs`).catch((err) =>
+      await executeRconCommand(`c.usergroup add ${newSteamId} bs`).catch((err) =>
         logger.error({ err, newSteamId, userId: user.id }, "Failed to add new Booster group during Steam change"),
       );
     }
@@ -172,7 +172,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     }
 
     if (current.active) {
-      await executeRconCommand(`oxide.usergroup remove ${current.steamId} bs`).catch((err) =>
+      await executeRconCommand(`c.usergroup remove ${current.steamId} bs`).catch((err) =>
         logger.error({ err, steamId: current.steamId, userId: user.id }, "Failed to remove Booster group before unlink"),
       );
     }
