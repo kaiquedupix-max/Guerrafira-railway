@@ -1,7 +1,7 @@
 /** Singleton so the webhook handler can access the Discord client. */
 import { type Client } from "discord.js";
 import { startAdminNotificationBridge } from "./adminNotificationBridge.js";
-import { restoreActiveMapVotes } from "./commands/criarmapa.js";
+import { restoreActiveMapVotes, startMapWipeScheduler } from "./commands/criarmapa.js";
 import { logger } from "../lib/logger.js";
 
 let _client: Client | null = null;
@@ -19,6 +19,7 @@ export function setDiscordClient(client: Client): void {
   restoreActiveMapVotes(client).catch((err) => {
     logger.error({ err }, "Failed to restore active map votes");
   });
+  startMapWipeScheduler(client);
 }
 
 export function discordClient(): Client | null {

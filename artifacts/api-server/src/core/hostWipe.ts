@@ -1,15 +1,18 @@
 import { db, modLogsTable } from "@workspace/db";
 
-export type WipeKind = "map" | "map_players" | "full";
-export type HostFile = { name: string; path: string; directory: string; size: number };
+export type WipeKind = "map" | "general";
+export type HostFile = { name: string; path: string; directory: string; size: number; group: "map" | "blueprints" };
+export type WipeActor = { id: string; name: string };
 
 const panelUrl = () => String(process.env.ELGAE_PANEL_URL || "").replace(/\/$/, "");
 const serverId = () => String(process.env.ELGAE_SERVER_ID || "").trim();
 const apiKey = () => String(process.env.ELGAE_API_KEY || "").trim();
+const executionEnabled = () => process.env.WIPE_EXECUTION_ENABLED === "true";
+const automationEnabled = () => process.env.WIPE_AUTOMATION_ENABLED === "true";
 
 async function panelRequest(path: string, init: RequestInit = {}): Promise<any> {
   if (!panelUrl() || !serverId() || !apiKey()) throw new Error("Integração ElgaeHost incompleta no Railway.");
-  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 20_000);
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 30_000);
   try {
     const response = await fetch(`${panelUrl()}/api/client/servers/${serverId()}${path}`, {
       ...init,
@@ -17,7 +20,7 @@ async function panelRequest(path: string, init: RequestInit = {}): Promise<any> 
       signal: controller.signal,
     });
     const text = await response.text(); let data: any = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-    if (!response.ok) throw new Error(`Painel respondeu ${response.status}: ${typeof data === "string" ? data.slice(0,160) : data?.errors?.[0]?.detail || "falha na API"}`);
+    if (!response.ok) throw new Error(`Painel respondeu ${response.status}: ${typeof data === "string" ? data.slice(0,180) : data?.errors?.[0]?.detail || "falha na API"}`);
     return data;
   } finally { clearTimeout(timer); }
 }
@@ -27,55 +30,95 @@ async function listDirectory(directory: string): Promise<any[]> {
   return Array.isArray(data?.data) ? data.data.map((entry: any) => entry?.attributes || entry) : [];
 }
 
-export async function diagnoseHost(): Promise<any> {
-  const [server, resources, root] = await Promise.all([
-    panelRequest(""), panelRequest("/resources"), listDirectory("/")
-  ]);
-  return {
-    connected: true,
-    server: { name: server?.attributes?.name || "Rust", identifier: server?.attributes?.identifier || serverId(), state: resources?.attributes?.current_state || "unknown" },
-    capabilities: { api: true, power: true, backups: true, files: true, destructiveEnabled: process.env.WIPE_EXECUTION_ENABLED === "true" },
-    root: root.map((entry: any) => ({ name: entry.name, directory: Boolean(entry.is_file === false), size: Number(entry.size || 0) })).slice(0,100),
-  };
+async function state(): Promise<string> { const data = await panelRequest("/resources"); return String(data?.attributes?.current_state || "unknown"); }
+async function waitForState(expected: "offline" | "running", timeoutMs = 120_000): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) { if (await state() === expected) return; await new Promise(resolve => setTimeout(resolve, 3_000)); }
+  throw new Error(`Servidor não chegou ao estado ${expected} dentro do limite.`);
 }
 
-async function discoverIdentityDirectories(): Promise<string[]> {
-  const serverEntries = await listDirectory("/server").catch(() => []);
-  return serverEntries.filter((entry: any) => entry.is_file === false && entry.name && entry.name !== "." && entry.name !== "..").map((entry: any) => `/server/${entry.name}`);
+export async function resolveRustMapsUrl(input: string): Promise<{ pageUrl: string; mapUrl: string; imageUrl?: string }> {
+  let url: URL; try { url = new URL(input.trim()); } catch { throw new Error("Link do RustMaps inválido."); }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("O link do mapa precisa usar HTTPS.");
+  if (/\.map(?:\?|$)/i.test(url.href)) return { pageUrl: url.href, mapUrl: url.href };
+  if (!/(^|\.)rustmaps\.com$/i.test(url.hostname)) throw new Error("Use um link do RustMaps ou uma URL direta terminada em .map.");
+  const response = await fetch(url.href, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new Error(`RustMaps respondeu ${response.status}.`);
+  const html = await response.text();
+  const candidates = [...html.matchAll(/https?:\\?\/\\?\/[^\s"'<>]+?\.map(?:\?[^\s"'<>]*)?/gi)].map(m => m[0].replace(/\\\//g, "/").replace(/&amp;/g, "&"));
+  const mapUrl = candidates.find(candidate => { try { return new URL(candidate).protocol.startsWith("http"); } catch { return false; } });
+  const imageUrl = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)/i)?.[1] || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)?.[1];
+  if (!mapUrl) throw new Error("Não encontrei o download .map nessa página. Copie no RustMaps o link direto de download do mapa.");
+  return { pageUrl: url.href, mapUrl, imageUrl };
 }
 
-function classify(name: string): "map" | "players" | "blueprints" | null {
-  const lower = name.toLowerCase();
-  if (lower.endsWith(".map") || lower.endsWith(".sav") || /\.sav\.\d+$/.test(lower)) return "map";
-  if (lower.includes("player.blueprints") && lower.endsWith(".db")) return "blueprints";
-  if ((lower.includes("player.identities") || lower.includes("player.states") || lower.includes("player.deaths")) && lower.endsWith(".db")) return "players";
+async function startupVariables(): Promise<any[]> {
+  const data = await panelRequest("/startup"); return Array.isArray(data?.data) ? data.data.map((item: any) => item?.attributes || item) : [];
+}
+function findLevelUrlVariable(variables: any[]): string | null {
+  const aliases = ["LEVEL_URL", "LEVELURL", "SERVER_LEVEL_URL", "CUSTOM_MAP_URL", "MAP_URL"];
+  for (const alias of aliases) { const found = variables.find(v => String(v.env_variable || v.name || "").toUpperCase() === alias); if (found) return String(found.env_variable || found.name); }
   return null;
 }
 
-export async function buildWipePlan(kind: WipeKind): Promise<{ kind: WipeKind; files: HostFile[]; directories: string[]; totalBytes: number; destructiveEnabled: boolean }> {
-  const directories = await discoverIdentityDirectories(); const files: HostFile[] = [];
-  for (const directory of directories) {
-    const entries = await listDirectory(directory);
-    for (const entry of entries) {
-      if (entry.is_file === false) continue;
-      const group = classify(String(entry.name || ""));
-      const include = group === "map" || (kind !== "map" && group === "players") || (kind === "full" && group === "blueprints");
-      if (include) files.push({ name: String(entry.name), path: `${directory}/${entry.name}`, directory, size: Number(entry.size || 0) });
-    }
-  }
-  return { kind, files, directories, totalBytes: files.reduce((sum,file)=>sum+file.size,0), destructiveEnabled: process.env.WIPE_EXECUTION_ENABLED === "true" };
+export async function diagnoseHost(): Promise<any> {
+  const [server, resources, root, variables] = await Promise.all([panelRequest(""), panelRequest("/resources"), listDirectory("/"), startupVariables().catch(() => [])]);
+  const levelUrlVariable = findLevelUrlVariable(variables);
+  return { connected: true, server: { name: server?.attributes?.name || "Rust", identifier: server?.attributes?.identifier || serverId(), state: resources?.attributes?.current_state || "unknown" }, capabilities: { api: true, power: true, backups: true, files: true, startup: Boolean(levelUrlVariable), destructiveEnabled: executionEnabled(), automationEnabled: automationEnabled() }, levelUrlVariable, root: root.map((entry: any) => ({ name: entry.name, directory: entry.is_file === false, size: Number(entry.size || 0) })).slice(0,100) };
 }
 
-export async function auditWipe(action: string, actor: { id: string; name: string }, reason: string): Promise<void> {
+async function discoverIdentityDirectories(): Promise<string[]> {
+  const entries = await listDirectory("/server").catch(() => []);
+  return entries.filter((entry: any) => entry.is_file === false && entry.name && entry.name !== "." && entry.name !== "..").map((entry: any) => `/server/${entry.name}`);
+}
+function classify(name: string): "map" | "blueprints" | null {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".map") || lower.endsWith(".sav") || /\.sav\.\d+$/.test(lower)) return "map";
+  if (lower.includes("player.blueprints") && lower.endsWith(".db")) return "blueprints";
+  return null;
+}
+
+export async function buildWipePlan(kind: WipeKind, rustMapsUrl?: string): Promise<{ kind: WipeKind; map?: Awaited<ReturnType<typeof resolveRustMapsUrl>>; files: HostFile[]; directories: string[]; totalBytes: number; destructiveEnabled: boolean }> {
+  const map = rustMapsUrl ? await resolveRustMapsUrl(rustMapsUrl) : undefined;
+  const directories = await discoverIdentityDirectories(); const files: HostFile[] = [];
+  for (const directory of directories) for (const entry of await listDirectory(directory)) {
+    if (entry.is_file === false) continue; const group = classify(String(entry.name || ""));
+    if (!group || (group === "blueprints" && kind !== "general")) continue;
+    files.push({ name: String(entry.name), path: `${directory}/${entry.name}`, directory, size: Number(entry.size || 0), group });
+  }
+  return { kind, map, files, directories, totalBytes: files.reduce((sum,file)=>sum+file.size,0), destructiveEnabled: executionEnabled() };
+}
+
+export async function auditWipe(action: string, actor: WipeActor, reason: string): Promise<void> {
   await db.insert(modLogsTable).values({ action, steamId: "SERVER", playerName: "Servidor Guerra Fria", reason, adminId: actor.id, adminName: actor.name });
 }
+async function createBackup(kind: WipeKind): Promise<void> { await panelRequest("/backups", { method: "POST", body: JSON.stringify({ name: `pre-wipe-${kind}-${new Date().toISOString()}`, ignored: "" }) }); }
+async function setMapUrl(mapUrl: string): Promise<void> {
+  const key = findLevelUrlVariable(await startupVariables()); if (!key) throw new Error("A variável de URL do mapa não foi encontrada na inicialização da host.");
+  await panelRequest("/startup/variable", { method: "PUT", body: JSON.stringify({ key, value: mapUrl }) });
+}
+async function deletePlannedFiles(files: HostFile[]): Promise<void> {
+  const grouped = new Map<string,string[]>(); for (const file of files) grouped.set(file.directory, [...(grouped.get(file.directory) || []), file.name]);
+  for (const [root, names] of grouped) await panelRequest("/files/delete", { method: "POST", body: JSON.stringify({ root, files: names }) });
+}
 
-export async function executeWipe(kind: WipeKind, confirmation: string, actor: { id: string; name: string }): Promise<never> {
-  const plan = await buildWipePlan(kind);
-  await auditWipe("WIPE_EXECUTION_BLOCKED", actor, `Tentativa ${kind}; ${plan.files.length} arquivos planejados; modo seguro ativo.`);
-  if (confirmation !== "WIPE GUERRA FRIA") throw new Error("Confirmação inválida.");
-  if (process.env.WIPE_EXECUTION_ENABLED !== "true") throw new Error("Execução destrutiva bloqueada. O sistema está pronto apenas para diagnóstico e planejamento.");
-  // A execução real será liberada somente no dia do wipe, após validação final
-  // do backup e da lista produzida pelo planejamento. Nenhuma exclusão ocorre aqui.
-  throw new Error("Bloqueio de segurança final ativo: liberação manual necessária no código.");
+export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, actor: WipeActor, automated = false): Promise<{ filesDeleted: number; mapUrl: string }> {
+  if (!executionEnabled()) throw new Error("Execução bloqueada por WIPE_EXECUTION_ENABLED=false.");
+  if (automated && !automationEnabled()) throw new Error("Automação bloqueada por WIPE_AUTOMATION_ENABLED=false.");
+  const plan = await buildWipePlan(kind, rustMapsUrl); if (!plan.map?.mapUrl) throw new Error("Mapa não validado.");
+  if (!plan.files.some(f => f.group === "map")) throw new Error("Nenhum save de mapa foi localizado; wipe cancelado por segurança.");
+  await auditWipe("WIPE_STARTED", actor, `${kind}; ${plan.files.length} arquivos; ${plan.map.pageUrl}`); await createBackup(kind);
+  await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "stop" }) }); await waitForState("offline");
+  try {
+    await setMapUrl(plan.map.mapUrl); await deletePlannedFiles(plan.files);
+    await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) }); await waitForState("running", 180_000);
+    await auditWipe("WIPE_COMPLETED", actor, `${kind}; ${plan.files.length} arquivos; mapa ${plan.map.pageUrl}`); return { filesDeleted: plan.files.length, mapUrl: plan.map.mapUrl };
+  } catch (error) {
+    await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) }).catch(() => null);
+    await auditWipe("WIPE_FAILED", actor, error instanceof Error ? error.message : "Falha desconhecida"); throw error;
+  }
+}
+
+export async function executeWipe(kind: WipeKind, rustMapsUrl: string, confirmation: string, actor: WipeActor): Promise<{ filesDeleted: number; mapUrl: string }> {
+  if (confirmation !== "WIPE GUERRA FRIA") throw new Error("Confirmação inválida."); return executePreparedWipe(kind, rustMapsUrl, actor, false);
 }

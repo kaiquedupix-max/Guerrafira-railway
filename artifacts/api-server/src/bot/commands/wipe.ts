@@ -7,10 +7,13 @@ export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Testa a API e mostra o estado, sem alterar arquivos."))
   .addSubcommand(sub=>sub.setName("planejar").setDescription("Lista exatamente o que seria removido.").addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices(
-    {name:"Somente mapa",value:"map"},{name:"Mapa + jogadores",value:"map_players"},{name:"Completo + blueprints",value:"full"}
-  )))
-  .addSubcommand(sub=>sub.setName("executar").setDescription("Execução protegida (bloqueada até o dia do wipe).")
-    .addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices({name:"Somente mapa",value:"map"},{name:"Mapa + jogadores",value:"map_players"},{name:"Completo + blueprints",value:"full"}))
+    {name:"Wipe mapa",value:"map"},{name:"Wipe geral (mapa + BPs)",value:"general"}
+  )).addStringOption(opt=>opt.setName("rustmaps").setDescription("Link do mapa no RustMaps ou download .map").setRequired(true)))
+  .addSubcommand(sub=>sub.setName("mapa").setDescription("Wipa somente o mapa e instala o mapa informado.")
+    .addStringOption(opt=>opt.setName("rustmaps").setDescription("Link do mapa no RustMaps ou download .map").setRequired(true))
+    .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite WIPE GUERRA FRIA").setRequired(true)))
+  .addSubcommand(sub=>sub.setName("geral").setDescription("Wipa mapa e blueprints e instala o mapa informado.")
+    .addStringOption(opt=>opt.setName("rustmaps").setDescription("Link do mapa no RustMaps ou download .map").setRequired(true))
     .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite WIPE GUERRA FRIA").setRequired(true)));
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -26,9 +29,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         { name: "Execução destrutiva", value: d.capabilities.destructiveEnabled ? "Habilitada" : "🔒 Bloqueada", inline: true }
       ).setTimestamp()]}); return;
     }
-    const kind=interaction.options.getString("tipo",true) as WipeKind;
+    const kind=(sub==="geral"?"general":sub==="mapa"?"map":interaction.options.getString("tipo",true)) as WipeKind;
     if(sub==="planejar"){
-      const p=await buildWipePlan(kind);await auditWipe("WIPE_PLAN",actor,`${kind}: ${p.files.length} arquivos, nenhuma alteração.`);
+      const p=await buildWipePlan(kind,interaction.options.getString("rustmaps",true));await auditWipe("WIPE_PLAN",actor,`${kind}: ${p.files.length} arquivos, nenhuma alteração.`);
       const preview=p.files.slice(0,20).map(f=>`• \`${f.path}\``).join("\n")||"Nenhum arquivo compatível encontrado.";
       await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xf4c45a).setTitle("📋 Plano de wipe — simulação").setDescription(`${preview}${p.files.length>20?`\n… e mais ${p.files.length-20}.`:""}`).addFields(
         { name: "Tipo", value: kind, inline: true },
@@ -37,6 +40,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         { name: "Segurança", value: "🔒 Nenhuma exclusão permitida", inline: false }
       ).setTimestamp()]});return;
     }
-    await executeWipe(kind,interaction.options.getString("confirmacao",true),actor);
+    await executeWipe(kind,interaction.options.getString("rustmaps",true),interaction.options.getString("confirmacao",true),actor);
   } catch(error:any){await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xd64545).setTitle("🔒 Ação bloqueada").setDescription(error?.message||"Falha no sistema de wipe.").setTimestamp()]});}
 }
