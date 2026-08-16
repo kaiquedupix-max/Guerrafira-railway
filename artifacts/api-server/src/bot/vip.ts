@@ -17,12 +17,12 @@ export const VIP_TIERS = {
 export type VipTier = keyof typeof VIP_TIERS;
 
 function buildRconCmd(envKey: string, steamId: string): string | null {
-  const template = process.env[envKey];
+  const template = process.env[envKey]?.trim();
   if (!template) {
     logger.warn({ envKey }, "RCON command env var not set — VIP action skipped in-game");
     return null;
   }
-  return template.replace(/\{steam[Ii][Dd]\}/g, steamId);
+  // Mantém compatibilidade com as variáveis antigas do Railway após a\n  // migração do servidor de Oxide para Carbon.\n  return template\n    .replace(/^oxide\./i, "c.")\n    .replace(/\{steam[Ii][Dd]\}/g, steamId);
 }
 
 async function executeVipRcon(command: string, action: "grant" | "revoke"): Promise<void> {
