@@ -156,24 +156,34 @@ async function getVoteWeight(discordUserId: string): Promise<{ weight: number; v
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
+  try{
+  const result=await createMapVote(interaction.client,{createdBy:interaction.user.id,links:[1,2,3].map(n=>interaction.options.getString(`link${n}`,true)),images:[1,2,3].map(n=>{const a=interaction.options.getAttachment(`imagem${n}`);if(a&&!a.contentType?.startsWith("image/"))throw new Error(`imagem${n} não é uma imagem válida.`);return a?.url})});
+  await interaction.editReply(`✅ Votação criada em <#${result.channelId}>.\n🏆 Resultado: <t:${Math.floor(result.endsAt/1000)}:F>.\n🧊 Wipe automático preparado: <t:${Math.floor(result.wipeAt/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
+  }catch(error){await interaction.editReply(`❌ ${error instanceof Error?error.message:"Falha ao criar votação."}`)}
+}
+
+export async function createMapVote(client:Client,input:{createdBy:string;links:string[];images?:Array<string|undefined>}):Promise<{id:number;messageId:string;channelId:string;endsAt:number;wipeAt:number;maps:MapOption[]}>{
+  if(input.links.length!==3||input.links.some(link=>!String(link||"").trim()))throw new Error("Informe exatamente três links de mapas.");
   const readiness=await diagnoseHost();
   if(!readiness.capabilities?.startup||!readiness.levelUrlVariable)throw new Error("A host não disponibilizou a variável da URL do mapa. A votação não foi criada para evitar um wipe sem mapa.");
+  const existing=await db.select({id:mapVotesTable.id,endsAt:mapVotesTable.endsAt}).from(mapVotesTable).where(eq(mapVotesTable.status,"active")).limit(1);
+  if(existing[0])throw new Error(`Já existe uma votação ativa com encerramento em ${existing[0].endsAt.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})}.`);
   const channelId = process.env.DISCORD_VIP_MAP_CHANNEL_ID?.trim() || VOTE_CHANNEL_ID;
-  const channel = await interaction.client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
-  if (!channel?.isSendable()) { await interaction.editReply("❌ Não consegui acessar a sala de votação configurada."); return; }
+  const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
+  if (!channel?.isSendable()) throw new Error("Não consegui acessar a sala de votação configurada.");
   const maps: MapOption[] = [];
   for (const n of [1,2,3]) {
-    const resolved=await resolveRustMapsUrl(interaction.options.getString(`link${n}`,true)); const attachment=interaction.options.getAttachment(`imagem${n}`);
-    if (attachment && !attachment.contentType?.startsWith("image/")) throw new Error(`imagem${n} não é uma imagem válida.`);
-    maps.push({name:`Mapa ${n}`,pageUrl:resolved.pageUrl,mapUrl:resolved.mapUrl,image:attachment?.url||resolved.imageUrl});
+    const resolved=await resolveRustMapsUrl(input.links[n-1]);
+    maps.push({name:`Mapa ${n}`,pageUrl:resolved.pageUrl,mapUrl:resolved.mapUrl,image:input.images?.[n-1]||resolved.imageUrl});
   }
   const schedule=nextScheduledWipe(); const endsAt=schedule.voteEndsAt;
   const message = await channel.send(voteMessagePayload({ endsAt, maps }));
-  const [saved] = await db.insert(mapVotesTable).values({ messageId: message.id, channelId, mapsJson: JSON.stringify(maps), endsAt: new Date(endsAt), wipeAt:new Date(schedule.wipeAt), status: "active", createdBy: interaction.user.id }).returning();
-  if (!saved) throw new Error("Falha ao persistir votação de mapa");
-  scheduleRuntime(interaction.client, { id: saved.id, messageId: message.id, channelId, endsAt, wipeAt:schedule.wipeAt, maps });
-  await announceVote(interaction.client, endsAt);
-  await interaction.editReply(`✅ Votação criada em <#${channelId}>.\n🏆 Resultado: <t:${Math.floor(endsAt/1000)}:F>.\n🧊 Wipe automático preparado: <t:${Math.floor(schedule.wipeAt/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
+  try{
+    const [saved] = await db.insert(mapVotesTable).values({ messageId: message.id, channelId, mapsJson: JSON.stringify(maps), endsAt: new Date(endsAt), wipeAt:new Date(schedule.wipeAt), status: "active", createdBy: input.createdBy }).returning();
+    if (!saved) throw new Error("Falha ao persistir votação de mapa");
+    scheduleRuntime(client, { id: saved.id, messageId: message.id, channelId, endsAt, wipeAt:schedule.wipeAt, maps });await announceVote(client, endsAt);
+    return{id:saved.id,messageId:message.id,channelId,endsAt,wipeAt:schedule.wipeAt,maps};
+  }catch(error){await message.delete().catch(()=>{});throw error}
 }
 
 export async function handleMapVote(interaction: ButtonInteraction): Promise<void> {
