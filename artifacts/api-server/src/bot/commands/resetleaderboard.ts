@@ -9,9 +9,8 @@ import {
   type ChatInputCommandInteraction,
   type ButtonInteraction,
 } from "discord.js";
-import { db, playerStatsTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
 import { logger } from "../../lib/logger.js";
+import { resetAllLeaderboardStats } from "../../core/leaderboardReset.js";
 
 export const data = new SlashCommandBuilder()
   .setName("resetleaderboard")
@@ -56,23 +55,8 @@ export async function handleConfirm(interaction: ButtonInteraction): Promise<voi
 
   await interaction.deferUpdate();
 
-  // Zero all stats (keep player rows so names/steamids are preserved)
-  await db.update(playerStatsTable).set({
-    kills:             0,
-    deaths:            0,
-    headshots:         0,
-    resourcesGathered: 0,
-    woodGathered:      0,
-    stoneGathered:     0,
-    metalOreGathered:  0,
-    sulfurOreGathered: 0,
-    scrapGathered:     0,
-    explosivesCrafted: 0,
-    gunpowderCrafted:  0,
-    c4Used:            0,
-    rocketsUsed:       0,
-    updatedAt:         sql`now()`,
-  });
+  // Usa o mesmo serviço chamado por todos os tipos de wipe.
+  await resetAllLeaderboardStats();
 
   logger.info({ admin: interaction.user.tag }, "Leaderboard reset by admin");
 
