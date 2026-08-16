@@ -1,4 +1,5 @@
 import { db, modLogsTable } from "@workspace/db";
+import { assertWipeUnlocked, getWipeLockState } from "./wipeLock.js";
 
 export type WipeKind = "map" | "general";
 export type HostFile = { name: string; path: string; directory: string; size: number; group: "map" | "blueprints" };
@@ -113,7 +114,7 @@ function proceduralKeys(variables:any[]): {seed:string|null;size:string|null;lev
 export async function diagnoseHost(): Promise<any> {
   const [server, resources, root, variables] = await Promise.all([panelRequest(""), panelRequest("/resources"), listDirectory("/"), startupVariables().catch(() => [])]);
   const keys=proceduralKeys(variables);const levelUrlVariable=keys.levelUrl;
-  return { connected: true, server: { name: server?.attributes?.name || "Rust", identifier: server?.attributes?.identifier || serverId(), state: resources?.attributes?.current_state || "unknown" }, capabilities: { api: true, power: true, backups: true, files: true, startup: Boolean(levelUrlVariable||keys.seed||keys.size), proceduralStartup:Boolean(keys.seed&&keys.size), destructiveEnabled: executionEnabled(), automationEnabled: automationEnabled() }, levelUrlVariable,seedVariable:keys.seed,sizeVariable:keys.size, root: root.map((entry: any) => ({ name: entry.name, directory: entry.is_file === false, size: Number(entry.size || 0) })).slice(0,100) };
+  const lock=await getWipeLockState();return { connected: true, server: { name: server?.attributes?.name || "Rust", identifier: server?.attributes?.identifier || serverId(), state: resources?.attributes?.current_state || "unknown" }, capabilities: { api: true, power: true, backups: true, files: true, startup: Boolean(levelUrlVariable||keys.seed||keys.size), proceduralStartup:Boolean(keys.seed&&keys.size), destructiveEnabled: executionEnabled(), automationEnabled: automationEnabled(),wipeUnlocked:lock.unlocked },wipeLock:lock, levelUrlVariable,seedVariable:keys.seed,sizeVariable:keys.size, root: root.map((entry: any) => ({ name: entry.name, directory: entry.is_file === false, size: Number(entry.size || 0) })).slice(0,100) };
 }
 
 async function discoverIdentityDirectories(): Promise<string[]> {
@@ -181,11 +182,12 @@ export async function restartHostServer(actor:WipeActor):Promise<void>{
 }
 
 export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, actor: WipeActor, automated = false): Promise<{ filesDeleted: number; mapUrl: string }> {
+  await assertWipeUnlocked();
   if (!executionEnabled()) throw new Error("Execução bloqueada por WIPE_EXECUTION_ENABLED=false.");
   if (automated && !automationEnabled()) throw new Error("Automação bloqueada por WIPE_AUTOMATION_ENABLED=false.");
   const plan = await buildWipePlan(kind, rustMapsUrl); if (!plan.map?.mapUrl) throw new Error("Mapa não validado.");
   if (!plan.files.some(f => f.group === "map")) throw new Error("Nenhum save de mapa foi localizado; wipe cancelado por segurança.");
-  await auditWipe("WIPE_STARTED", actor, `${kind}; ${plan.files.length} arquivos; ${plan.map.pageUrl}`); const backupId=await createBackup(kind);
+  await auditWipe("WIPE_STARTED", actor, `${kind}; ${plan.files.length} arquivos; ${plan.map.pageUrl}`); const backupId=await createBackup(kind);await assertWipeUnlocked();
   await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "stop" }) }); await waitForState("offline");
   try {
     await setMapUrl(plan.map.mapUrl); await deletePlannedFiles(plan.files);
@@ -198,12 +200,13 @@ export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, a
 }
 
 export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,size:number,actor:WipeActor,automated=false):Promise<{filesDeleted:number;seed:number;size:number}>{
+  await assertWipeUnlocked();
   if(!Number.isInteger(seed)||seed<0||seed>2147483647)throw new Error("Seed inválida.");
   if(!Number.isInteger(size)||size<1000||size>6000)throw new Error("Size deve estar entre 1000 e 6000.");
   if(!executionEnabled())throw new Error("Execução bloqueada por WIPE_EXECUTION_ENABLED=false.");
   if(automated&&!automationEnabled())throw new Error("Automação bloqueada por WIPE_AUTOMATION_ENABLED=false.");
   const plan=await buildWipePlan(kind);if(!plan.files.some(f=>f.group==="map"))throw new Error("Nenhum save de mapa foi localizado; wipe cancelado por segurança.");
-  await auditWipe("WIPE_STARTED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}`);const backupId=await createBackup(kind);
+  await auditWipe("WIPE_STARTED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}`);const backupId=await createBackup(kind);await assertWipeUnlocked();
   await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"stop"})});await waitForState("offline");
   try{await setProceduralMap(seed,size);await deletePlannedFiles(plan.files);await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"start"})});await waitForState("running",180_000);await auditWipe("WIPE_COMPLETED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}; backup ${backupId}`);return{filesDeleted:plan.files.length,seed,size};}
   catch(error){await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"start"})}).catch(()=>null);await auditWipe("WIPE_FAILED",actor,error instanceof Error?error.message:"Falha desconhecida");throw error;}
