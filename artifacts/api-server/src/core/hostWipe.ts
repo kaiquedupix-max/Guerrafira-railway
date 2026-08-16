@@ -99,11 +99,21 @@ function findLevelUrlVariable(variables: any[]): string | null {
   for (const alias of aliases) { const found = variables.find(v => String(v.env_variable || v.name || "").toUpperCase() === alias); if (found) return String(found.env_variable || found.name); }
   return null;
 }
+function findStartupVariable(variables:any[],aliases:string[]):string|null{
+  for(const alias of aliases){const found=variables.find(v=>String(v.env_variable||v.name||"").toUpperCase()===alias);if(found)return String(found.env_variable||found.name)}return null;
+}
+function proceduralKeys(variables:any[]): {seed:string|null;size:string|null;levelUrl:string|null} {
+  return {
+    seed:findStartupVariable(variables,["WORLD_SEED","SERVER_SEED","SEED","RUST_SEED"]),
+    size:findStartupVariable(variables,["WORLD_SIZE","SERVER_WORLD_SIZE","SERVER_SIZE","WORLD_SIZE_INT","RUST_WORLD_SIZE"]),
+    levelUrl:findLevelUrlVariable(variables),
+  };
+}
 
 export async function diagnoseHost(): Promise<any> {
   const [server, resources, root, variables] = await Promise.all([panelRequest(""), panelRequest("/resources"), listDirectory("/"), startupVariables().catch(() => [])]);
-  const levelUrlVariable = findLevelUrlVariable(variables);
-  return { connected: true, server: { name: server?.attributes?.name || "Rust", identifier: server?.attributes?.identifier || serverId(), state: resources?.attributes?.current_state || "unknown" }, capabilities: { api: true, power: true, backups: true, files: true, startup: Boolean(levelUrlVariable), destructiveEnabled: executionEnabled(), automationEnabled: automationEnabled() }, levelUrlVariable, root: root.map((entry: any) => ({ name: entry.name, directory: entry.is_file === false, size: Number(entry.size || 0) })).slice(0,100) };
+  const keys=proceduralKeys(variables);const levelUrlVariable=keys.levelUrl;
+  return { connected: true, server: { name: server?.attributes?.name || "Rust", identifier: server?.attributes?.identifier || serverId(), state: resources?.attributes?.current_state || "unknown" }, capabilities: { api: true, power: true, backups: true, files: true, startup: Boolean(levelUrlVariable||keys.seed||keys.size), proceduralStartup:Boolean(keys.seed&&keys.size), destructiveEnabled: executionEnabled(), automationEnabled: automationEnabled() }, levelUrlVariable,seedVariable:keys.seed,sizeVariable:keys.size, root: root.map((entry: any) => ({ name: entry.name, directory: entry.is_file === false, size: Number(entry.size || 0) })).slice(0,100) };
 }
 
 async function discoverIdentityDirectories(): Promise<string[]> {
@@ -148,6 +158,17 @@ async function setMapUrl(mapUrl: string): Promise<void> {
   const current=(await startupVariables()).find(v=>String(v.env_variable||v.name||"")===key);
   if(String(current?.server_value||current?.value||"")!==mapUrl)throw new Error("A host não confirmou a nova URL do mapa.");
 }
+async function setStartupValue(key:string,value:string):Promise<void>{
+  await panelRequest("/startup/variable",{method:"PUT",body:JSON.stringify({key,value})});
+  const current=(await startupVariables()).find(v=>String(v.env_variable||v.name||"")===key);
+  if(String(current?.server_value??current?.value??"")!==value)throw new Error(`A host não confirmou a variável ${key}.`);
+}
+async function setProceduralMap(seed:number,size:number):Promise<void>{
+  const variables=await startupVariables();const keys=proceduralKeys(variables);
+  if(!keys.seed||!keys.size)throw new Error("As variáveis de seed e size não foram encontradas no startup do Pterodactyl.");
+  if(keys.levelUrl)await setStartupValue(keys.levelUrl,"");
+  await setStartupValue(keys.seed,String(seed));await setStartupValue(keys.size,String(size));
+}
 async function deletePlannedFiles(files: HostFile[]): Promise<void> {
   const grouped = new Map<string,string[]>(); for (const file of files) grouped.set(file.directory, [...(grouped.get(file.directory) || []), file.name]);
   for (const [root, names] of grouped) await panelRequest("/files/delete", { method: "POST", body: JSON.stringify({ root, files: names }) });
@@ -174,6 +195,18 @@ export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, a
     await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) }).catch(() => null);
     await auditWipe("WIPE_FAILED", actor, error instanceof Error ? error.message : "Falha desconhecida"); throw error;
   }
+}
+
+export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,size:number,actor:WipeActor,automated=false):Promise<{filesDeleted:number;seed:number;size:number}>{
+  if(!Number.isInteger(seed)||seed<0||seed>2147483647)throw new Error("Seed inválida.");
+  if(!Number.isInteger(size)||size<1000||size>6000)throw new Error("Size deve estar entre 1000 e 6000.");
+  if(!executionEnabled())throw new Error("Execução bloqueada por WIPE_EXECUTION_ENABLED=false.");
+  if(automated&&!automationEnabled())throw new Error("Automação bloqueada por WIPE_AUTOMATION_ENABLED=false.");
+  const plan=await buildWipePlan(kind);if(!plan.files.some(f=>f.group==="map"))throw new Error("Nenhum save de mapa foi localizado; wipe cancelado por segurança.");
+  await auditWipe("WIPE_STARTED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}`);const backupId=await createBackup(kind);
+  await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"stop"})});await waitForState("offline");
+  try{await setProceduralMap(seed,size);await deletePlannedFiles(plan.files);await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"start"})});await waitForState("running",180_000);await auditWipe("WIPE_COMPLETED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}; backup ${backupId}`);return{filesDeleted:plan.files.length,seed,size};}
+  catch(error){await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"start"})}).catch(()=>null);await auditWipe("WIPE_FAILED",actor,error instanceof Error?error.message:"Falha desconhecida");throw error;}
 }
 
 export async function executeWipe(kind: WipeKind, rustMapsUrl: string, confirmation: string, actor: WipeActor): Promise<{ filesDeleted: number; mapUrl: string }> {
