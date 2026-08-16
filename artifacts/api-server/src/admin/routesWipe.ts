@@ -5,9 +5,12 @@ import { createMapVote, type MapImageUpload } from "../bot/commands/criarmapa.js
 import { discordClient } from "../bot/client.js";
 import { db, mapVotesTable } from "@workspace/db";
 import { desc } from "drizzle-orm";
+import { getWipeLockState, setWipeLock } from "../core/wipeLock.js";
 
 const router = Router(); router.use(requireAdmin);
 const kindOf = (value: unknown): WipeKind => value === "general" ? "general" : "map";
+router.get("/wipe/lock",async(_req,res)=>{try{res.json(await getWipeLockState())}catch(error:any){res.status(500).json({error:error?.message||"Falha ao consultar trava."})}});
+router.post("/wipe/lock",async(req,res)=>{try{if(typeof req.body?.unlocked!=="boolean")return void res.status(400).json({error:"Estado inválido."});const actor={id:res.locals.admin.userId,name:res.locals.admin.username};const state=await setWipeLock(req.body.unlocked,`${actor.name} (${actor.id})`);await auditWipe(state.unlocked?"WIPE_UNLOCKED":"WIPE_LOCKED",actor,`Trava alterada pelo painel: ${state.unlocked?"liberado":"travado"}.`);res.json(state)}catch(error:any){res.status(500).json({error:error?.message||"Falha ao alterar trava."})}});
 
 router.get("/wipe/diagnostic", async (req,res) => {
   try { const data = await diagnoseHost(); await auditWipe("WIPE_DIAGNOSTIC", { id:res.locals.admin.userId,name:res.locals.admin.username }, "Diagnóstico somente leitura executado pelo painel."); res.json(data); }
