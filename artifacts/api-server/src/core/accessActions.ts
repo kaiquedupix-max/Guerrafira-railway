@@ -6,7 +6,7 @@ export async function setBoosterAccess(discordUserId: string, active: boolean, r
   const [link] = await db.select().from(boosterLinksTable)
     .where(eq(boosterLinksTable.discordUserId, discordUserId)).limit(1);
   if (!link) throw new ActionError("Discord sem Steam vinculada.", 404);
-  await executeRconRequired(`oxide.usergroup ${active ? "add" : "remove"} ${link.steamId} bs`);
+  await executeRconRequired(`c.usergroup ${active ? "add" : "remove"} ${link.steamId} bs`);
   await db.update(boosterLinksTable).set({
     active,
     manuallyDisabled: !active,
@@ -19,7 +19,7 @@ export async function unlinkSteamAccess(discordUserId: string) {
   const [link] = await db.select().from(boosterLinksTable)
     .where(eq(boosterLinksTable.discordUserId, discordUserId)).limit(1);
   if (!link) throw new ActionError("Vínculo não encontrado.", 404);
-  if (link.active) await executeRconRequired(`oxide.usergroup remove ${link.steamId} bs`);
+  if (link.active) await executeRconRequired(`c.usergroup remove ${link.steamId} bs`);
   await db.delete(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, discordUserId));
   return { steamId: link.steamId };
 }

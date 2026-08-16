@@ -18,8 +18,8 @@ router.post("/change", async (req, res) => {
   const [owner] = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId)).limit(1);
   if (owner && owner.discordUserId !== discordUserId) return res.status(409).json({ error: "SteamID já vinculado a outro Discord." });
   if (current?.active && current.steamId !== steamId) {
-    await executeRconRequired(`oxide.usergroup remove ${current.steamId} bs`);
-    try { await executeRconRequired(`oxide.usergroup add ${steamId} bs`); } catch (error) { await executeRconRequired(`oxide.usergroup add ${current.steamId} bs`).catch(() => {}); throw error; }
+    await executeRconRequired(`c.usergroup remove ${current.steamId} bs`);
+    try { await executeRconRequired(`c.usergroup add ${steamId} bs`); } catch (error) { await executeRconRequired(`c.usergroup add ${current.steamId} bs`).catch(() => {}); throw error; }
   }
   if (current) await db.update(boosterLinksTable).set({ steamId, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
   else await db.insert(boosterLinksTable).values({ discordUserId, steamId, active: false, updatedAt: new Date() });

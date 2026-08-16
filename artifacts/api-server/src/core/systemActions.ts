@@ -103,8 +103,8 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
   if (!row) throw new ActionError("Jogador não encontrado no histórico.", 404);
   const member = await memberFor(input.discordUserId);
   const roleId = process.env.DISCORD_VERIFIED_ROLE_ID;
-  const add = (process.env.VERIFIED_GAME_ADD_CMD?.trim() || "oxide.usergroup add {steamid} vr").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
-  const remove = (process.env.VERIFIED_GAME_REMOVE_CMD?.trim() || "oxide.usergroup remove {steamid} vr").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const add = (process.env.VERIFIED_GAME_ADD_CMD?.trim() || "c.usergroup add {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const remove = (process.env.VERIFIED_GAME_REMOVE_CMD?.trim() || "c.usergroup remove {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
   await executeRconRequired(add);
   try {
     if (roleId && !member.roles.cache.has(roleId)) await member.roles.add(roleId, `Verificado por ${input.actor.name}`);
@@ -130,8 +130,8 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
 
 export async function unverifyPlayer(input: { steamId: string; discordUserId?: string; actor: ActionActor }) {
   const row = await player(input.steamId);
-  const add = (process.env.VERIFIED_GAME_ADD_CMD?.trim() || "oxide.usergroup add {steamid} vr").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
-  const remove = (process.env.VERIFIED_GAME_REMOVE_CMD?.trim() || "oxide.usergroup remove {steamid} vr").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const add = (process.env.VERIFIED_GAME_ADD_CMD?.trim() || "c.usergroup add {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const remove = (process.env.VERIFIED_GAME_REMOVE_CMD?.trim() || "c.usergroup remove {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
   await executeRconRequired(remove);
   try {
     if (input.discordUserId && process.env.DISCORD_VERIFIED_ROLE_ID) {
