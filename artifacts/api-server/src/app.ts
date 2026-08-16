@@ -15,7 +15,7 @@ startStoragePolicy();
 app.use(pinoHttp({ logger, serializers: { req(req) { return { id: req.id, method: req.method, url: req.url?.split("?")[0] }; }, res(res) { return { statusCode: res.statusCode }; } } }));
 app.use(cors());
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: "18mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 const leaderboardPage = leaderboardHtml.replace("</body>", '<a href="/api/admin/auth/login" style="position:fixed;right:18px;bottom:18px;z-index:9999;text-decoration:none;background:#6d28d9;color:white;border:1px solid #a78bfa;padding:11px 15px;border-radius:11px;font:800 11px system-ui;box-shadow:0 14px 36px #0008">🛡️ Entrar com Discord</a></body>');
