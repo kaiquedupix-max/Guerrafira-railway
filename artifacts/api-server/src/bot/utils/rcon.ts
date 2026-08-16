@@ -96,7 +96,26 @@ export async function getServerInfo(): Promise<ServerInfo | null> {
       }
       return 0;
     };
-    const sleepers = numberFrom(raw.Sleepers, raw.SleepingPlayers, raw.Sleeping, raw.sleepers, raw.sleepingPlayers);
+    const sleeperFields = [raw.Sleepers, raw.SleepingPlayers, raw.Sleeping, raw.sleepers, raw.sleepingPlayers];
+    const hasSleeperField = sleeperFields.some(value => value !== undefined && value !== null && value !== "");
+    let sleepers = numberFrom(...sleeperFields);
+    if (!hasSleeperField) {
+      const sleepingRaw = await executeRconCommand("sleepingusers");
+      if (sleepingRaw) {
+        try {
+          const parsed = JSON.parse(sleepingRaw);
+          if (Array.isArray(parsed)) sleepers = parsed.length;
+          else sleepers = numberFrom(parsed?.Count, parsed?.count, parsed?.Sleepers, parsed?.sleepers);
+        } catch {
+          const explicit = sleepingRaw.match(/(?:there (?:are|is)\s+)?(\d+)\s+sleep(?:ing|er)/i) || sleepingRaw.match(/sleep(?:ing|er)[^\d]*(\d+)/i);
+          if (explicit) sleepers = Number(explicit[1]);
+          else {
+            const steamIds = new Set(sleepingRaw.match(/\b7656119\d{10}\b/g) || []);
+            if (steamIds.size) sleepers = steamIds.size;
+          }
+        }
+      }
+    }
     return {
       hostname: String(raw.Hostname ?? raw.hostname ?? "Servidor"),
       maxPlayers: numberFrom(raw.MaxPlayers, raw.maxPlayers, raw.maxplayers, raw.Capacity),

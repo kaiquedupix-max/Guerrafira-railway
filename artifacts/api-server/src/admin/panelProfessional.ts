@@ -14,12 +14,7 @@ html{scroll-behavior:smooth}body{background:radial-gradient(circle at 75% 0,#2a1
   document.head.appendChild(css);
 
   function enhance(){
-    const overview=document.getElementById('overview');
-    if(overview&&!document.getElementById('gfHero')){
-      const hero=document.createElement('div');hero.id='gfHero';hero.className='gfHero';
-      hero.innerHTML='<img src="/guerra-fria-hero.jpeg" alt="Guerra Fria"><div class="gfHeroContent"><div class="gfHeroEyebrow">Servidor oficial Rust</div><h2>Guerra Fria</h2><p>2X • Solo/Duo • Competição, progressão e comunidade.</p><div class="gfHeroBadge">WIPE • SEG & SEX • 18:30</div></div>';
-      overview.prepend(hero);
-    }
+    const misplaced=document.getElementById('gfHero');if(misplaced)misplaced.remove();
     const chart=document.getElementById('financeChart');
     const section=chart&&chart.closest('.section');if(section)section.style.display='none';
   }
