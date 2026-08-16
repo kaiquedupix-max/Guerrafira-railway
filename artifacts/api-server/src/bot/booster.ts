@@ -14,12 +14,12 @@ const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/kaiquedupix
 let started = false;
 
 function grantCommand(steamId: string): string {
-  const template = process.env.BOOSTER_GAME_ADD_CMD?.trim() || "oxide.usergroup add {steamid} bs";
-  return template.replace(/\{steam[Ii][Dd]\}/g, steamId);
+  const template = process.env.BOOSTER_GAME_ADD_CMD?.trim() || "c.usergroup add {steamid} bs";
+  return template.replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, steamId);
 }
 function revokeCommand(steamId: string): string {
-  const template = process.env.BOOSTER_GAME_REMOVE_CMD?.trim() || "oxide.usergroup remove {steamid} bs";
-  return template.replace(/\{steam[Ii][Dd]\}/g, steamId);
+  const template = process.env.BOOSTER_GAME_REMOVE_CMD?.trim() || "c.usergroup remove {steamid} bs";
+  return template.replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, steamId);
 }
 
 async function setupPanel(client: Client): Promise<void> {
