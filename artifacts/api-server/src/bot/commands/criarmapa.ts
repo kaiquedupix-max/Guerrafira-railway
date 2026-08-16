@@ -6,7 +6,7 @@ import {
 import { and, eq, gt, isNull, lte } from "drizzle-orm";
 import { db, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, boosterLinksTable } from "@workspace/db";
 import { executeRconCommand } from "../utils/rcon.js";
-import { executePreparedWipe, resolveRustMapsUrl } from "../../core/hostWipe.js";
+import { diagnoseHost, executePreparedWipe, resolveRustMapsUrl } from "../../core/hostWipe.js";
 
 interface MapOption { name: string; image?: string; pageUrl: string; mapUrl: string; }
 interface MapVoteRuntime {
@@ -156,6 +156,8 @@ async function getVoteWeight(discordUserId: string): Promise<{ weight: number; v
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
+  const readiness=await diagnoseHost();
+  if(!readiness.capabilities?.startup||!readiness.levelUrlVariable)throw new Error("A host não disponibilizou a variável da URL do mapa. A votação não foi criada para evitar um wipe sem mapa.");
   const channelId = process.env.DISCORD_VIP_MAP_CHANNEL_ID?.trim() || VOTE_CHANNEL_ID;
   const channel = await interaction.client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
   if (!channel?.isSendable()) { await interaction.editReply("❌ Não consegui acessar a sala de votação configurada."); return; }
@@ -219,14 +221,16 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
 }
 
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
+let wipeProcessing=false;const wipeWarnings=new Set<string>();
 async function processScheduledWipes(client:Client):Promise<void>{
-  if(process.env.WIPE_EXECUTION_ENABLED!=="true"||process.env.WIPE_AUTOMATION_ENABLED!=="true")return;
+  if(wipeProcessing||process.env.WIPE_EXECUTION_ENABLED!=="true"||process.env.WIPE_AUTOMATION_ENABLED!=="true")return;wipeProcessing=true;
+  try{
+  const now=new Date();const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));
+  for(const row of upcoming){let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue}const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);const chat=await client.channels.fetch(CHAT_CHANNEL_ID).catch(()=>null)as TextChannel|null;await Promise.allSettled([chat?.send(`🧊 **WIPE EM ${label.toUpperCase()}**\nO servidor reiniciará com **[${map.name}](${map.pageUrl})**.`),executeRconCommand(`say <color=#ff8c00>[GUERRA FRIA]</color> <color=#ffd65a>Wipe em ${label}. Prepare-se!</color>`)]);}}}
   const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));
   for(const row of due){
     let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue} const winner=row.winnerIndex??0; const map=maps[winner];if(!map)continue;
     const chat=await client.channels.fetch(CHAT_CHANNEL_ID).catch(()=>null) as TextChannel|null;
-    await chat?.send(`🧊 **WIPE INICIADO**\nO servidor está aplicando **${map.name}**. Avisaremos assim que estiver disponível.`).catch(()=>{});
-    await executeRconCommand("say <color=#ff8c00>[GUERRA FRIA]</color> <color=#ff4040>WIPE INICIANDO AGORA. O servidor sera reiniciado.</color>").catch(()=>null);
     try{
       await executePreparedWipe("map",map.mapUrl,{id:"AUTOMATION",name:"Wipe automático"},true);
       await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
@@ -238,10 +242,11 @@ async function processScheduledWipes(client:Client):Promise<void>{
       await chat?.send(`🚨 **FALHA NO WIPE AUTOMÁTICO**\nA administração foi notificada. Motivo: ${reason}`).catch(()=>{});
     }
   }
+  }finally{wipeProcessing=false}
 }
 
 export function startMapWipeScheduler(client:Client):void{
   if(wipeScheduler)clearInterval(wipeScheduler);
   processScheduledWipes(client).catch(()=>{});
-  wipeScheduler=setInterval(()=>processScheduledWipes(client).catch(()=>{}),30_000);
+  wipeScheduler=setInterval(()=>processScheduledWipes(client).catch(()=>{}),10_000);
 }

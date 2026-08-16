@@ -131,14 +131,32 @@ export async function buildWipePlan(kind: WipeKind, rustMapsUrl?: string): Promi
 export async function auditWipe(action: string, actor: WipeActor, reason: string): Promise<void> {
   await db.insert(modLogsTable).values({ action, steamId: "SERVER", playerName: "Servidor Guerra Fria", reason, adminId: actor.id, adminName: actor.name });
 }
-async function createBackup(kind: WipeKind): Promise<void> { await panelRequest("/backups", { method: "POST", body: JSON.stringify({ name: `pre-wipe-${kind}-${new Date().toISOString()}`, ignored: "" }) }); }
+async function createBackup(kind: WipeKind): Promise<string> {
+  const created=await panelRequest("/backups", { method: "POST", body: JSON.stringify({ name: `pre-wipe-${kind}-${new Date().toISOString()}`, ignored: "" }) });
+  const uuid=String(created?.attributes?.uuid||created?.data?.attributes?.uuid||""); if(!uuid)throw new Error("A host não retornou o identificador do backup.");
+  const started=Date.now();
+  while(Date.now()-started<15*60_000){
+    const data=await panelRequest(`/backups/${uuid}`);const backup=data?.attributes||data?.data?.attributes||data;
+    if(backup?.completed_at){if(backup.is_successful===false)throw new Error("O backup de segurança falhou.");return uuid;}
+    await new Promise(resolve=>setTimeout(resolve,5_000));
+  }
+  throw new Error("O backup não terminou dentro de 15 minutos; wipe cancelado.");
+}
 async function setMapUrl(mapUrl: string): Promise<void> {
   const key = findLevelUrlVariable(await startupVariables()); if (!key) throw new Error("A variável de URL do mapa não foi encontrada na inicialização da host.");
   await panelRequest("/startup/variable", { method: "PUT", body: JSON.stringify({ key, value: mapUrl }) });
+  const current=(await startupVariables()).find(v=>String(v.env_variable||v.name||"")===key);
+  if(String(current?.server_value||current?.value||"")!==mapUrl)throw new Error("A host não confirmou a nova URL do mapa.");
 }
 async function deletePlannedFiles(files: HostFile[]): Promise<void> {
   const grouped = new Map<string,string[]>(); for (const file of files) grouped.set(file.directory, [...(grouped.get(file.directory) || []), file.name]);
   for (const [root, names] of grouped) await panelRequest("/files/delete", { method: "POST", body: JSON.stringify({ root, files: names }) });
+  for(const [root,names] of grouped){const remaining=new Set((await listDirectory(root)).map(item=>String(item.name)));const failed=names.filter(name=>remaining.has(name));if(failed.length)throw new Error(`A exclusão não foi confirmada em ${root}: ${failed.join(", ")}`);}
+}
+
+export async function restartHostServer(actor:WipeActor):Promise<void>{
+  await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"restart"})});
+  await auditWipe("AUTO_RESTART_TRIGGERED",actor,"Reinício diário enviado para a host.");
 }
 
 export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, actor: WipeActor, automated = false): Promise<{ filesDeleted: number; mapUrl: string }> {
@@ -146,12 +164,12 @@ export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, a
   if (automated && !automationEnabled()) throw new Error("Automação bloqueada por WIPE_AUTOMATION_ENABLED=false.");
   const plan = await buildWipePlan(kind, rustMapsUrl); if (!plan.map?.mapUrl) throw new Error("Mapa não validado.");
   if (!plan.files.some(f => f.group === "map")) throw new Error("Nenhum save de mapa foi localizado; wipe cancelado por segurança.");
-  await auditWipe("WIPE_STARTED", actor, `${kind}; ${plan.files.length} arquivos; ${plan.map.pageUrl}`); await createBackup(kind);
+  await auditWipe("WIPE_STARTED", actor, `${kind}; ${plan.files.length} arquivos; ${plan.map.pageUrl}`); const backupId=await createBackup(kind);
   await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "stop" }) }); await waitForState("offline");
   try {
     await setMapUrl(plan.map.mapUrl); await deletePlannedFiles(plan.files);
     await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) }); await waitForState("running", 180_000);
-    await auditWipe("WIPE_COMPLETED", actor, `${kind}; ${plan.files.length} arquivos; mapa ${plan.map.pageUrl}`); return { filesDeleted: plan.files.length, mapUrl: plan.map.mapUrl };
+    await auditWipe("WIPE_COMPLETED", actor, `${kind}; ${plan.files.length} arquivos; mapa ${plan.map.pageUrl}; backup ${backupId}`); return { filesDeleted: plan.files.length, mapUrl: plan.map.mapUrl };
   } catch (error) {
     await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) }).catch(() => null);
     await auditWipe("WIPE_FAILED", actor, error instanceof Error ? error.message : "Falha desconhecida"); throw error;
