@@ -28,20 +28,21 @@ async function mpJson(url: string, accessToken: string): Promise<any> {
 
 function round(value: number): number { return Math.round((Number(value) || 0) * 100) / 100; }
 
-async function mercadoPagoBalance(userId: string, accessToken: string): Promise<number | null> {
-  const candidates = [
-    `https://api.mercadopago.com/users/${userId}/mercadopago_account/balance`,
-    "https://api.mercadopago.com/v1/account/balance",
-  ];
-  for (const url of candidates) {
-    try {
-      const data = await mpJson(url, accessToken);
-      const raw = data?.available_balance ?? data?.available ?? data?.total_amount ?? data?.balance;
-      const value = Number(typeof raw === "object" ? raw?.amount : raw);
-      if (Number.isFinite(value)) return round(value);
-    } catch { /* Alguns tokens não possuem escopo para consultar saldo. */ }
+async function searchMpPayments(opts: { accessToken: string; accountId: string; begin: Date; end: Date; role: "collector" | "payer" }): Promise<any[]> {
+  const rows: any[] = [];
+  for (let page = 0; page < 40; page++) {
+    const qs = new URLSearchParams({
+      sort: "date_created", criteria: "desc", range: "date_created",
+      begin_date: opts.begin.toISOString(), end_date: opts.end.toISOString(),
+      limit: "50", offset: String(page * 50),
+      [`${opts.role}.id`]: opts.accountId,
+    });
+    const data = await mpJson(`https://api.mercadopago.com/v1/payments/search?${qs.toString()}`, opts.accessToken);
+    const pageRows = Array.isArray(data?.results) ? data.results : [];
+    rows.push(...pageRows);
+    if (pageRows.length < 50) break;
   }
-  return null;
+  return rows;
 }
 
 router.get("/finance/live", async (req, res) => {
@@ -50,21 +51,23 @@ router.get("/finance/live", async (req, res) => {
   const requested = Number(req.query.days ?? 30);
   const days = Number.isFinite(requested) ? Math.min(365, Math.max(1, Math.floor(requested))) : 30;
   const end = new Date(); const begin = new Date(Date.now() - (days - 1) * 86400000);
-  const iso = (d: Date) => d.toISOString();
+  // A busca de pagamentos disponibiliza até os últimos 12 meses. Usamos todo
+  // esse histórico para calcular o saldo, independentemente do filtro da tela.
+  const historyBegin = new Date(Date.now() - 364 * 86400000);
   let account: any;
   try { account = await mpJson("https://api.mercadopago.com/users/me", accessToken); }
   catch (error: any) { return void res.status(502).json({ error: error?.message || "Não foi possível identificar a conta Mercado Pago.", detail: error?.detail }); }
   const accountId = String(account?.id ?? "");
-  const all: any[] = [];
-  for (let page = 0; page < 20; page++) {
-    const qs = new URLSearchParams({ sort: "date_approved", criteria: "desc", range: "date_approved", begin_date: iso(begin), end_date: iso(end), limit: "50", offset: String(page * 50) });
-    let data: any;
-    try { data = await mpJson(`https://api.mercadopago.com/v1/payments/search?${qs.toString()}`, accessToken); }
-    catch (error: any) { return void res.status(502).json({ error: error?.message || "Falha ao consultar movimentações.", detail: error?.detail }); }
-    const rows = Array.isArray(data?.results) ? data.results : [];
-    all.push(...rows);
-    if (rows.length < 50) break;
+  let receivedRows: any[] = [], paidRows: any[] = [];
+  try {
+    [receivedRows, paidRows] = await Promise.all([
+      searchMpPayments({ accessToken, accountId, begin: historyBegin, end, role: "collector" }),
+      searchMpPayments({ accessToken, accountId, begin: historyBegin, end, role: "payer" }).catch(() => []),
+    ]);
+  } catch (error: any) {
+    return void res.status(502).json({ error: error?.message || "Falha ao consultar movimentações.", detail: error?.detail });
   }
+  const all = Array.from(new Map([...receivedRows, ...paidRows].map(row => [String(row.id), row])).values());
   const payments = all.map(p => {
     const collectorId = String(p.collector_id ?? p.collector?.id ?? "");
     const payerId = String(p.payer?.id ?? "");
@@ -92,7 +95,19 @@ router.get("/finance/live", async (req, res) => {
       payer: p.payer?.email ? String(p.payer.email) : "", collectorId, payerId,
     };
   });
-  const approved = payments.filter(p => p.status === "approved");
+  const historyApproved = payments.filter(p => p.status === "approved");
+  const historyEntries = historyApproved.filter(p => p.direction === "in");
+  const historyExits = historyApproved.filter(p => p.direction === "out");
+  const calculatedBalance = round(
+    historyEntries.reduce((sum, p) => sum + p.netAmount, 0) -
+    historyExits.reduce((sum, p) => sum + Math.abs(p.signedAmount), 0),
+  );
+  const periodStart = begin.getTime();
+  const periodPayments = payments.filter(p => {
+    const timestamp = new Date(p.dateApproved || p.dateCreated || 0).getTime();
+    return Number.isFinite(timestamp) && timestamp >= periodStart;
+  });
+  const approved = periodPayments.filter(p => p.status === "approved");
   const entries = approved.filter(p => p.direction === "in");
   const exits = approved.filter(p => p.direction === "out");
   const grossRevenue = round(entries.reduce((s, p) => s + p.grossAmount, 0));
@@ -110,11 +125,11 @@ router.get("/finance/live", async (req, res) => {
     day.net = day.entries - day.exits;
   }
   const trend = Array.from(trendMap.entries()).map(([day, values]) => ({ day, entries: round(values.entries), exits: round(values.exits), net: round(values.net) }));
-  const balance = await mercadoPagoBalance(accountId, accessToken);
   res.json({
-    source: "mercado_pago", days, account: { id: accountId, nickname: account?.nickname ?? null, balance, balanceAvailable: balance !== null },
-    summary: { grossRevenue, netRevenue, expenses, fees, refunded, cashFlow, approved: entries.length, outgoings: exits.length, total: payments.length, avgTicket: entries.length ? round(grossRevenue / entries.length) : 0 },
-    trend, payments: payments.filter(p => p.direction !== "other").slice(0, 500),
+    source: "mercado_pago", days,
+    account: { id: accountId, nickname: account?.nickname ?? null, balance: calculatedBalance, balanceAvailable: true, balanceType: "calculated", historyDays: 365 },
+    summary: { grossRevenue, netRevenue, expenses, fees, refunded, cashFlow, approved: entries.length, outgoings: exits.length, total: periodPayments.length, avgTicket: entries.length ? round(grossRevenue / entries.length) : 0 },
+    trend, payments: periodPayments.filter(p => p.direction !== "other").slice(0, 500),
   });
 });
 
