@@ -75,22 +75,47 @@ function reportNumber(value: unknown): number {
   const number = Number(normalized); return Number.isFinite(number) ? Math.abs(number) : 0;
 }
 
+function signedReportNumber(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const normalized = raw.includes(",") && !raw.includes(".") ? raw.replace(",", ".") : raw.replace(/,/g, "");
+  const number = Number(normalized); return Number.isFinite(number) ? number : 0;
+}
+
+function reportDate(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (/^\d{13}$/.test(raw)) return new Date(Number(raw)).toISOString();
+  if (/^\d{10}$/.test(raw)) return new Date(Number(raw) * 1000).toISOString();
+  const parsed = new Date(raw); return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 async function getSettlementReport(accessToken: string, begin: Date, end: Date): Promise<ReportCache> {
   const key = `${begin.toISOString().slice(0, 10)}:${end.toISOString().slice(0, 10)}`;
-  if (reportCache?.key === key && reportCache.expiresAt > Date.now() && (reportCache.status !== "processing" || reportCache.taskId)) {
-    if (reportCache.status !== "processing" || !reportCache.taskId) return reportCache;
+  if (reportCache?.key === key && reportCache.status === "ready" && reportCache.rows) return reportCache;
+  if (reportCache?.key === key && reportCache.status === "unavailable" && reportCache.expiresAt > Date.now()) return reportCache;
+  if (reportCache?.key === key && reportCache.status === "processing" && reportCache.taskId) {
     try {
       const task = await (await mpRequest(`https://api.mercadopago.com/v1/account/settlement_report/task/${reportCache.taskId}`, accessToken)).json() as any;
-      if (String(task?.status).toLowerCase() === "processed" && (task?.file_name || task?.report_id)) {
-        reportCache.fileName = String(task.file_name || task.report_id); reportCache.status = "ready";
+      if (String(task?.status).toLowerCase() === "processed") {
+        reportCache.fileName = task?.file_name ? String(task.file_name) : undefined;
+        if (!reportCache.fileName) {
+          const search = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report/search", accessToken)).json() as any;
+          const reports = Array.isArray(search?.results) ? search.results : [];
+          const match = reports.find((item: any) => String(item?.id) === String(task?.report_id) || String(item?.id) === String(task?.id));
+          if (match?.file_name) reportCache.fileName = String(match.file_name);
+        }
+        if (reportCache.fileName) reportCache.status = "ready";
       } else return reportCache;
-    } catch { return reportCache; }
+    } catch (error: any) {
+      reportCache.detail = error?.detail || error?.message; return reportCache;
+    }
   }
   try {
-    if (!reportCache || reportCache.key !== key || reportCache.expiresAt <= Date.now()) {
+    if (!reportCache || reportCache.key !== key || reportCache.status === "unavailable") {
       const search = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report/search", accessToken)).json() as any;
       const reports = Array.isArray(search?.results) ? search.results : Array.isArray(search) ? search : [];
-      const processed = reports.find((item: any) => String(item?.status).toLowerCase() === "processed" && item?.file_name && String(item?.begin_date || "").slice(0, 10) <= begin.toISOString().slice(0, 10) && String(item?.end_date || "").slice(0, 10) >= end.toISOString().slice(0, 10));
+      const processed = reports.find((item: any) => String(item?.status).toLowerCase() === "processed" && item?.file_name && String(item?.begin_date || "").slice(0, 10) <= begin.toISOString().slice(0, 10) && String(item?.end_date || "").slice(0, 10) >= new Date(end.getTime() - 86400000).toISOString().slice(0, 10));
       reportCache = { key, status: processed ? "ready" : "processing", fileName: processed?.file_name ? String(processed.file_name) : undefined, expiresAt: Date.now() + (processed ? 10 * 60_000 : 30_000) };
       if (!processed) {
         const generated = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report", accessToken, { method: "POST", body: JSON.stringify({ begin_date: begin.toISOString(), end_date: end.toISOString() }) })).json() as any;
@@ -181,21 +206,22 @@ router.get("/finance/live", async (req, res) => {
     };
   });
   const reportPayments = settlement.status === "ready" && Array.isArray(settlement.rows) ? settlement.rows.map((row, index) => {
-    const credit = reportNumber(row.NET_CREDIT_AMOUNT ?? row.CREDIT_AMOUNT);
-    const debit = reportNumber(row.NET_DEBIT_AMOUNT ?? row.DEBIT_AMOUNT);
+    const settlementNet = signedReportNumber(row.SETTLEMENT_NET_AMOUNT ?? row.REAL_AMOUNT);
+    const credit = settlementNet > 0 ? settlementNet : reportNumber(row.NET_CREDIT_AMOUNT ?? row.CREDIT_AMOUNT);
+    const debit = settlementNet < 0 ? Math.abs(settlementNet) : reportNumber(row.NET_DEBIT_AMOUNT ?? row.DEBIT_AMOUNT);
     const transactionAmount = reportNumber(row.TRANSACTION_AMOUNT ?? row.GROSS_AMOUNT);
-    const fees = reportNumber(row.MP_FEE_AMOUNT) + reportNumber(row.FINANCING_FEE_AMOUNT) + reportNumber(row.SHIPPING_FEE_AMOUNT) + reportNumber(row.TAXES_AMOUNT);
+    const fees = reportNumber(row.FEE_AMOUNT) + reportNumber(row.MKP_FEE_AMOUNT ?? row.MP_FEE_AMOUNT) + reportNumber(row.FINANCING_FEE_AMOUNT) + reportNumber(row.SHIPPING_FEE_AMOUNT) + reportNumber(row.TAXES_AMOUNT);
     const direction = debit > credit ? "out" : credit > 0 ? "in" : "other";
     const signedAmount = round(credit - debit);
     const transactionType = String(row.TRANSACTION_TYPE ?? row.RECORD_TYPE ?? "MOVEMENT");
-    const date = row.TRANSACTION_DATE ?? row.DATE ?? row.RELEASE_DATE ?? row.SETTLEMENT_DATE ?? null;
+    const date = reportDate(row.TRANSACTION_DATE ?? row.DATE ?? row.RELEASE_DATE ?? row.SETTLEMENT_DATE);
     const methodId = String(row.PAYMENT_METHOD ?? row.PAYMENT_TYPE ?? "other").toLowerCase();
     return {
       id: String(row.SOURCE_ID ?? row.TRANSACTION_ID ?? row.PAYMENT_ID ?? `report-${index}`), status: "approved", statusDetail: "settled",
       direction, movement: direction === "out" ? "Saída" : direction === "in" ? "Entrada" : "Movimentação",
       amount: round(transactionAmount || Math.abs(signedAmount)), signedAmount, grossAmount: round(transactionAmount || Math.abs(signedAmount)),
       netAmount: direction === "in" ? credit : 0, fees: round(fees), refunded: transactionType.includes("REFUND") ? debit : 0,
-      currency: String(row.CURRENCY ?? "BRL"), method: methodLabels[methodId] || methodId.replaceAll("_", " "), methodId,
+      currency: String(row.SETTLEMENT_CURRENCY ?? row.TRANSACTION_CURRENCY ?? row.CURRENCY ?? "BRL"), method: methodLabels[methodId] || methodId.replaceAll("_", " "), methodId,
       type: transactionType, operationType: transactionType,
       description: String(row.DESCRIPTION ?? row.REASON ?? transactionType.replaceAll("_", " ")), externalReference: String(row.EXTERNAL_REFERENCE ?? ""),
       dateCreated: date, dateApproved: date, payer: "", collectorId: "", payerId: "",
@@ -234,7 +260,7 @@ router.get("/finance/live", async (req, res) => {
   const trend = Array.from(trendMap.entries()).map(([day, values]) => ({ day, entries: round(values.entries), exits: round(values.exits), net: round(values.net) }));
   res.json({
     source: "mercado_pago", days,
-    report: { status: settlement.status, detail: settlement.status === "unavailable" ? settlement.detail : undefined, complete: reportPayments.length > 0 },
+    report: { status: settlement.status, detail: settlement.status === "unavailable" ? settlement.detail : undefined, complete: reportPayments.length > 0, columns: settlement.rows?.[0] ? Object.keys(settlement.rows[0]) : [] },
     account: { id: accountId, nickname: account?.nickname ?? null, balance: calculatedBalance, balanceAvailable: reportPayments.length > 0, balanceType: reportPayments.length ? "settlement_report" : "pending_report", historyDays: 365 },
     summary: { grossRevenue, netRevenue, expenses, fees, refunded, cashFlow, approved: entries.length, outgoings: exits.length, total: periodPayments.length, avgTicket: entries.length ? round(grossRevenue / entries.length) : 0 },
     trend, payments: periodPayments.filter(p => p.direction !== "other").slice(0, 500),

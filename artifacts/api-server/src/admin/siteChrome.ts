@@ -1,4 +1,5 @@
 export type SiteSection = "home" | "leaderboard" | "integrity" | "admin";
+import { brandThemeCss } from "./brandTheme.js";
 
 function esc(v: string): string {
   return String(v).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c] || c));
@@ -24,7 +25,7 @@ html{scroll-padding-top:78px}body{padding-top:68px!important}.gfChrome{position:
 @media(max-width:760px){html{scroll-padding-top:0}body{padding-top:0!important;padding-bottom:calc(150px + env(safe-area-inset-bottom))!important;max-width:100vw;overflow-x:hidden}.gfChrome{height:0!important;inset:auto 0 0 0!important;background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;pointer-events:none}.gfChromeInner{width:100%;height:0}.gfBack,.gfChromeBrand,.gfUser,.gfInstall{display:none!important}.gfNav{pointer-events:auto;position:fixed;left:6px;right:6px;bottom:calc(68px + max(7px,env(safe-area-inset-bottom)));height:55px;padding:4px;background:#0b0712fa;border:1px solid #39274b;border-radius:16px;display:grid;grid-template-columns:repeat(${links.length},minmax(0,1fr));gap:3px;box-shadow:0 -10px 35px #000b;backdrop-filter:blur(18px);max-width:calc(100vw - 12px);overflow:hidden}.gfNavItem{min-width:0;height:45px;padding:3px 2px;display:flex;flex-direction:column;justify-content:center;gap:1px;font-size:8px;text-align:center;overflow:hidden}.gfNavItem span{font-size:15px}.gfNavItem b{font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.gfNavItem.active{border-color:#6c4790}.gfInstallCard{padding:22px;max-height:calc(100vh - 30px);overflow:auto}.gfInstallCard h2{font-size:25px}}
 </style>`;
   const js = `<script id="gf-pwa-script">(function(){if('serviceWorker'in navigator){navigator.serviceWorker.register('/api/pwa/sw.js',{scope:'/'}).catch(()=>{})}let deferred=null;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e});const b=document.getElementById('gfInstall'),m=document.getElementById('gfInstallModal'),c=document.getElementById('gfInstallClose');if(!b)return;const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;if(standalone){b.style.display='none';return}b.onclick=async()=>{if(deferred){deferred.prompt();await deferred.userChoice;deferred=null;return}m&&m.classList.add('open')};c&&(c.onclick=()=>m.classList.remove('open'));m&&(m.onclick=e=>{if(e.target===m)m.classList.remove('open')})})();</script>`;
-  let out = html.replace("</head>", `${pwaMeta}${css}</head>`);
+  let out = html.replace("</head>", `${pwaMeta}${css}${brandThemeCss}</head>`);
   out = out.replace(/<body([^>]*)>/i, `<body$1>${chrome}${installModal}`);
   out = out.replace("</body>", `${js}</body>`);
   return out;
