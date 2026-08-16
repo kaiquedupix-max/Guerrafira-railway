@@ -29,7 +29,7 @@ const BOOSTER_MENTION = `<@&${BOOSTER_ROLE_ID}>`;
 export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addStringOption(o => o.setName("data").setDescription("Data: votação 18h e wipe 18h30 (AAAA-MM-DD)").setRequired(true))
+  .addStringOption(o => o.setName("data").setDescription("Data: votação 18h e fluxo do wipe 18h25 (AAAA-MM-DD)").setRequired(true))
   .addIntegerOption(o => o.setName("seed1").setDescription("Seed do Mapa 1").setRequired(true).setMinValue(0).setMaxValue(2147483647))
   .addIntegerOption(o => o.setName("size1").setDescription("Size do Mapa 1").setRequired(true).setMinValue(1000).setMaxValue(6000))
   .addIntegerOption(o => o.setName("seed2").setDescription("Seed do Mapa 2").setRequired(true).setMinValue(0).setMaxValue(2147483647))
@@ -54,7 +54,7 @@ export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
   const [year,month,day]=date.split("-").map(Number);const voteAt=Date.UTC(year,month-1,day,21,0,0);const check=new Date(voteAt);
   if(check.getUTCFullYear()!==year||check.getUTCMonth()!==month-1||check.getUTCDate()!==day)throw new Error("Data inválida.");
   if(voteAt<=Date.now()+5*60_000)throw new Error("Escolha uma data futura com pelo menos 5 minutos de antecedência.");
-  return{voteEndsAt:voteAt,wipeAt:voteAt+30*60_000};
+  return{voteEndsAt:voteAt,wipeAt:voteAt+25*60_000};
 }
 
 function headerEmbed(endsAt: number) {
@@ -250,8 +250,8 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
     .setFooter({ text: `Guerra Fria • ${ballots.length} participante(s)` }).setTimestamp();
   await channel.send({ embeds: [embed] });
   const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
-  if(chat?.isSendable()) await chat.send(`🏆 **MAPA VENCEDOR:** ${vote.maps[winnerIndex].name}\nSeed: \`${vote.maps[winnerIndex].seed}\` • Size: \`${vote.maps[winnerIndex].size}\`\n🧊 O wipe será iniciado agora.`).catch(()=>{});
-  await executeRconCommand(`say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>${vote.maps[winnerIndex].name} venceu. O wipe sera iniciado agora.</color>`).catch(()=>null);
+  if(chat?.isSendable()) await chat.send(`🏆 **MAPA VENCEDOR:** ${vote.maps[winnerIndex].name}\nSeed: \`${vote.maps[winnerIndex].seed}\` • Size: \`${vote.maps[winnerIndex].size}\`\n🧊 O fluxo do wipe será iniciado às <t:${Math.floor(vote.wipeAt/1000)}:t>.`).catch(()=>{});
+  await executeRconCommand(`say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>${vote.maps[winnerIndex].name} venceu. O wipe inicia as 18:25.</color>`).catch(()=>null);
 }
 
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
@@ -269,7 +269,7 @@ async function processScheduledWipes(client:Client):Promise<void>{
     try{
       await executePreparedProceduralWipe("map",map.seed,map.size,{id:"AUTOMATION",name:"Wipe automático"},true);
       await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
-      await chat?.send(`✅ **WIPE CONCLUÍDO**\nO servidor iniciou com **${map.name}** — seed \`${map.seed}\`, size \`${map.size}\` — e já está disponível.`).catch(()=>{});
+      await chat?.send({content:"@everyone",allowedMentions:{parse:["everyone"]},embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ SERVIDOR WIPADO — JÁ ESTÁ ONLINE").setDescription(`O Guerra Fria iniciou com **${map.name}**.\n\nSeed: \`${map.seed}\` • Size: \`${map.size}\`\n\nClique no botão abaixo para conectar.`).setFooter({text:"Guerra Fria • Bom wipe!"}).setTimestamp()],components:[new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("status_connect").setLabel("🎮 Conectar ao servidor").setStyle(ButtonStyle.Success))]}).catch(()=>{});
       await executeRconCommand("say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>Wipe concluido. Bom jogo!</color>").catch(()=>null);
     }catch(error){
       const reason=error instanceof Error?error.message:"Falha desconhecida";
