@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import { renderHome as renderBaseHome } from "./homePage.js";
 
-const heroRawUrl = "https://raw.githubusercontent.com/kaiquedupix-max/Guerrafira-railway/main/artifacts/api-server/public/guerra-fria-hero.jpeg";
+const heroRawUrl = "https://raw.githubusercontent.com/kaiquedupix-max/Guerrafira-railway/main/artifacts/api-server/public/banner-guerra-fria-infinito.gif";
 
 export function renderHome(req: Request): string {
   return renderBaseHome(req)
