@@ -1,10 +1,14 @@
 import { EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 import { auditWipe, buildWipePlan, diagnoseHost, executeWipe, type WipeKind } from "../../core/hostWipe.js";
+import { getWipeLockState, setWipeLock } from "../../core/wipeLock.js";
 
 export const data = new SlashCommandBuilder()
   .setName("wipe")
   .setDescription("Diagnostica e prepara o wipe do servidor (modo seguro).")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addSubcommand(sub=>sub.setName("travar").setDescription("Trava imediatamente todas as execuções de wipe."))
+  .addSubcommand(sub=>sub.setName("destravar").setDescription("Libera as execuções manuais e automáticas de wipe."))
+  .addSubcommand(sub=>sub.setName("trava").setDescription("Mostra o estado atual da trava do wipe."))
   .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Testa a API e mostra o estado, sem alterar arquivos."))
   .addSubcommand(sub=>sub.setName("planejar").setDescription("Lista exatamente o que seria removido.").addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices(
     {name:"Wipe mapa",value:"map"},{name:"Wipe geral (mapa + BPs)",value:"general"}
@@ -20,13 +24,18 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const actor={id:interaction.user.id,name:interaction.user.tag}; const sub=interaction.options.getSubcommand();
   try {
+    if(sub==="travar"||sub==="destravar"){
+      const state=await setWipeLock(sub==="destravar",`${interaction.user.tag} (${interaction.user.id})`);await auditWipe(state.unlocked?"WIPE_UNLOCKED":"WIPE_LOCKED",actor,`Trava alterada pelo Discord: ${state.unlocked?"liberado":"travado"}.`);
+      await interaction.editReply({embeds:[new EmbedBuilder().setColor(state.unlocked?0x38c978:0xd64545).setTitle(state.unlocked?"🔓 Sistema de wipe destravado":"🔒 Sistema de wipe travado").setDescription(state.unlocked?"Execuções manuais e automáticas estão liberadas.":"Nenhum wipe poderá apagar arquivos enquanto a trava estiver ativa.").setTimestamp()]});return;
+    }
+    if(sub==="trava"){const state=await getWipeLockState();await interaction.editReply({embeds:[new EmbedBuilder().setColor(state.unlocked?0x38c978:0xd64545).setTitle(state.unlocked?"🔓 Wipe destravado":"🔒 Wipe travado").setDescription(state.updatedBy?`Última alteração: ${state.updatedBy}`:"Nenhuma alteração registrada.").setTimestamp()]});return;}
     if(sub==="diagnostico"){
       const d=await diagnoseHost(); await auditWipe("WIPE_DIAGNOSTIC",actor,"Diagnóstico somente leitura executado pelo Discord.");
       await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xf4c45a).setTitle("🛡️ Diagnóstico do wipe").setDescription("Nenhum arquivo foi alterado.").addFields(
         { name: "Servidor", value: String(d.server.name), inline: true },
         { name: "Estado", value: String(d.server.state), inline: true },
         { name: "Arquivos", value: d.capabilities.files ? "Acesso confirmado" : "Indisponível", inline: true },
-        { name: "Execução destrutiva", value: d.capabilities.destructiveEnabled ? "Habilitada" : "🔒 Bloqueada", inline: true }
+        { name: "Execução destrutiva", value: d.capabilities.destructiveEnabled&&d.capabilities.wipeUnlocked ? "🔓 Habilitada" : "🔒 Bloqueada", inline: true }
       ).setTimestamp()]}); return;
     }
     const kind=(sub==="geral"?"general":sub==="mapa"?"map":interaction.options.getString("tipo",true)) as WipeKind;
