@@ -9,6 +9,41 @@ function clean(v: unknown, max = 120): string { return String(v ?? "").trim().sl
 function money(v: unknown): number { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0; }
 function validStatus(v: unknown): string { const s = clean(v, 30).toLowerCase(); return ["approved","pending","refunded","cancelled","rejected"].includes(s) ? s : "approved"; }
 
+const methodLabels: Record<string, string> = {
+  account_money: "Saldo Mercado Pago", pix: "PIX", credit_card: "Cartão de crédito",
+  debit_card: "Cartão de débito", ticket: "Boleto", bank_transfer: "Transferência bancária",
+};
+
+async function mpJson(url: string, accessToken: string): Promise<any> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, signal: controller.signal });
+    const text = await response.text();
+    let data: any = {}; try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+    if (!response.ok) throw Object.assign(new Error(`Mercado Pago respondeu ${response.status}.`), { status: response.status, detail: text.slice(0, 300) });
+    return data;
+  } finally { clearTimeout(timeout); }
+}
+
+function round(value: number): number { return Math.round((Number(value) || 0) * 100) / 100; }
+
+async function mercadoPagoBalance(userId: string, accessToken: string): Promise<number | null> {
+  const candidates = [
+    `https://api.mercadopago.com/users/${userId}/mercadopago_account/balance`,
+    "https://api.mercadopago.com/v1/account/balance",
+  ];
+  for (const url of candidates) {
+    try {
+      const data = await mpJson(url, accessToken);
+      const raw = data?.available_balance ?? data?.available ?? data?.total_amount ?? data?.balance;
+      const value = Number(typeof raw === "object" ? raw?.amount : raw);
+      if (Number.isFinite(value)) return round(value);
+    } catch { /* Alguns tokens não possuem escopo para consultar saldo. */ }
+  }
+  return null;
+}
+
 router.get("/finance/live", async (req, res) => {
   const accessToken = (process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.MP_ACCESS_TOKEN || process.env.MERCADOPAGO_ACCESS_TOKEN || "").trim();
   if (!accessToken) return void res.status(503).json({ error: "MERCADO_PAGO_ACCESS_TOKEN no está configurado en Railway." });
@@ -16,32 +51,71 @@ router.get("/finance/live", async (req, res) => {
   const days = Number.isFinite(requested) ? Math.min(365, Math.max(1, Math.floor(requested))) : 30;
   const end = new Date(); const begin = new Date(Date.now() - (days - 1) * 86400000);
   const iso = (d: Date) => d.toISOString();
+  let account: any;
+  try { account = await mpJson("https://api.mercadopago.com/users/me", accessToken); }
+  catch (error: any) { return void res.status(502).json({ error: error?.message || "Não foi possível identificar a conta Mercado Pago.", detail: error?.detail }); }
+  const accountId = String(account?.id ?? "");
   const all: any[] = [];
   for (let page = 0; page < 20; page++) {
     const qs = new URLSearchParams({ sort: "date_approved", criteria: "desc", range: "date_approved", begin_date: iso(begin), end_date: iso(end), limit: "50", offset: String(page * 50) });
-    const r = await fetch(`https://api.mercadopago.com/v1/payments/search?${qs.toString()}`, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } });
-    if (!r.ok) { const text = await r.text().catch(() => ""); return void res.status(502).json({ error: `Mercado Pago respondió ${r.status}.`, detail: text.slice(0, 300) }); }
-    const data = await r.json() as any;
+    let data: any;
+    try { data = await mpJson(`https://api.mercadopago.com/v1/payments/search?${qs.toString()}`, accessToken); }
+    catch (error: any) { return void res.status(502).json({ error: error?.message || "Falha ao consultar movimentações.", detail: error?.detail }); }
     const rows = Array.isArray(data?.results) ? data.results : [];
     all.push(...rows);
     if (rows.length < 50) break;
   }
-  const payments = all.map(p => ({
-    id: String(p.id ?? ""), status: String(p.status ?? ""), statusDetail: String(p.status_detail ?? ""),
-    amount: Number(p.transaction_amount ?? 0), refunded: Number(p.transaction_amount_refunded ?? 0),
-    currency: String(p.currency_id ?? "BRL"), method: String(p.payment_method_id ?? p.payment_type_id ?? "—"), type: String(p.payment_type_id ?? "—"),
-    description: String(p.description ?? p.external_reference ?? "Pago Mercado Pago"), externalReference: String(p.external_reference ?? ""),
-    dateCreated: p.date_created ?? null, dateApproved: p.date_approved ?? null,
-    payer: p.payer?.email ? String(p.payer.email) : "",
-  }));
+  const payments = all.map(p => {
+    const collectorId = String(p.collector_id ?? p.collector?.id ?? "");
+    const payerId = String(p.payer?.id ?? "");
+    const incoming = Boolean(accountId && collectorId === accountId);
+    const outgoing = Boolean(accountId && payerId === accountId && collectorId !== accountId);
+    const amount = Number(p.transaction_amount ?? 0);
+    const refunded = Number(p.transaction_amount_refunded ?? 0);
+    const totalPaid = Number(p.transaction_details?.total_paid_amount ?? amount);
+    const feeDetails = Array.isArray(p.fee_details) ? p.fee_details : [];
+    const explicitFees = feeDetails.reduce((sum: number, fee: any) => sum + Math.abs(Number(fee?.amount ?? 0)), 0);
+    const apiNet = Number(p.transaction_details?.net_received_amount);
+    const fees = incoming ? round(explicitFees || (Number.isFinite(apiNet) && apiNet > 0 ? Math.max(0, amount - refunded - apiNet) : 0)) : 0;
+    const net = incoming ? round(Number.isFinite(apiNet) && apiNet > 0 ? apiNet - refunded : amount - refunded - fees) : 0;
+    const direction = outgoing ? "out" : incoming ? "in" : "other";
+    const methodId = String(p.payment_method_id ?? p.payment_type_id ?? "other");
+    const method = outgoing && methodId === "account_money" ? "Débito no saldo" : (methodLabels[methodId] || methodId.replaceAll("_", " "));
+    return {
+      id: String(p.id ?? ""), status: String(p.status ?? ""), statusDetail: String(p.status_detail ?? ""),
+      direction, movement: direction === "out" ? "Saída" : direction === "in" ? "Entrada" : "Movimentação",
+      amount: round(amount), signedAmount: round(direction === "out" ? -totalPaid : net), grossAmount: round(amount), netAmount: net,
+      fees, refunded: round(refunded), currency: String(p.currency_id ?? "BRL"), method, methodId,
+      type: String(p.payment_type_id ?? "—"), operationType: String(p.operation_type ?? ""),
+      description: String(p.description ?? p.external_reference ?? (direction === "out" ? "Compra" : "Recebimento Mercado Pago")),
+      externalReference: String(p.external_reference ?? ""), dateCreated: p.date_created ?? null, dateApproved: p.date_approved ?? null,
+      payer: p.payer?.email ? String(p.payer.email) : "", collectorId, payerId,
+    };
+  });
   const approved = payments.filter(p => p.status === "approved");
-  const grossRevenue = approved.reduce((s, p) => s + p.amount, 0);
-  const refunded = payments.reduce((s, p) => s + p.refunded, 0);
-  const netRevenue = grossRevenue - refunded;
-  const byDay = new Map<string, number>();
-  for (const p of approved) { const key = String(p.dateApproved || p.dateCreated || "").slice(0, 10); if (key) byDay.set(key, (byDay.get(key) || 0) + p.amount - p.refunded); }
-  const trend = Array.from(byDay.entries()).sort((a,b)=>a[0].localeCompare(b[0])).map(([day,revenue]) => ({ day, revenue: Math.round(revenue * 100) / 100 }));
-  res.json({ source: "mercado_pago", days, summary: { grossRevenue: Math.round(grossRevenue*100)/100, refunded: Math.round(refunded*100)/100, netRevenue: Math.round(netRevenue*100)/100, approved: approved.length, total: payments.length, avgTicket: approved.length ? Math.round((grossRevenue/approved.length)*100)/100 : 0 }, trend, payments: payments.slice(0, 500) });
+  const entries = approved.filter(p => p.direction === "in");
+  const exits = approved.filter(p => p.direction === "out");
+  const grossRevenue = round(entries.reduce((s, p) => s + p.grossAmount, 0));
+  const fees = round(entries.reduce((s, p) => s + p.fees, 0));
+  const refunded = round(entries.reduce((s, p) => s + p.refunded, 0));
+  const netRevenue = round(entries.reduce((s, p) => s + p.netAmount, 0));
+  const expenses = round(exits.reduce((s, p) => s + Math.abs(p.signedAmount), 0));
+  const cashFlow = round(netRevenue - expenses);
+  const trendMap = new Map<string, { entries: number; exits: number; net: number }>();
+  for (let i = 0; i < days; i++) { const d = new Date(begin.getTime() + i * 86400000); trendMap.set(d.toISOString().slice(0,10), { entries: 0, exits: 0, net: 0 }); }
+  for (const p of approved) {
+    const key = String(p.dateApproved || p.dateCreated || "").slice(0, 10); const day = trendMap.get(key); if (!day) continue;
+    if (p.direction === "in") day.entries += p.netAmount;
+    if (p.direction === "out") day.exits += Math.abs(p.signedAmount);
+    day.net = day.entries - day.exits;
+  }
+  const trend = Array.from(trendMap.entries()).map(([day, values]) => ({ day, entries: round(values.entries), exits: round(values.exits), net: round(values.net) }));
+  const balance = await mercadoPagoBalance(accountId, accessToken);
+  res.json({
+    source: "mercado_pago", days, account: { id: accountId, nickname: account?.nickname ?? null, balance, balanceAvailable: balance !== null },
+    summary: { grossRevenue, netRevenue, expenses, fees, refunded, cashFlow, approved: entries.length, outgoings: exits.length, total: payments.length, avgTicket: entries.length ? round(grossRevenue / entries.length) : 0 },
+    trend, payments: payments.filter(p => p.direction !== "other").slice(0, 500),
+  });
 });
 
 router.get("/finance", async (req, res) => {
