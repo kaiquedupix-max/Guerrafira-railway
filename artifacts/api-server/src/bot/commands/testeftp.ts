@@ -18,6 +18,6 @@ export async function execute(interaction:ChatInputCommandInteraction):Promise<v
     ).setFooter({text:"Nenhum arquivo existente foi alterado."}).setTimestamp()],files:[file]});
   }catch(error:any){
     const report=error?.testReport; const details=report?.steps?.join("\n")||error?.message||"Falha desconhecida";
-    await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xd64545).setTitle("❌ Teste de arquivos falhou").setDescription(`**Motivo:** ${error?.message||"Falha desconhecida"}\n\n```\n${String(details).slice(0,2500)}\n````).addFields({name:"Limpeza de segurança",value:"O bot tentou remover o arquivo temporário automaticamente no final."}).setTimestamp()]});
+    await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xd64545).setTitle("❌ Teste de arquivos falhou").setDescription(`**Motivo:** ${error?.message||"Falha desconhecida"}\n\n${String(details).slice(0,2500)}`).addFields({name:"Limpeza de segurança",value:"O bot tentou remover o arquivo temporário automaticamente no final."}).setTimestamp()]});
   }
 }
