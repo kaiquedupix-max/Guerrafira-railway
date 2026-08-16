@@ -26,6 +26,90 @@ async function mpJson(url: string, accessToken: string): Promise<any> {
   } finally { clearTimeout(timeout); }
 }
 
+async function mpRequest(url: string, accessToken: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 18_000);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json, text/csv", "Content-Type": "application/json", ...(init.headers || {}) },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw Object.assign(new Error(`Mercado Pago respondeu ${response.status}.`), { status: response.status, detail });
+    }
+    return response;
+  } finally { clearTimeout(timeout); }
+}
+
+type ReportCache = { key: string; expiresAt: number; taskId?: string; fileName?: string; rows?: any[]; status: "processing" | "ready" | "unavailable"; detail?: string };
+let reportCache: ReportCache | null = null;
+
+function parseCsvLine(line: string, separator: string): string[] {
+  const result: string[] = []; let value = ""; let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') { if (quoted && line[i + 1] === '"') { value += '"'; i++; } else quoted = !quoted; }
+    else if (char === separator && !quoted) { result.push(value.trim()); value = ""; }
+    else value += char;
+  }
+  result.push(value.trim()); return result;
+}
+
+function parseSettlementCsv(csv: string): any[] {
+  const lines = csv.replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+  const separator = (lines[0].match(/;/g)?.length || 0) > (lines[0].match(/,/g)?.length || 0) ? ";" : ",";
+  const headers = parseCsvLine(lines[0], separator).map(h => h.trim().toUpperCase());
+  return lines.slice(1).map(line => {
+    const values = parseCsvLine(line, separator); const row: any = {};
+    headers.forEach((header, index) => { row[header] = values[index] ?? ""; }); return row;
+  });
+}
+
+function reportNumber(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const normalized = raw.includes(",") && !raw.includes(".") ? raw.replace(",", ".") : raw.replace(/,/g, "");
+  const number = Number(normalized); return Number.isFinite(number) ? Math.abs(number) : 0;
+}
+
+async function getSettlementReport(accessToken: string, begin: Date, end: Date): Promise<ReportCache> {
+  const key = `${begin.toISOString().slice(0, 10)}:${end.toISOString().slice(0, 10)}`;
+  if (reportCache?.key === key && reportCache.expiresAt > Date.now() && (reportCache.status !== "processing" || reportCache.taskId)) {
+    if (reportCache.status !== "processing" || !reportCache.taskId) return reportCache;
+    try {
+      const task = await (await mpRequest(`https://api.mercadopago.com/v1/account/settlement_report/task/${reportCache.taskId}`, accessToken)).json() as any;
+      if (String(task?.status).toLowerCase() === "processed" && (task?.file_name || task?.report_id)) {
+        reportCache.fileName = String(task.file_name || task.report_id); reportCache.status = "ready";
+      } else return reportCache;
+    } catch { return reportCache; }
+  }
+  try {
+    if (!reportCache || reportCache.key !== key || reportCache.expiresAt <= Date.now()) {
+      const search = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report/search", accessToken)).json() as any;
+      const reports = Array.isArray(search?.results) ? search.results : Array.isArray(search) ? search : [];
+      const processed = reports.find((item: any) => String(item?.status).toLowerCase() === "processed" && item?.file_name && String(item?.begin_date || "").slice(0, 10) <= begin.toISOString().slice(0, 10) && String(item?.end_date || "").slice(0, 10) >= end.toISOString().slice(0, 10));
+      reportCache = { key, status: processed ? "ready" : "processing", fileName: processed?.file_name ? String(processed.file_name) : undefined, expiresAt: Date.now() + (processed ? 10 * 60_000 : 30_000) };
+      if (!processed) {
+        const generated = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report", accessToken, { method: "POST", body: JSON.stringify({ begin_date: begin.toISOString(), end_date: end.toISOString() }) })).json() as any;
+        reportCache.taskId = String(generated?.task_id || generated?.id || "");
+        if (!reportCache.taskId) throw new Error("O Mercado Pago não retornou o identificador do extrato.");
+        return reportCache;
+      }
+    }
+    if (reportCache.fileName) {
+      const response = await mpRequest(`https://api.mercadopago.com/v1/account/settlement_report/${encodeURIComponent(reportCache.fileName)}`, accessToken, { headers: { Accept: "text/csv" } });
+      reportCache.rows = parseSettlementCsv(await response.text()); reportCache.status = "ready"; reportCache.expiresAt = Date.now() + 10 * 60_000;
+    }
+    return reportCache;
+  } catch (error: any) {
+    reportCache = { key, status: "unavailable", detail: error?.detail || error?.message || "Extrato indisponível", expiresAt: Date.now() + 60_000 };
+    return reportCache;
+  }
+}
+
 function round(value: number): number { return Math.round((Number(value) || 0) * 100) / 100; }
 
 async function searchMpPayments(opts: { accessToken: string; accountId: string; begin: Date; end: Date; role: "collector" | "payer" }): Promise<any[]> {
@@ -58,6 +142,7 @@ router.get("/finance/live", async (req, res) => {
   try { account = await mpJson("https://api.mercadopago.com/users/me", accessToken); }
   catch (error: any) { return void res.status(502).json({ error: error?.message || "Não foi possível identificar a conta Mercado Pago.", detail: error?.detail }); }
   const accountId = String(account?.id ?? "");
+  const settlement = await getSettlementReport(accessToken, historyBegin, end);
   let receivedRows: any[] = [], paidRows: any[] = [];
   try {
     [receivedRows, paidRows] = await Promise.all([
@@ -95,7 +180,29 @@ router.get("/finance/live", async (req, res) => {
       payer: p.payer?.email ? String(p.payer.email) : "", collectorId, payerId,
     };
   });
-  const historyApproved = payments.filter(p => p.status === "approved");
+  const reportPayments = settlement.status === "ready" && Array.isArray(settlement.rows) ? settlement.rows.map((row, index) => {
+    const credit = reportNumber(row.NET_CREDIT_AMOUNT ?? row.CREDIT_AMOUNT);
+    const debit = reportNumber(row.NET_DEBIT_AMOUNT ?? row.DEBIT_AMOUNT);
+    const transactionAmount = reportNumber(row.TRANSACTION_AMOUNT ?? row.GROSS_AMOUNT);
+    const fees = reportNumber(row.MP_FEE_AMOUNT) + reportNumber(row.FINANCING_FEE_AMOUNT) + reportNumber(row.SHIPPING_FEE_AMOUNT) + reportNumber(row.TAXES_AMOUNT);
+    const direction = debit > credit ? "out" : credit > 0 ? "in" : "other";
+    const signedAmount = round(credit - debit);
+    const transactionType = String(row.TRANSACTION_TYPE ?? row.RECORD_TYPE ?? "MOVEMENT");
+    const date = row.TRANSACTION_DATE ?? row.DATE ?? row.RELEASE_DATE ?? row.SETTLEMENT_DATE ?? null;
+    const methodId = String(row.PAYMENT_METHOD ?? row.PAYMENT_TYPE ?? "other").toLowerCase();
+    return {
+      id: String(row.SOURCE_ID ?? row.TRANSACTION_ID ?? row.PAYMENT_ID ?? `report-${index}`), status: "approved", statusDetail: "settled",
+      direction, movement: direction === "out" ? "Saída" : direction === "in" ? "Entrada" : "Movimentação",
+      amount: round(transactionAmount || Math.abs(signedAmount)), signedAmount, grossAmount: round(transactionAmount || Math.abs(signedAmount)),
+      netAmount: direction === "in" ? credit : 0, fees: round(fees), refunded: transactionType.includes("REFUND") ? debit : 0,
+      currency: String(row.CURRENCY ?? "BRL"), method: methodLabels[methodId] || methodId.replaceAll("_", " "), methodId,
+      type: transactionType, operationType: transactionType,
+      description: String(row.DESCRIPTION ?? row.REASON ?? transactionType.replaceAll("_", " ")), externalReference: String(row.EXTERNAL_REFERENCE ?? ""),
+      dateCreated: date, dateApproved: date, payer: "", collectorId: "", payerId: "",
+    };
+  }).filter(row => row.direction !== "other") : [];
+  const movements = reportPayments.length ? reportPayments : payments;
+  const historyApproved = movements.filter(p => p.status === "approved");
   const historyEntries = historyApproved.filter(p => p.direction === "in");
   const historyExits = historyApproved.filter(p => p.direction === "out");
   const calculatedBalance = round(
@@ -103,7 +210,7 @@ router.get("/finance/live", async (req, res) => {
     historyExits.reduce((sum, p) => sum + Math.abs(p.signedAmount), 0),
   );
   const periodStart = begin.getTime();
-  const periodPayments = payments.filter(p => {
+  const periodPayments = movements.filter(p => {
     const timestamp = new Date(p.dateApproved || p.dateCreated || 0).getTime();
     return Number.isFinite(timestamp) && timestamp >= periodStart;
   });
@@ -127,7 +234,8 @@ router.get("/finance/live", async (req, res) => {
   const trend = Array.from(trendMap.entries()).map(([day, values]) => ({ day, entries: round(values.entries), exits: round(values.exits), net: round(values.net) }));
   res.json({
     source: "mercado_pago", days,
-    account: { id: accountId, nickname: account?.nickname ?? null, balance: calculatedBalance, balanceAvailable: true, balanceType: "calculated", historyDays: 365 },
+    report: { status: settlement.status, detail: settlement.status === "unavailable" ? settlement.detail : undefined, complete: reportPayments.length > 0 },
+    account: { id: accountId, nickname: account?.nickname ?? null, balance: calculatedBalance, balanceAvailable: reportPayments.length > 0, balanceType: reportPayments.length ? "settlement_report" : "pending_report", historyDays: 365 },
     summary: { grossRevenue, netRevenue, expenses, fees, refunded, cashFlow, approved: entries.length, outgoings: exits.length, total: periodPayments.length, avgTicket: entries.length ? round(grossRevenue / entries.length) : 0 },
     trend, payments: periodPayments.filter(p => p.direction !== "other").slice(0, 500),
   });
