@@ -9,6 +9,7 @@ import { executeRconCommand } from "../utils/rcon.js";
 import { diagnoseHost, executePreparedWipe, resolveRustMapsUrl } from "../../core/hostWipe.js";
 
 interface MapOption { name: string; image?: string; pageUrl: string; mapUrl: string; }
+export interface MapImageUpload { name: string; mime: string; data: string; }
 interface MapVoteRuntime {
   id: number; messageId: string; channelId: string; endsAt: number; wipeAt: number; maps: MapOption[];
   timer?: ReturnType<typeof setTimeout>; announcementTimer?: ReturnType<typeof setInterval>;
@@ -34,7 +35,7 @@ export const data = new SlashCommandBuilder()
   .addAttachmentOption(o => o.setName("imagem2").setDescription("Imagem opcional do Mapa 2"))
   .addAttachmentOption(o => o.setName("imagem3").setDescription("Imagem opcional do Mapa 3"));
 
-function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeAt: number } {
+export function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeAt: number } {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year:"numeric", month:"2-digit", day:"2-digit" }).formatToParts(now).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
   const base = new Date(Date.UTC(Number(parts.year), Number(parts.month)-1, Number(parts.day), 21, 0));
   for (let add=0; add<8; add++) {
@@ -162,7 +163,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   }catch(error){await interaction.editReply(`❌ ${error instanceof Error?error.message:"Falha ao criar votação."}`)}
 }
 
-export async function createMapVote(client:Client,input:{createdBy:string;links:string[];images?:Array<string|undefined>}):Promise<{id:number;messageId:string;channelId:string;endsAt:number;wipeAt:number;maps:MapOption[]}>{
+export async function createMapVote(client:Client,input:{createdBy:string;links:string[];images?:Array<string|undefined>;imageFiles?:Array<MapImageUpload|undefined>;expectedWipeAt?:number}):Promise<{id:number;messageId:string;channelId:string;endsAt:number;wipeAt:number;maps:MapOption[]}>{
   if(input.links.length!==3||input.links.some(link=>!String(link||"").trim()))throw new Error("Informe exatamente três links de mapas.");
   const readiness=await diagnoseHost();
   if(!readiness.capabilities?.startup||!readiness.levelUrlVariable)throw new Error("A host não disponibilizou a variável da URL do mapa. A votação não foi criada para evitar um wipe sem mapa.");
@@ -171,13 +172,24 @@ export async function createMapVote(client:Client,input:{createdBy:string;links:
   const channelId = process.env.DISCORD_VIP_MAP_CHANNEL_ID?.trim() || VOTE_CHANNEL_ID;
   const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
   if (!channel?.isSendable()) throw new Error("Não consegui acessar a sala de votação configurada.");
-  const maps: MapOption[] = [];
+  const schedule=nextScheduledWipe();
+  if(input.expectedWipeAt!==undefined&&input.expectedWipeAt!==schedule.wipeAt)throw new Error("A agenda mudou enquanto a tela estava aberta. Atualize a página e confirme novamente a data do wipe.");
+  const maps: MapOption[] = []; const files:Array<{attachment:Buffer;name:string}>=[];
   for (const n of [1,2,3]) {
     const resolved=await resolveRustMapsUrl(input.links[n-1]);
-    maps.push({name:`Mapa ${n}`,pageUrl:resolved.pageUrl,mapUrl:resolved.mapUrl,image:input.images?.[n-1]||resolved.imageUrl});
+    const upload=input.imageFiles?.[n-1];let uploadedName:string|undefined;
+    if(upload){
+      if(!/^image\/(?:png|jpeg|webp|gif)$/i.test(upload.mime))throw new Error(`A imagem do Mapa ${n} precisa ser PNG, JPG, WEBP ou GIF.`);
+      const match=/^data:image\/(?:png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/i.exec(upload.data);
+      if(!match)throw new Error(`O arquivo de imagem do Mapa ${n} é inválido.`);
+      const attachment=Buffer.from(match[1],"base64");if(!attachment.length||attachment.length>5*1024*1024)throw new Error(`A imagem do Mapa ${n} deve ter no máximo 5 MB.`);
+      const ext=upload.mime.toLowerCase()==="image/jpeg"?"jpg":upload.mime.split("/")[1].toLowerCase();uploadedName=`mapa-${n}.${ext}`;files.push({attachment,name:uploadedName});
+    }
+    maps.push({name:`Mapa ${n}`,pageUrl:resolved.pageUrl,mapUrl:resolved.mapUrl,image:uploadedName?`attachment://${uploadedName}`:input.images?.[n-1]||resolved.imageUrl});
   }
-  const schedule=nextScheduledWipe(); const endsAt=schedule.voteEndsAt;
-  const message = await channel.send(voteMessagePayload({ endsAt, maps }));
+  const endsAt=schedule.voteEndsAt;
+  const message = await channel.send({...voteMessagePayload({ endsAt, maps }),files});
+  if(files.length){for(const map of maps){if(!map.image?.startsWith("attachment://"))continue;const name=map.image.slice("attachment://".length);const attachment=message.attachments.find(a=>a.name===name);if(attachment)map.image=attachment.url;}await message.edit(voteMessagePayload({endsAt,maps}));}
   try{
     const [saved] = await db.insert(mapVotesTable).values({ messageId: message.id, channelId, mapsJson: JSON.stringify(maps), endsAt: new Date(endsAt), wipeAt:new Date(schedule.wipeAt), status: "active", createdBy: input.createdBy }).returning();
     if (!saved) throw new Error("Falha ao persistir votação de mapa");
