@@ -30,6 +30,45 @@ async function listDirectory(directory: string): Promise<any[]> {
   return Array.isArray(data?.data) ? data.data.map((entry: any) => entry?.attributes || entry) : [];
 }
 
+async function inventoryFiles(root = "/", limit = 1500): Promise<{ entries: string[]; truncated: boolean }> {
+  const queue = [root]; const entries: string[] = [];
+  while (queue.length && entries.length < limit) {
+    const directory = queue.shift()!;
+    for (const item of await listDirectory(directory)) {
+      const name = String(item.name || ""); if (!name || name === "." || name === "..") continue;
+      const path = directory === "/" ? `/${name}` : `${directory}/${name}`;
+      entries.push(`${item.is_file === false ? "[DIR] " : "[FILE]"} ${path}${item.is_file === false ? "" : ` (${Number(item.size || 0)} bytes)`}`);
+      if (item.is_file === false) queue.push(path);
+      if (entries.length >= limit) break;
+    }
+  }
+  return { entries, truncated: queue.length > 0 };
+}
+
+export async function testHostFileAccess(actor: WipeActor): Promise<{ success: boolean; testPath: string; created: boolean; visibleAfterCreate: boolean; deleted: boolean; absentAfterDelete: boolean; inventory: string[]; truncated: boolean; steps: string[] }> {
+  const name = `.guerra-fria-file-test-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`;
+  const testPath = `/${name}`; const steps: string[] = []; let created=false, visibleAfterCreate=false, deleted=false, absentAfterDelete=false;
+  try {
+    await panelRequest(`/files/write?file=${encodeURIComponent(testPath)}`, { method:"POST", headers:{"Content-Type":"text/plain"}, body:`Teste temporário Guerra Fria\nCriado em: ${new Date().toISOString()}\nAdministrador: ${actor.name} (${actor.id})\n` });
+    created=true; steps.push("OK — arquivo temporário criado");
+    visibleAfterCreate=(await listDirectory("/")).some(item=>String(item.name)===name && item.is_file!==false);
+    if(!visibleAfterCreate)throw new Error("O painel aceitou a escrita, mas o arquivo não apareceu na listagem.");
+    steps.push("OK — arquivo encontrado na listagem");
+    const inventory=await inventoryFiles(); steps.push(`OK — inventário gerado (${inventory.entries.length} entradas${inventory.truncated?", limitado":""})`);
+    await panelRequest("/files/delete", {method:"POST",body:JSON.stringify({root:"/",files:[name]})}); deleted=true; steps.push("OK — arquivo temporário apagado");
+    absentAfterDelete=!(await listDirectory("/")).some(item=>String(item.name)===name);
+    if(!absentAfterDelete)throw new Error("O arquivo ainda aparece após a exclusão.");
+    steps.push("OK — exclusão confirmada por nova listagem");
+    await auditWipe("FILE_ACCESS_TEST_OK",actor,`${testPath}; ${inventory.entries.length} entradas listadas.`);
+    return {success:true,testPath,created,visibleAfterCreate,deleted,absentAfterDelete,inventory:inventory.entries,truncated:inventory.truncated,steps};
+  } catch(error) {
+    const message=error instanceof Error?error.message:"Falha desconhecida"; steps.push(`ERRO — ${message}`);
+    await auditWipe("FILE_ACCESS_TEST_FAILED",actor,`${testPath}; ${message}`).catch(()=>{}); throw Object.assign(new Error(message),{testReport:{success:false,testPath,created,visibleAfterCreate,deleted,absentAfterDelete,inventory:[],truncated:false,steps}});
+  } finally {
+    if(!deleted) await panelRequest("/files/delete", {method:"POST",body:JSON.stringify({root:"/",files:[name]})}).catch(()=>null);
+  }
+}
+
 async function state(): Promise<string> { const data = await panelRequest("/resources"); return String(data?.attributes?.current_state || "unknown"); }
 async function waitForState(expected: "offline" | "running", timeoutMs = 120_000): Promise<void> {
   const started = Date.now();
