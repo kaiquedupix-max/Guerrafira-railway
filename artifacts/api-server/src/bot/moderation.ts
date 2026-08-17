@@ -21,6 +21,9 @@ const ALLOWED_LINK_CATEGORY_IDS = new Set([
   "1530056461877641326",
   "1499084541791436862",
 ]);
+const ALLOWED_LINK_CHANNEL_IDS = new Set([
+  "1537001775826075739",
+]);
 
 function isAdmin(message: Message): boolean {
   return Boolean(message.member?.permissions.has(PermissionFlagsBits.Administrator));
@@ -28,6 +31,7 @@ function isAdmin(message: Message): boolean {
 
 function isAllowedLinkChannel(message: Message): boolean {
   if (!message.guild) return false;
+  if (ALLOWED_LINK_CHANNEL_IDS.has(message.channelId)) return true;
   const channel = message.channel;
   if (!("parentId" in channel)) return false;
   return Boolean(channel.parentId && ALLOWED_LINK_CATEGORY_IDS.has(channel.parentId));
@@ -212,5 +216,5 @@ export function startDiscordModeration(client: Client): void {
     }
   });
 
-  logger.info({ allowedCategories: [...ALLOWED_LINK_CATEGORY_IDS] }, "Discord moderation and wipe auto-response enabled");
+  logger.info({ allowedCategories: [...ALLOWED_LINK_CATEGORY_IDS], allowedChannels: [...ALLOWED_LINK_CHANNEL_IDS] }, "Discord moderation and wipe auto-response enabled");
 }
