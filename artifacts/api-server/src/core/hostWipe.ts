@@ -100,6 +100,11 @@ async function waitForRestart(previousUptime: number | null, timeoutMs = 180_000
 
 export type HostPowerSignal = "start" | "stop" | "restart";
 export async function getHostPowerState(): Promise<string> { return state(); }
+export async function getHostResourceSnapshot(): Promise<{ state:string;uptime:number;networkRxBytes:number;networkTxBytes:number;memoryBytes:number;cpuAbsolute:number }> {
+  const data=await panelRequest("/resources"),a=data?.attributes||{},r=a.resources||{};
+  const num=(value:unknown)=>{const parsed=Number(value);return Number.isFinite(parsed)&&parsed>=0?parsed:0};
+  return {state:String(a.current_state||"unknown"),uptime:num(r.uptime),networkRxBytes:num(r.network_rx_bytes),networkTxBytes:num(r.network_tx_bytes),memoryBytes:num(r.memory_bytes),cpuAbsolute:num(r.cpu_absolute)};
+}
 export async function controlHostPower(signal: HostPowerSignal, actor: WipeActor): Promise<{ state: string }> {
   const beforeSnapshot = await powerSnapshot(); const before = beforeSnapshot.state;
   await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal }) });
