@@ -22,7 +22,10 @@ const powerActor = (res: any) => ({
   name: String(res.locals.admin?.username || "Administrador"),
 });
 async function restartWarning(message: string): Promise<void> {
-  await executeRconCommand(`say <color=#ff8c00>[ADMINISTRACAO]</color> <color=#ffd65a>${message}</color>`).catch(() => null);
+  const formatted = `<color=#ff8c00>[ADMINISTRACAO]</color> <color=#ffd65a>${message}</color>`;
+  let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
+  if (result === null) result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
+  if (result === null) throw new Error("O RCON não confirmou o aviso no chat do jogo. Reinício cancelado por segurança.");
 }
 
 router.get("/power/status", async (_req, res) => {
@@ -45,7 +48,8 @@ router.post("/restart-warning", async (req, res) => {
   if (![1, 5, 15].includes(minutes)) return void res.status(400).json({ error: "Escolha 1, 5 ou 15 minutos." });
   if (warnedRestart) return void res.status(409).json({ error: "Já existe um reinício com aviso agendado." });
   const actor = powerActor(res), executeAt = Date.now() + minutes * 60_000;
-  await restartWarning(`Servidor reiniciando em ${minutes} minuto${minutes === 1 ? "" : "s"}.`);
+  try { await restartWarning(`Servidor reiniciando em ${minutes} minuto${minutes === 1 ? "" : "s"}.`); }
+  catch (error: any) { return void res.status(503).json({ error: error?.message || "Não foi possível avisar o jogo." }); }
   const checkpoints = [300, 60, 30, 15, 10, 5].filter(seconds => seconds < minutes * 60);
   for (const seconds of checkpoints) setTimeout(() => {
     if (!warnedRestart || warnedRestart.executeAt !== executeAt) return;
