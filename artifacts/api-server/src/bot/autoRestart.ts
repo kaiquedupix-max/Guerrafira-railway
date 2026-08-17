@@ -3,14 +3,14 @@ import { db, modLogsTable } from "@workspace/db";
 import type { Client } from "discord.js";
 import { restartHostServer } from "../core/hostWipe.js";
 import { logger } from "../lib/logger.js";
-import { executeRconCommand } from "./utils/rcon.js";
+import { sendGameAnnouncement } from "./utils/gameAnnouncement.js";
 
 const TZ="America/Sao_Paulo";
 let timer:ReturnType<typeof setInterval>|null=null;const sent=new Set<string>();let checking=false;
 
 function localParts(date=new Date()):Record<string,string>{return Object.fromEntries(new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(date).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));}
 function schedule(date=new Date()):{key:string,target:number,startOfDay:number}{const p=localParts(date);const key=`${p.year}-${p.month}-${p.day}`;return{key,target:Date.UTC(+p.year,+p.month-1,+p.day,9,0,0),startOfDay:Date.UTC(+p.year,+p.month-1,+p.day,3,0,0)}}
-async function game(message:string):Promise<void>{await executeRconCommand(`say <color=#ff8c00>[ADMINISTRACAO]</color> <color=#ffd65a>${message}</color>`).catch(error=>logger.warn({error},"Auto-restart RCON warning failed"));}
+async function game(message:string):Promise<void>{await sendGameAnnouncement("ADMINISTRACAO",message).catch(error=>logger.warn({error},"Auto-restart RCON warning failed"));}
 async function alreadyRestarted(startOfDay:number):Promise<boolean>{const rows=await db.select({id:modLogsTable.id}).from(modLogsTable).where(and(eq(modLogsTable.action,"AUTO_RESTART_TRIGGERED"),gte(modLogsTable.createdAt,new Date(startOfDay)))).limit(1);return rows.length>0;}
 
 async function tick(client:Client):Promise<void>{
