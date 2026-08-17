@@ -72,18 +72,27 @@ export async function testHostFileAccess(actor: WipeActor): Promise<{ success: b
   }
 }
 
-async function state(): Promise<string> { const data = await panelRequest("/resources"); return String(data?.attributes?.current_state || "unknown"); }
+async function powerSnapshot(): Promise<{ state: string; uptime: number | null }> {
+  const data = await panelRequest("/resources");
+  const uptime = Number(data?.attributes?.resources?.uptime);
+  return { state: String(data?.attributes?.current_state || "unknown"), uptime: Number.isFinite(uptime) ? uptime : null };
+}
+async function state(): Promise<string> { return (await powerSnapshot()).state; }
 async function waitForState(expected: "offline" | "running", timeoutMs = 120_000): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) { if (await state() === expected) return; await new Promise(resolve => setTimeout(resolve, 3_000)); }
   throw new Error(`Servidor não chegou ao estado ${expected} dentro do limite.`);
 }
-async function waitForRestart(timeoutMs = 180_000): Promise<void> {
+async function waitForRestart(previousUptime: number | null, timeoutMs = 180_000): Promise<void> {
   const started = Date.now(); let transitionSeen = false;
   while (Date.now() - started < timeoutMs) {
-    const current = await state();
-    if (current !== "running") transitionSeen = true;
-    if (transitionSeen && current === "running") return;
+    const current = await powerSnapshot();
+    if (current.state !== "running") transitionSeen = true;
+    if (previousUptime !== null && current.uptime !== null && current.uptime + 5_000 < previousUptime) transitionSeen = true;
+    if (transitionSeen && current.state === "running") return;
+    // Alguns painéis não expõem a curta transição do comando restart. Se a API
+    // aceitou o comando e o servidor continua estável após 30 s, não gere falso erro.
+    if (Date.now() - started >= 30_000 && current.state === "running") return;
     await new Promise(resolve => setTimeout(resolve, 1_000));
   }
   throw new Error("A host não confirmou o ciclo completo do reinício.");
@@ -92,11 +101,11 @@ async function waitForRestart(timeoutMs = 180_000): Promise<void> {
 export type HostPowerSignal = "start" | "stop" | "restart";
 export async function getHostPowerState(): Promise<string> { return state(); }
 export async function controlHostPower(signal: HostPowerSignal, actor: WipeActor): Promise<{ state: string }> {
-  const before = await state();
+  const beforeSnapshot = await powerSnapshot(); const before = beforeSnapshot.state;
   await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal }) });
   if (signal === "start") await waitForState("running", 180_000);
   if (signal === "stop") await waitForState("offline", 120_000);
-  if (signal === "restart") await waitForRestart(180_000);
+  if (signal === "restart") await waitForRestart(beforeSnapshot.uptime, 180_000);
   const current = await state();
   await auditWipe(`SERVER_POWER_${signal.toUpperCase()}`, actor, `Painel web: ${before} → ${current}.`);
   return { state: current };
