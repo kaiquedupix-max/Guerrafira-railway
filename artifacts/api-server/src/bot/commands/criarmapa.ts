@@ -5,9 +5,9 @@ import {
 } from "discord.js";
 import { and, eq, gt, isNull, lte } from "drizzle-orm";
 import { db, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, boosterLinksTable } from "@workspace/db";
-import { executeRconCommand } from "../utils/rcon.js";
 import { diagnoseHost, executePreparedProceduralWipe } from "../../core/hostWipe.js";
 import { getWipeLockState } from "../../core/wipeLock.js";
+import { sendGameAnnouncement } from "../utils/gameAnnouncement.js";
 
 interface MapOption { name: string; image?: string; seed: number; size: number; }
 export interface MapImageUpload { name: string; mime: string; data: string; }
@@ -134,7 +134,7 @@ async function announceVote(client: Client, endsAt: number): Promise<void> {
       allowedMentions: { roles: [VIP_ROLE_ID, BOOSTER_ROLE_ID] },
     }).catch(() => {});
   }
-  await executeRconCommand("say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>Vote no mapa do proximo wipe no Discord: discord.gg/guerrafria</color>").catch(() => null);
+  await sendGameAnnouncement("GUERRA FRIA","Vote no mapa do proximo wipe no Discord: discord.gg/guerrafria","#7CFC00").catch(() => null);
 }
 
 function scheduleRuntime(client: Client, vote: MapVoteRuntime): void {
@@ -282,7 +282,7 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
   await channel.send({ embeds: [embed] });
   const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
   if(chat?.isSendable()) await chat.send(`🏆 **MAPA VENCEDOR:** ${vote.maps[winnerIndex].name}\nSeed: \`${vote.maps[winnerIndex].seed}\` • Size: \`${vote.maps[winnerIndex].size}\`\n🧊 O fluxo do wipe será iniciado às <t:${Math.floor(vote.wipeAt/1000)}:t>.`).catch(()=>{});
-  await executeRconCommand(`say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>${vote.maps[winnerIndex].name} venceu. O wipe inicia as 18:25.</color>`).catch(()=>null);
+  await sendGameAnnouncement("GUERRA FRIA",`${vote.maps[winnerIndex].name} venceu. O wipe inicia as 18:25.`,"#7CFC00").catch(()=>null);
 }
 
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
@@ -292,7 +292,7 @@ async function processScheduledWipes(client:Client):Promise<void>{
   if(!(await getWipeLockState()).unlocked)return;wipeProcessing=true;
   try{
   const now=new Date();const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));
-  for(const row of upcoming){let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue}const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await executeRconCommand(`say <color=#ff8c00>[GUERRA FRIA]</color> <color=#ffd65a>Wipe em ${label}. Prepare-se!</color>`).catch(()=>null);}}}
+  for(const row of upcoming){let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue}const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await sendGameAnnouncement("GUERRA FRIA",`Wipe em ${label}. Prepare-se!`).catch(()=>null);}}}
   const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));
   for(const row of due){
     let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue} const winner=row.winnerIndex??0; const map=maps[winner];if(!map)continue;
@@ -302,7 +302,7 @@ async function processScheduledWipes(client:Client):Promise<void>{
       await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
       try{const {refreshLeaderboardChannel}=await import("../leaderboardChannel.js");await refreshLeaderboardChannel(client)}catch{}
       await sendWipeAnnouncement(client,"online",map);
-      await executeRconCommand("say <color=#ff8c00>[GUERRA FRIA]</color> <color=#7CFC00>Wipe concluido. Bom jogo!</color>").catch(()=>null);
+      await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
     }catch(error){
       const reason=error instanceof Error?error.message:"Falha desconhecida";
       await db.update(mapVotesTable).set({status:"failed",failureReason:reason}).where(eq(mapVotesTable.id,row.id));
