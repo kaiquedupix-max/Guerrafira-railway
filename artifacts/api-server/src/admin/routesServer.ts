@@ -6,6 +6,7 @@ import { requireAdmin } from "./guard.js";
 import { addModeratorChat, getLiveChat, getLiveEvents, initLiveOps } from "./liveOps.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
 import { notifySubscribedAdmins } from "./adminNotifications.js";
+import { controlHostPower, getHostPowerState, type HostPowerSignal } from "../core/hostWipe.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -14,6 +15,52 @@ const steamRe = /^7656119\d{10}$/;
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
 let itemCache: Array<{ id: number; shortname: string; name: string; category?: string; stack?: number }> = [];
 let itemCacheAt = 0;
+let warnedRestart: { timer: ReturnType<typeof setTimeout>; executeAt: number; requestedBy: string } | null = null;
+
+const powerActor = (res: any) => ({
+  id: String(res.locals.admin?.userId || "ADMIN_PANEL"),
+  name: String(res.locals.admin?.username || "Administrador"),
+});
+async function restartWarning(message: string): Promise<void> {
+  await executeRconCommand(`say <color=#ff8c00>[ADMINISTRACAO]</color> <color=#ffd65a>${message}</color>`).catch(() => null);
+}
+
+router.get("/power/status", async (_req, res) => {
+  try { res.json({ state: await getHostPowerState(), scheduledRestart: warnedRestart ? { executeAt: warnedRestart.executeAt, requestedBy: warnedRestart.requestedBy } : null }); }
+  catch (error: any) { res.status(502).json({ error: error?.message || "Não foi possível consultar o servidor." }); }
+});
+
+router.post("/power", async (req, res) => {
+  const signal = String(req.body?.signal || "") as HostPowerSignal;
+  if (!["start", "stop", "restart"].includes(signal)) return void res.status(400).json({ error: "Ação de energia inválida." });
+  try {
+    if (warnedRestart) { clearTimeout(warnedRestart.timer); warnedRestart = null; }
+    const result = await controlHostPower(signal, powerActor(res));
+    res.json({ ok: true, ...result });
+  } catch (error: any) { res.status(502).json({ error: error?.message || "A host não confirmou a ação." }); }
+});
+
+router.post("/restart-warning", async (req, res) => {
+  const minutes = Number(req.body?.minutes);
+  if (![1, 5, 15].includes(minutes)) return void res.status(400).json({ error: "Escolha 1, 5 ou 15 minutos." });
+  if (warnedRestart) return void res.status(409).json({ error: "Já existe um reinício com aviso agendado." });
+  const actor = powerActor(res), executeAt = Date.now() + minutes * 60_000;
+  await restartWarning(`Servidor reiniciando em ${minutes} minuto${minutes === 1 ? "" : "s"}.`);
+  const checkpoints = [300, 60, 30, 15, 10, 5].filter(seconds => seconds < minutes * 60);
+  for (const seconds of checkpoints) setTimeout(() => {
+    if (!warnedRestart || warnedRestart.executeAt !== executeAt) return;
+    restartWarning(seconds >= 60 ? "Servidor reiniciando em 1 minuto." : `Servidor reiniciando em ${seconds} segundos.`).catch(() => {});
+  }, minutes * 60_000 - seconds * 1_000);
+  const timer = setTimeout(async () => {
+    try { await restartWarning("Reiniciando o servidor agora."); await controlHostPower("restart", actor); }
+    catch (error) {
+      void notifySubscribedAdmins({ kind: "system", title: "Falha no reinício do servidor", message: error instanceof Error ? error.message : "A host não confirmou o reinício.", severity: "critical" }).catch(() => {});
+    }
+    finally { warnedRestart = null; }
+  }, minutes * 60_000);
+  warnedRestart = { timer, executeAt, requestedBy: actor.name };
+  res.status(202).json({ ok: true, executeAt, requestedBy: actor.name });
+});
 
 router.get("/online", async (_req, res) => {
   const [players, info] = await Promise.all([getOnlinePlayers().catch(() => []), getServerInfo().catch(() => null)]);
