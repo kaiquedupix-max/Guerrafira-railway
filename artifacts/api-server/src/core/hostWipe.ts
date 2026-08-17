@@ -78,6 +78,29 @@ async function waitForState(expected: "offline" | "running", timeoutMs = 120_000
   while (Date.now() - started < timeoutMs) { if (await state() === expected) return; await new Promise(resolve => setTimeout(resolve, 3_000)); }
   throw new Error(`Servidor não chegou ao estado ${expected} dentro do limite.`);
 }
+async function waitForRestart(timeoutMs = 180_000): Promise<void> {
+  const started = Date.now(); let transitionSeen = false;
+  while (Date.now() - started < timeoutMs) {
+    const current = await state();
+    if (current !== "running") transitionSeen = true;
+    if (transitionSeen && current === "running") return;
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+  throw new Error("A host não confirmou o ciclo completo do reinício.");
+}
+
+export type HostPowerSignal = "start" | "stop" | "restart";
+export async function getHostPowerState(): Promise<string> { return state(); }
+export async function controlHostPower(signal: HostPowerSignal, actor: WipeActor): Promise<{ state: string }> {
+  const before = await state();
+  await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal }) });
+  if (signal === "start") await waitForState("running", 180_000);
+  if (signal === "stop") await waitForState("offline", 120_000);
+  if (signal === "restart") await waitForRestart(180_000);
+  const current = await state();
+  await auditWipe(`SERVER_POWER_${signal.toUpperCase()}`, actor, `Painel web: ${before} → ${current}.`);
+  return { state: current };
+}
 
 export async function resolveRustMapsUrl(input: string): Promise<{ pageUrl: string; mapUrl: string; imageUrl?: string }> {
   let url: URL; try { url = new URL(input.trim()); } catch { throw new Error("Link do RustMaps inválido."); }
