@@ -91,7 +91,7 @@ function headerEmbed(endsAt: number) {
   return new EmbedBuilder().setColor(0xe53935).setTitle("🗺️ GUERRA FRIA 2X — VOTAÇÃO DE MAPA")
     .setDescription(
       "**Vote no mapa que você deseja para o próximo wipe!**\n\n" +
-      "📦 **Como votar**\nClique no botão correspondente ao seu mapa favorito. Você pode trocar seu voto enquanto a votação estiver aberta.\n\n" +
+      "📦 **Como votar**\nClique no botão correspondente ao seu mapa favorito. Cada pessoa pode votar apenas uma vez.\n\n" +
       "⭐ **Bônus para cargos especiais**\n" +
       `${VIP_MENTION} e ${BOOSTER_MENTION} têm seu voto contado como **2 votos** em vez de 1.\n` +
       "Se possuir os dois benefícios, o peso continua sendo **2 votos**.\n\n" +
@@ -246,15 +246,17 @@ export async function handleMapVote(interaction: ButtonInteraction): Promise<voi
   if (!vote) { await interaction.reply({ content: "❌ Esta votação já foi encerrada ou não existe.", ephemeral: true }); return; }
   if (Date.now() >= vote.endsAt) { await finishVote(interaction.client, vote.messageId); await interaction.reply({ content: "⏳ Esta votação acabou de ser encerrada.", ephemeral: true }); return; }
   const option = Number(interaction.customId.split(":")[1]); if (!Number.isInteger(option) || !vote.maps[option]) return;
-  const bonus = await getVoteWeight(interaction.user.id);
   const existing = await db.select().from(mapVoteBallotsTable).where(and(eq(mapVoteBallotsTable.mapVoteId, vote.id), eq(mapVoteBallotsTable.discordUserId, interaction.user.id))).limit(1);
   if (existing[0]) {
-    await db.update(mapVoteBallotsTable).set({ optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster, updatedAt: new Date() }).where(eq(mapVoteBallotsTable.id, existing[0].id));
-  } else {
-    await db.insert(mapVoteBallotsTable).values({ mapVoteId: vote.id, discordUserId: interaction.user.id, optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster });
+    const chosen = vote.maps[existing[0].optionIndex]?.name || "outro mapa";
+    await interaction.reply({ content: `ℹ️ Você já votou nesta votação.\nSeu voto continua registrado em **${chosen}** e não pode ser alterado.`, ephemeral: true });
+    return;
   }
+  const bonus = await getVoteWeight(interaction.user.id);
+  const inserted = await db.insert(mapVoteBallotsTable).values({ mapVoteId: vote.id, discordUserId: interaction.user.id, optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster }).onConflictDoNothing().returning({ id: mapVoteBallotsTable.id });
+  if (!inserted[0]) { await interaction.reply({ content: "ℹ️ Você já votou nesta votação. Seu primeiro voto foi mantido.", ephemeral: true }); return; }
   const badge = bonus.vip && bonus.booster ? `${VIP_MENTION} + ${BOOSTER_MENTION}` : bonus.vip ? VIP_MENTION : bonus.booster ? BOOSTER_MENTION : "👤 voto padrão";
-  await interaction.reply({ content: `✅ Voto registrado em **${vote.maps[option].name}**.\n${badge} • seu voto vale **${bonus.weight} voto${bonus.weight > 1 ? "s" : ""}**.\nVocê pode alterar sua escolha até o encerramento.`, ephemeral: true });
+  await interaction.reply({ content: `✅ Voto registrado em **${vote.maps[option].name}**.\n${badge} • seu voto vale **${bonus.weight} voto${bonus.weight > 1 ? "s" : ""}**.\nCada pessoa pode votar apenas uma vez.`, ephemeral: true });
 }
 
 async function finishVote(client: Client, messageId: string): Promise<void> {
