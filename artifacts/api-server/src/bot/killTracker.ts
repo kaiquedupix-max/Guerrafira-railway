@@ -67,7 +67,9 @@ export function parseKillEvent(type: string, message: string): boolean {
   const victimId = typeof obj.victim_steamid === "string" ? obj.victim_steamid : typeof obj.victim_id === "string" ? obj.victim_id : undefined;
   if (!killerId || !victimId) return false;
   // Estatísticas e detector aceitam somente jogadores Steam reais; NPCs e entidades ficam fora do ranking.
-  if (!/^7656119\\d{10}$/.test(killerId) || !/^7656119\\d{10}$/.test(victimId) || killerId === victimId) return false;
+  // SteamID64 de jogador começa com 7656119 e possui mais 10 dígitos.
+  // A barra estava escapada duas vezes e fazia todos os SteamIDs reais serem rejeitados.
+  if (!/^7656119\d{10}$/.test(killerId) || !/^7656119\d{10}$/.test(victimId) || killerId === victimId) return false;
 
   const killerName = typeof obj.attacker === "string" ? obj.attacker : typeof obj.killer === "string" ? obj.killer : "Unknown";
   const victimName = typeof obj.victim === "string" ? obj.victim : "Unknown";
