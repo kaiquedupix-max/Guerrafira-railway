@@ -6,7 +6,8 @@ import { requireAdmin } from "./guard.js";
 import { addModeratorChat, getLiveChat, getLiveEvents, initLiveOps } from "./liveOps.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
 import { notifySubscribedAdmins } from "./adminNotifications.js";
-import { controlHostPower, getHostPowerState, type HostPowerSignal } from "../core/hostWipe.js";
+import { controlHostPower, getHostPowerState, getHostResourceSnapshot, type HostPowerSignal } from "../core/hostWipe.js";
+import { sendGameAnnouncement } from "../bot/utils/gameAnnouncement.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -16,20 +17,39 @@ const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ")
 let itemCache: Array<{ id: number; shortname: string; name: string; category?: string; stack?: number }> = [];
 let itemCacheAt = 0;
 let warnedRestart: { timer: ReturnType<typeof setTimeout>; executeAt: number; requestedBy: string } | null = null;
+let telemetry={rxMbps:0,txMbps:0,baselineRxMbps:0,suspected:false,consecutiveSpikes:0,normalSamples:0,thresholdMbps:Number(process.env.DDOS_ALERT_MBPS)||50,updatedAt:0};
+let previousNetwork:{at:number;rx:number;tx:number}|null=null;
+let lastResource:Awaited<ReturnType<typeof getHostResourceSnapshot>>|null=null;
 
 const powerActor = (res: any) => ({
   id: String(res.locals.admin?.userId || "ADMIN_PANEL"),
   name: String(res.locals.admin?.username || "Administrador"),
 });
 async function restartWarning(message: string): Promise<void> {
-  const formatted = `<color=#ff8c00>[ADMINISTRACAO]</color> <color=#ffd65a>${message}</color>`;
-  let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
-  if (result === null) result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
-  if (result === null) throw new Error("O RCON não confirmou o aviso no chat do jogo. Reinício cancelado por segurança.");
+  await sendGameAnnouncement("ADMINISTRACAO",message);
 }
 
+async function sampleTelemetry():Promise<void>{
+  try{
+    const current=await getHostResourceSnapshot(),now=Date.now();lastResource=current;
+    if(previousNetwork&&now>previousNetwork.at&&current.networkRxBytes>=previousNetwork.rx&&current.networkTxBytes>=previousNetwork.tx){
+      const seconds=(now-previousNetwork.at)/1000;
+      telemetry.rxMbps=(current.networkRxBytes-previousNetwork.rx)*8/seconds/1_000_000;
+      telemetry.txMbps=(current.networkTxBytes-previousNetwork.tx)*8/seconds/1_000_000;
+      if(!telemetry.baselineRxMbps)telemetry.baselineRxMbps=telemetry.rxMbps;
+      const dynamicThreshold=Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8);
+      const spike=telemetry.rxMbps>=dynamicThreshold;
+      if(spike){telemetry.consecutiveSpikes++;telemetry.normalSamples=0}else{telemetry.consecutiveSpikes=0;telemetry.normalSamples++;telemetry.baselineRxMbps=telemetry.baselineRxMbps*.92+telemetry.rxMbps*.08}
+      if(!telemetry.suspected&&telemetry.consecutiveSpikes>=3){telemetry.suspected=true;void notifySubscribedAdmins({kind:"system",title:"Possível ataque de rede",message:`Tráfego de entrada anormal: ${telemetry.rxMbps.toFixed(1)} Mbps. Verifique a proteção DDoS da hospedagem.`,severity:"critical"}).catch(()=>{})}
+      if(telemetry.suspected&&telemetry.normalSamples>=6)telemetry.suspected=false;
+    }
+    previousNetwork={at:now,rx:current.networkRxBytes,tx:current.networkTxBytes};telemetry.updatedAt=now;
+  }catch{}
+}
+setTimeout(()=>sampleTelemetry().catch(()=>{}),1_000);setInterval(()=>sampleTelemetry().catch(()=>{}),10_000);
+
 router.get("/power/status", async (_req, res) => {
-  try { res.json({ state: await getHostPowerState(), scheduledRestart: warnedRestart ? { executeAt: warnedRestart.executeAt, requestedBy: warnedRestart.requestedBy } : null }); }
+  try { if(!lastResource)await sampleTelemetry();const resource=lastResource||await getHostResourceSnapshot();res.json({ state: resource.state,uptime:resource.uptime,network:{rxMbps:telemetry.rxMbps,txMbps:telemetry.txMbps,rxBytes:resource.networkRxBytes,txBytes:resource.networkTxBytes},security:{status:telemetry.suspected?"suspected":"normal",thresholdMbps:Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8),updatedAt:telemetry.updatedAt,note:"Detector de anomalia local; a confirmação de DDoS depende da hospedagem."}, scheduledRestart: warnedRestart ? { executeAt: warnedRestart.executeAt, requestedBy: warnedRestart.requestedBy } : null }); }
   catch (error: any) { res.status(502).json({ error: error?.message || "Não foi possível consultar o servidor." }); }
 });
 
