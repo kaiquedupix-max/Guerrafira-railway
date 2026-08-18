@@ -5,7 +5,7 @@ import {
 } from "discord.js";
 import { and, eq, gt, isNull, lte } from "drizzle-orm";
 import { db, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, boosterLinksTable } from "@workspace/db";
-import { diagnoseHost, executePreparedProceduralWipe } from "../../core/hostWipe.js";
+import { diagnoseHost, executePreparedProceduralWipe, prepareProceduralWipeBackup } from "../../core/hostWipe.js";
 import { getWipeLockState } from "../../core/wipeLock.js";
 import { sendGameAnnouncement } from "../utils/gameAnnouncement.js";
 
@@ -289,23 +289,34 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
 
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
 let wipeProcessing=false;const wipeWarnings=new Set<string>();
+const preparedWipeBackups=new Map<number,string>();const backupRetryAt=new Map<number,number>();
 async function processScheduledWipes(client:Client):Promise<void>{
   if(wipeProcessing||process.env.WIPE_EXECUTION_ENABLED!=="true"||process.env.WIPE_AUTOMATION_ENABLED!=="true")return;
   if(!(await getWipeLockState()).unlocked)return;wipeProcessing=true;
   try{
   const now=new Date();const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));
-  for(const row of upcoming){let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue}const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await sendGameAnnouncement("GUERRA FRIA",`Wipe em ${label}. Prepare-se!`).catch(()=>null);}}}
+  for(const row of upcoming){
+    let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue}const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;
+    const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);
+    for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await sendGameAnnouncement("GUERRA FRIA",`Wipe em ${label}. Prepare-se!`).catch(()=>null);}}
+    if(remaining<=900&&!preparedWipeBackups.has(row.id)&&Date.now()>=(backupRetryAt.get(row.id)||0)){
+      try{const backupId=await prepareProceduralWipeBackup("map",map.seed,map.size,{id:"AUTOMATION",name:"Preparação do wipe automático"});preparedWipeBackups.set(row.id,backupId);backupRetryAt.delete(row.id);await db.update(mapVotesTable).set({failureReason:null}).where(eq(mapVotesTable.id,row.id));}
+      catch(error){backupRetryAt.set(row.id,Date.now()+2*60_000);const reason=error instanceof Error?error.message:"Falha ao preparar backup";await db.update(mapVotesTable).set({failureReason:`Preparação do backup: ${reason}`}).where(eq(mapVotesTable.id,row.id));}
+    }
+  }
   const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));
   for(const row of due){
     let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue} const winner=row.winnerIndex??0; const map=maps[winner];if(!map)continue;
     const chat=await client.channels.fetch(process.env.DISCORD_CHAT_CHANNEL_ID || CHAT_CHANNEL_ID).catch(()=>null) as TextChannel|null;
     try{
-      await executePreparedProceduralWipe("map",map.seed,map.size,{id:"AUTOMATION",name:"Wipe automático"},true,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)});
+      await executePreparedProceduralWipe("map",map.seed,map.size,{id:"AUTOMATION",name:"Wipe automático"},true,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)},preparedWipeBackups.get(row.id));
+      preparedWipeBackups.delete(row.id);backupRetryAt.delete(row.id);
       await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
       try{const {refreshLeaderboardChannel}=await import("../leaderboardChannel.js");await refreshLeaderboardChannel(client)}catch{}
       await sendWipeAnnouncement(client,"online",map);
       await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
     }catch(error){
+      preparedWipeBackups.delete(row.id);backupRetryAt.delete(row.id);
       const reason=error instanceof Error?error.message:"Falha desconhecida";
       await db.update(mapVotesTable).set({status:"failed",failureReason:reason}).where(eq(mapVotesTable.id,row.id));
       await chat?.send(`🚨 **FALHA NO WIPE AUTOMÁTICO**\nA administração foi notificada. Motivo: ${reason}`).catch(()=>{});
