@@ -1,7 +1,23 @@
 import { setRconEventHandler } from "../bot/utils/rcon.js";
+import { notifySubscribedAdmins, pushAdminAlert } from "./adminNotifications.js";
 
 export type LiveChatItem = { id: number; at: string; type: string; player: string; message: string; raw: string };
 export type LiveEvent = { key: string; label: string; active: boolean; lastSeen: string | null; lastMessage: string | null; nextEstimate: string | null; averageIntervalMinutes: number | null; detections: number };
+
+type AntiBotEvent = {
+  eventType?: string;
+  timestamp?: string;
+  ip?: string | null;
+  reason?: string;
+  durationSeconds?: number;
+  strike?: number;
+  attackMode?: boolean;
+  emergencyMode?: boolean;
+  attemptsPerSecond?: number;
+  attemptsInWindow?: number;
+  uniqueIpsLastMinute?: number;
+  blockedIps?: number;
+};
 
 let started = false;
 let seq = 1;
@@ -52,8 +68,82 @@ function isPluginTelemetry(text: string): boolean {
   if (!s) return true;
   if (s.includes("[gf_leaderboard]")) return true;
   if (s.includes("[guerrafrialeaderboard]")) return true;
+  if (s.includes("[gf_antibot]")) return true;
+  if (s.includes("[gf_antibot_event]")) return true;
   if ((s.includes("leaderboard") || s.includes("plugin")) && (s.includes("\"event\"") || s.includes("\"timestamp\""))) return true;
   return false;
+}
+
+function parseAntiBotEvent(raw: string): AntiBotEvent | null {
+  const prefix = "[GF_ANTIBOT_EVENT]";
+  const index = raw.indexOf(prefix);
+  if (index < 0) return null;
+  const text = raw.slice(index + prefix.length).trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) return null;
+  try { return JSON.parse(text.slice(start, end + 1)) as AntiBotEvent; }
+  catch { return null; }
+}
+
+function registerAntiBotEvent(event: AntiBotEvent): void {
+  const kind = String(event.eventType || "").toLowerCase();
+  const ip = event.ip ? String(event.ip) : null;
+  const reason = String(event.reason || "Sem motivo informado");
+  const duration = Math.max(0, Number(event.durationSeconds) || 0);
+  const strike = Math.max(0, Number(event.strike) || 0);
+  const rate = Math.max(0, Number(event.attemptsPerSecond) || 0);
+  const unique = Math.max(0, Number(event.uniqueIpsLastMinute) || 0);
+
+  if (kind === "block") {
+    const details = [
+      ip ? `IP: ${ip}` : null,
+      `Motivo: ${reason}`,
+      duration ? `Bloqueio: ${duration}s` : null,
+      strike ? `Reincidência: ${strike}` : null,
+      `Conexões/s no momento: ${rate}`,
+      `IPs únicos/min: ${unique}`,
+    ].filter(Boolean).join(" • ");
+
+    pushAdminAlert({
+      kind: "system",
+      title: "🛡️ Anti-Bot interceptou uma conexão",
+      message: details,
+      severity: "warning",
+    });
+    return;
+  }
+
+  if (kind === "plugin_loaded") {
+    pushAdminAlert({
+      kind: "system",
+      title: "🟢 GuerraFriaAntiBot ativado",
+      message: `${reason}. A telemetria e os registros de interceptação estão conectados ao painel.`,
+      severity: "success",
+    });
+    return;
+  }
+
+  // Ataque normal já gera alerta pela telemetria em routesServer.ts.
+  // Emergência é um nível extra do v1.2.x e precisa de notificação própria.
+  if (kind === "emergency_on") {
+    void notifySubscribedAdmins({
+      kind: "system",
+      title: "🚨 Anti-Bot em MODO EMERGÊNCIA",
+      message: `${reason}. Conexões novas desconhecidas estão sob filtragem máxima. ${rate} conexões/s • ${unique} IPs únicos/min.`,
+      severity: "critical",
+    }).catch(() => {});
+    return;
+  }
+
+  if (kind === "emergency_off") {
+    void notifySubscribedAdmins({
+      kind: "system",
+      title: "✅ Modo emergência L7 encerrado",
+      message: `${reason}. O Anti-Bot voltou à filtragem normal.`,
+      severity: "success",
+    }).catch(() => {});
+  }
 }
 
 function parseChat(raw: string): { player: string; message: string } | null {
@@ -120,6 +210,9 @@ function inspectEvent(raw: string) {
 export function initLiveOps(): void {
   if (started) return; started = true;
   setRconEventHandler((type, raw) => {
+    const antiBotEvent = parseAntiBotEvent(raw);
+    if (antiBotEvent) registerAntiBotEvent(antiBotEvent);
+
     inspectEvent(raw);
     const parsed = parseChat(raw);
     if (parsed && !shouldIgnoreChat(parsed.player, parsed.message)) {
