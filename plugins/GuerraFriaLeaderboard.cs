@@ -6,14 +6,14 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "Maciota", "2.0.0")]
+    [Info("GuerraFriaLeaderboard", "Maciota", "2.0.1")]
     [Description("Leaderboard Guerra Fria enviado ao bot por webhook, sem poluir o console.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
         private PluginConfig config;
         private readonly List<LeaderboardEvent> queue = new List<LeaderboardEvent>();
         private readonly Dictionary<string, int> observedScrapStacks = new Dictionary<string, int>();
-        private Oxide.Core.Libraries.Timer.TimerInstance flushTimer;
+        private Oxide.Plugins.Timer flushTimer;
         private bool sending;
         private DateTime lastQueueWarning = DateTime.MinValue;
 
@@ -111,7 +111,8 @@ namespace Oxide.Plugins
         {
             if (sending || queue.Count == 0) return;
             if (string.IsNullOrWhiteSpace(config.WebhookUrl) || string.IsNullOrWhiteSpace(config.WebhookSecret) || config.WebhookSecret.Contains("COLOQUE_")) return;
-            var count = Math.Min(queue.Count, config.MaxBatchSize), batch = queue.GetRange(0, count);
+            var count = Math.Min(queue.Count, config.MaxBatchSize);
+            var batch = queue.GetRange(0, count);
             var body = JsonConvert.SerializeObject(new { events = batch }, Formatting.None, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
             var headers = new Dictionary<string, string> { ["Content-Type"] = "application/json", ["x-gf-leaderboard-secret"] = config.WebhookSecret };
             sending = true;
