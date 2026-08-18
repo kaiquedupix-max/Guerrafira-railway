@@ -20,8 +20,6 @@ let warnedRestart: { timer: ReturnType<typeof setTimeout>; executeAt: number; re
 let telemetry={rxMbps:0,txMbps:0,baselineRxMbps:0,suspected:false,consecutiveSpikes:0,normalSamples:0,thresholdMbps:Number(process.env.DDOS_ALERT_MBPS)||50,updatedAt:0};
 let previousNetwork:{at:number;rx:number;tx:number}|null=null;
 let lastResource:Awaited<ReturnType<typeof getHostResourceSnapshot>>|null=null;
-let antibot={available:false,attackMode:false,attemptsPerSecond:0,attemptsLast5Seconds:0,uniqueIpsLastMinute:0,blockedIps:0,monitoredIps:0,rejected:0,allowed:0,updatedAt:0};
-let lastAntibotAttack=false;
 
 const powerActor = (res: any) => ({
   id: String(res.locals.admin?.userId || "ADMIN_PANEL"),
@@ -29,47 +27,6 @@ const powerActor = (res: any) => ({
 });
 async function restartWarning(message: string): Promise<void> {
   await sendGameAnnouncement("ADMINISTRACAO",message);
-}
-
-async function sampleAntibot():Promise<void>{
-  try{
-    const raw=await executeRconCommand("antibot.json");
-    if(!raw)throw new Error("sem resposta");
-    const text=String(raw),start=text.indexOf("{"),end=text.lastIndexOf("}");
-    if(start<0||end<start)throw new Error("resposta inválida");
-    const d=JSON.parse(text.slice(start,end+1));
-    antibot={
-      available:true,
-      attackMode:Boolean(d.attackMode),
-      attemptsPerSecond:Number(d.attemptsPerSecond)||0,
-      attemptsLast5Seconds:Number(d.attemptsLast5Seconds)||0,
-      uniqueIpsLastMinute:Number(d.uniqueIpsLastMinute)||0,
-      blockedIps:Number(d.blockedIps)||0,
-      monitoredIps:Number(d.monitoredIps)||0,
-      rejected:Number(d.rejected)||0,
-      allowed:Number(d.allowed)||0,
-      updatedAt:Date.now(),
-    };
-    if(antibot.attackMode&&!lastAntibotAttack){
-      void notifySubscribedAdmins({
-        kind:"system",
-        title:"🚨 Ataque de bots L7 detectado",
-        message:`O GuerraFriaAntiBot entrou em modo de ataque. ${antibot.attemptsPerSecond.toFixed(1)} conexões/s, ${antibot.uniqueIpsLastMinute} IPs únicos no último minuto e ${antibot.blockedIps} IPs bloqueados agora.`,
-        severity:"critical",
-      }).catch(()=>{});
-    }
-    if(!antibot.attackMode&&lastAntibotAttack){
-      void notifySubscribedAdmins({
-        kind:"system",
-        title:"✅ Ataque L7 normalizado",
-        message:`O volume de conexões voltou ao normal. Última leitura: ${antibot.attemptsPerSecond.toFixed(1)} conexões/s e ${antibot.uniqueIpsLastMinute} IPs únicos/min.`,
-        severity:"success",
-      }).catch(()=>{});
-    }
-    lastAntibotAttack=antibot.attackMode;
-  }catch{
-    antibot={...antibot,available:false,updatedAt:Date.now()};
-  }
 }
 
 async function sampleTelemetry():Promise<void>{
@@ -89,13 +46,10 @@ async function sampleTelemetry():Promise<void>{
     previousNetwork={at:now,rx:current.networkRxBytes,tx:current.networkTxBytes};telemetry.updatedAt=now;
   }catch{}
 }
-setTimeout(()=>sampleTelemetry().catch(()=>{}),1_000);
-setTimeout(()=>sampleAntibot().catch(()=>{}),2_000);
-setInterval(()=>sampleTelemetry().catch(()=>{}),10_000);
-setInterval(()=>sampleAntibot().catch(()=>{}),5_000);
+setTimeout(()=>sampleTelemetry().catch(()=>{}),1_000);setInterval(()=>sampleTelemetry().catch(()=>{}),10_000);
 
 router.get("/power/status", async (_req, res) => {
-  try { if(!lastResource)await sampleTelemetry();const resource=lastResource||await getHostResourceSnapshot();res.json({ state: resource.state,uptime:resource.uptime,network:{rxMbps:telemetry.rxMbps,txMbps:telemetry.txMbps,rxBytes:resource.networkRxBytes,txBytes:resource.networkTxBytes},security:{status:(telemetry.suspected||antibot.attackMode)?"suspected":"normal",networkSuspected:telemetry.suspected,l7Attack:antibot.attackMode,thresholdMbps:Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8),updatedAt:Math.max(telemetry.updatedAt,antibot.updatedAt),note:"Detector combinado: banda da host + telemetria de conexões do GuerraFriaAntiBot."},antibot, scheduledRestart: warnedRestart ? { executeAt: warnedRestart.executeAt, requestedBy: warnedRestart.requestedBy } : null }); }
+  try { if(!lastResource)await sampleTelemetry();const resource=lastResource||await getHostResourceSnapshot();res.json({ state: resource.state,uptime:resource.uptime,network:{rxMbps:telemetry.rxMbps,txMbps:telemetry.txMbps,rxBytes:resource.networkRxBytes,txBytes:resource.networkTxBytes},security:{status:telemetry.suspected?"suspected":"normal",thresholdMbps:Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8),updatedAt:telemetry.updatedAt,note:"Detector de anomalia local; a confirmação de DDoS depende da hospedagem."}, scheduledRestart: warnedRestart ? { executeAt: warnedRestart.executeAt, requestedBy: warnedRestart.requestedBy } : null }); }
   catch (error: any) { res.status(502).json({ error: error?.message || "Não foi possível consultar o servidor." }); }
 });
 

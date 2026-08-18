@@ -9,7 +9,7 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub=>sub.setName("travar").setDescription("Trava imediatamente todas as execuções de wipe."))
   .addSubcommand(sub=>sub.setName("destravar").setDescription("Libera as execuções manuais e automáticas de wipe."))
   .addSubcommand(sub=>sub.setName("trava").setDescription("Mostra o estado atual da trava do wipe."))
-  .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Testa a API e mostra o estado, sem alterar arquivos."))
+  .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Simula o wipe e testa permissões usando somente um arquivo temporário."))
   .addSubcommand(sub=>sub.setName("planejar").setDescription("Lista exatamente o que seria removido.").addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices(
     {name:"Wipe mapa",value:"map"},{name:"Wipe geral (mapa + BPs)",value:"general"}
   )).addStringOption(opt=>opt.setName("rustmaps").setDescription("Link do mapa no RustMaps ou download .map").setRequired(true)))
@@ -31,12 +31,31 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if(sub==="trava"){const state=await getWipeLockState();await interaction.editReply({embeds:[new EmbedBuilder().setColor(state.unlocked?0x38c978:0xd64545).setTitle(state.unlocked?"🔓 Wipe destravado":"🔒 Wipe travado").setDescription(state.updatedBy?`Última alteração: ${state.updatedBy}`:"Nenhuma alteração registrada.").setTimestamp()]});return;}
     if(sub==="diagnostico"){
       const d=await diagnoseHost(); await auditWipe("WIPE_DIAGNOSTIC",actor,"Diagnóstico somente leitura executado pelo Discord.");
-      await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xf4c45a).setTitle("🛡️ Diagnóstico do wipe").setDescription("Nenhum arquivo foi alterado.").addFields(
+      const allFiles=d.plans.general.files as Array<{path:string;group:string;size:number}>;
+      const mapFiles=d.plans.map.files as Array<{path:string;group:string;size:number}>;
+      const report=[
+        "DIAGNÓSTICO DE WIPE — GUERRA FRIA",`Gerado: ${new Date().toISOString()}`,"",
+        `Seed atual: ${d.currentMap.seed??"não identificada"}`,`Size atual: ${d.currentMap.size??"não identificado"}`,
+        "",
+        "ARQUIVOS REMOVIDOS NO WIPE DE MAPA",...mapFiles.map(f=>`${f.path} (${f.size} bytes)`),"",
+        "ARQUIVOS REMOVIDOS NO WIPE GERAL",...allFiles.map(f=>`${f.path} [${f.group}] (${f.size} bytes)`),"",
+        `Permissão listar/escrever/apagar: ${d.permissions.files.confirmed?"CONFIRMADA":"FALHOU"}`,
+        `Seed editável (${d.seedVariable||"ausente"}): ${d.permissions.startup.seedEditable?"SIM":"NÃO"}`,
+        `Size editável (${d.sizeVariable||"ausente"}): ${d.permissions.startup.sizeEditable?"SIM":"NÃO"}`,
+        "",`Startup efetivo: ${d.startupCommand||"indisponível"}`,
+      ].join("\n");
+      const currentMaps=d.currentMap.mapFiles.map((f:any)=>`• \`${f.path}\``).join("\n").slice(0,1000)||"Nenhum arquivo .map encontrado.";
+      await interaction.editReply({embeds:[new EmbedBuilder().setColor(d.capabilities.proceduralStartup&&d.permissions.files.confirmed?0x38c978:0xd64545).setTitle("🛡️ Diagnóstico completo do wipe").setDescription("Nenhum save foi alterado. Um arquivo temporário foi criado e apagado para testar as permissões reais.").addFields(
         { name: "Servidor", value: String(d.server.name), inline: true },
         { name: "Estado", value: String(d.server.state), inline: true },
-        { name: "Arquivos", value: d.capabilities.files ? "Acesso confirmado" : "Indisponível", inline: true },
+        { name: "Seed atual", value: String(d.currentMap.seed??"Não identificada"), inline: true },
+        { name: "Size atual", value: String(d.currentMap.size??"Não identificado"), inline: true },
+        { name: "Permissão de arquivos", value: d.permissions.files.confirmed?"✅ Listar, escrever e apagar confirmados":"❌ Permissão incompleta", inline: false },
+        { name: "Permissão de startup", value: `Seed (${d.seedVariable||"ausente"}): ${d.permissions.startup.seedEditable?"✅ editável":"❌ não editável"}\nSize (${d.sizeVariable||"ausente"}): ${d.permissions.startup.sizeEditable?"✅ editável":"❌ não editável"}`, inline: false },
+        { name: "Mapa(s) .map atual(is)", value: currentMaps, inline: false },
+        { name: "Simulação das exclusões", value: `Wipe mapa: **${mapFiles.length}** arquivos\nWipe geral: **${allFiles.length}** arquivos\nA lista completa está no arquivo anexado.`, inline: false },
         { name: "Execução destrutiva", value: d.capabilities.destructiveEnabled&&d.capabilities.wipeUnlocked ? "🔓 Habilitada" : "🔒 Bloqueada", inline: true }
-      ).setTimestamp()]}); return;
+      ).setTimestamp()],files:[{attachment:Buffer.from(report,"utf8"),name:`diagnostico-wipe-${Date.now()}.txt`} ]}); return;
     }
     const kind=(sub==="geral"?"general":sub==="mapa"?"map":interaction.options.getString("tipo",true)) as WipeKind;
     if(sub==="planejar"){

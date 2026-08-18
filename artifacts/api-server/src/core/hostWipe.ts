@@ -6,6 +6,9 @@ export type WipeKind = "map" | "general";
 export type HostFile = { name: string; path: string; directory: string; size: number; group: "map" | "blueprints" };
 export type WipeActor = { id: string; name: string };
 export type WipeLifecycle = { onStopped?: () => Promise<void> | void };
+export type DiagnosticFilePermission = {
+  listing: boolean; write: boolean; delete: boolean; confirmed: boolean; probePath: string;
+};
 
 const panelUrl = () => String(process.env.ELGAE_PANEL_URL || "").replace(/\/$/, "");
 const serverId = () => String(process.env.ELGAE_SERVER_ID || "").trim();
@@ -171,11 +174,51 @@ function proceduralKeys(variables:any[]): {seed:string|null;size:string|null;lev
   };
 }
 
+function startupValue(variables:any[],key:string|null):string|null{
+  if(!key)return null;
+  const variable=variables.find(item=>String(item.env_variable||item.name||"")===key);
+  const value=variable?.server_value??variable?.value??variable?.default_value;
+  return value===undefined||value===null||String(value).trim()===""?null:String(value);
+}
+function startupEditable(variables:any[],key:string|null):boolean{
+  if(!key)return false;
+  const variable=variables.find(item=>String(item.env_variable||item.name||"")===key);
+  return Boolean(variable&&(variable.is_editable===true||variable.user_editable===true));
+}
+async function probeFilePermissions():Promise<DiagnosticFilePermission>{
+  const name=`.guerra-fria-diagnostic-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
+  const probePath=`/${name}`;let listing=false,write=false,deleted=false;
+  try{
+    await listDirectory("/");listing=true;
+    await panelRequest(`/files/write?file=${encodeURIComponent(probePath)}`,{method:"POST",headers:{"Content-Type":"text/plain"},body:"Guerra Fria wipe diagnostic permission probe\n"});write=true;
+    if(!(await listDirectory("/")).some(item=>String(item.name)===name))throw new Error("O arquivo temporário não apareceu após a escrita.");
+    await panelRequest("/files/delete",{method:"POST",body:JSON.stringify({root:"/",files:[name]})});
+    deleted=!(await listDirectory("/")).some(item=>String(item.name)===name);
+    if(!deleted)throw new Error("O arquivo temporário continuou presente após a exclusão.");
+    return{listing,write,delete:deleted,confirmed:listing&&write&&deleted,probePath};
+  }finally{
+    if(write&&!deleted)await panelRequest("/files/delete",{method:"POST",body:JSON.stringify({root:"/",files:[name]})}).catch(()=>null);
+  }
+}
 export async function diagnoseHost(): Promise<any> {
-  const [server,resources,root,startup]=await Promise.all([panelRequest(""),panelRequest("/resources"),listDirectory("/"),startupInfo().catch(()=>({variables:[],startupCommand:"",rawStartupCommand:""}))]);
+  const [server,resources,root,startup,filePermissions,mapPlan,generalPlan]=await Promise.all([
+    panelRequest(""),panelRequest("/resources"),listDirectory("/"),startupInfo().catch(()=>({variables:[],startupCommand:"",rawStartupCommand:""})),
+    probeFilePermissions(),buildWipePlan("map"),buildWipePlan("general"),
+  ]);
   const keys=proceduralKeys(startup.variables);const levelUrlVariable=keys.levelUrl;
   const effectiveSeed=/(?:^|\s)[+-]?server\.seed(?:=|\s+)/i.test(startup.startupCommand),effectiveSize=/(?:^|\s)[+-]?server\.worldsize(?:=|\s+)/i.test(startup.startupCommand);
-  const lock=await getWipeLockState();return { connected: true, server: { name: server?.attributes?.name || "Rust", identifier: server?.attributes?.identifier || serverId(), state: resources?.attributes?.current_state || "unknown" }, capabilities: { api: true, power: true, backups: true, files: true, startup: Boolean(levelUrlVariable||keys.seed||keys.size), proceduralStartup:Boolean(keys.seed&&keys.size&&effectiveSeed&&effectiveSize), destructiveEnabled: executionEnabled(), automationEnabled: automationEnabled(),wipeUnlocked:lock.unlocked },wipeLock:lock, levelUrlVariable,seedVariable:keys.seed,sizeVariable:keys.size, startupValidation:{seedArgument:effectiveSeed,sizeArgument:effectiveSize}, root: root.map((entry: any) => ({ name: entry.name, directory: entry.is_file === false, size: Number(entry.size || 0) })).slice(0,100) };
+  const currentSeed=startupValue(startup.variables,keys.seed),currentSize=startupValue(startup.variables,keys.size);
+  const seedEditable=startupEditable(startup.variables,keys.seed),sizeEditable=startupEditable(startup.variables,keys.size);
+  const lock=await getWipeLockState();return {
+    connected:true,server:{name:server?.attributes?.name||"Rust",identifier:server?.attributes?.identifier||serverId(),state:resources?.attributes?.current_state||"unknown"},
+    currentMap:{seed:currentSeed,size:currentSize,mapFiles:mapPlan.files.filter(file=>file.name.toLowerCase().endsWith(".map"))},
+    permissions:{files:filePermissions,startup:{seedEditable,sizeEditable,confirmed:seedEditable&&sizeEditable}},
+    plans:{map:mapPlan,general:generalPlan},
+    capabilities:{api:true,power:true,backups:true,files:filePermissions.confirmed,startup:Boolean(levelUrlVariable||keys.seed||keys.size),proceduralStartup:Boolean(keys.seed&&keys.size&&seedEditable&&sizeEditable&&effectiveSeed&&effectiveSize),destructiveEnabled:executionEnabled(),automationEnabled:automationEnabled(),wipeUnlocked:lock.unlocked},
+    wipeLock:lock,levelUrlVariable,seedVariable:keys.seed,sizeVariable:keys.size,startupCommand:startup.startupCommand,
+    startupValidation:{seedArgument:effectiveSeed,sizeArgument:effectiveSize,seedEditable,sizeEditable},
+    root:root.map((entry:any)=>({name:entry.name,directory:entry.is_file===false,size:Number(entry.size||0)})).slice(0,100),
+  };
 }
 
 async function discoverIdentityDirectories(): Promise<string[]> {
