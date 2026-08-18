@@ -8,6 +8,7 @@ import { db, pool, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, bo
 import { diagnoseHost, executePreparedProceduralWipe, prepareProceduralWipeBackup } from "../../core/hostWipe.js";
 import { getWipeLockState } from "../../core/wipeLock.js";
 import { sendGameAnnouncement } from "../utils/gameAnnouncement.js";
+import { logger } from "../../lib/logger.js";
 
 interface MapOption { name: string; image?: string; seed: number; size: number; }
 export interface MapImageUpload { name: string; mime: string; data: string; }
@@ -290,6 +291,18 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
 let wipeProcessing=false;const wipeWarnings=new Set<string>();
 const preparedWipeBackups=new Map<number,string>();const backupRetryAt=new Map<number,number>();
+const wipeFailureAlerts=new Set<string>();
+async function reportWipeFailure(client:Client,voteId:number,stage:string,map:MapOption|undefined,error:unknown):Promise<void>{
+  const raw=error instanceof Error?error.message:String(error||"Falha desconhecida");
+  const reason=raw.replace(/(Bearer|token|password|secret|authorization)\s*[:=]\s*\S+/gi,"$1: [oculto]").slice(0,1500);
+  const key=`${voteId}:${stage}:${reason}`;if(wipeFailureAlerts.has(key))return;wipeFailureAlerts.add(key);
+  logger.error({voteId,stage,seed:map?.seed,size:map?.size,reason},"Automatic wipe failure");
+  const description=`**Etapa:** ${stage}\n**Votação:** #${voteId}\n${map?`**Mapa:** ${map.name} • seed \`${map.seed}\` • size \`${map.size}\`\n`:""}**Erro:** ${reason}\n\nO sucesso não será anunciado enquanto a falha não for resolvida.`;
+  const embed=new EmbedBuilder().setColor(0xef4444).setTitle("🚨 Erro no wipe automático").setDescription(description).setFooter({text:"Guerra Fria • Log técnico do wipe"}).setTimestamp();
+  const channels=[process.env.DISCORD_LOG_CHANNEL_ID,process.env.DISCORD_CHAT_CHANNEL_ID||CHAT_CHANNEL_ID].map(value=>value?.trim()).filter((value):value is string=>Boolean(value));
+  await Promise.all([...new Set(channels)].map(async id=>{const channel=await client.channels.fetch(id).catch(()=>null);if(channel?.isSendable())await channel.send({embeds:[embed]}).catch(()=>{});}));
+  try{const {notifySubscribedAdmins}=await import("../../admin/adminNotifications.js");await notifySubscribedAdmins({kind:"system",title:"Erro no wipe automático",message:`${stage}: ${reason}`,severity:"critical"});}catch{}
+}
 let preparationTableReady=false;
 async function ensurePreparationTable():Promise<void>{
   if(preparationTableReady)return;
@@ -321,13 +334,12 @@ async function processScheduledWipes(client:Client):Promise<void>{
     if(!preparedWipeBackups.has(row.id)){const saved=await loadPreparedBackup(row.id,map.seed,map.size).catch(()=>null);if(saved)preparedWipeBackups.set(row.id,saved);}
     if(remaining<=900&&!preparedWipeBackups.has(row.id)&&Date.now()>=(backupRetryAt.get(row.id)||0)){
       try{const backupId=await prepareProceduralWipeBackup("map",map.seed,map.size,{id:"AUTOMATION",name:"Preparação do wipe automático"});await savePreparedBackup(row.id,backupId,map.seed,map.size);preparedWipeBackups.set(row.id,backupId);backupRetryAt.delete(row.id);await db.update(mapVotesTable).set({failureReason:null}).where(eq(mapVotesTable.id,row.id));}
-      catch(error){backupRetryAt.set(row.id,Date.now()+2*60_000);const reason=error instanceof Error?error.message:"Falha ao preparar backup";await db.update(mapVotesTable).set({failureReason:`Preparação do backup: ${reason}`}).where(eq(mapVotesTable.id,row.id));}
+      catch(error){backupRetryAt.set(row.id,Date.now()+2*60_000);const reason=error instanceof Error?error.message:"Falha ao preparar backup";await db.update(mapVotesTable).set({failureReason:`Preparação do backup: ${reason}`}).where(eq(mapVotesTable.id,row.id));await reportWipeFailure(client,row.id,"Preparação/backup",map,error);}
     }
   }
   const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));
   for(const row of due){
     let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue} const winner=row.winnerIndex??0; const map=maps[winner];if(!map)continue;
-    const chat=await client.channels.fetch(process.env.DISCORD_CHAT_CHANNEL_ID || CHAT_CHANNEL_ID).catch(()=>null) as TextChannel|null;
     try{
       const backupId=preparedWipeBackups.get(row.id)||await loadPreparedBackup(row.id,map.seed,map.size)||undefined;
       await executePreparedProceduralWipe("map",map.seed,map.size,{id:"AUTOMATION",name:"Wipe automático"},true,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)},backupId);
@@ -340,7 +352,7 @@ async function processScheduledWipes(client:Client):Promise<void>{
       preparedWipeBackups.delete(row.id);backupRetryAt.delete(row.id);await clearPreparedBackup(row.id).catch(()=>{});
       const reason=error instanceof Error?error.message:"Falha desconhecida";
       await db.update(mapVotesTable).set({status:"failed",failureReason:reason}).where(eq(mapVotesTable.id,row.id));
-      await chat?.send(`🚨 **FALHA NO WIPE AUTOMÁTICO**\nA administração foi notificada. Motivo: ${reason}`).catch(()=>{});
+      await reportWipeFailure(client,row.id,"Execução do wipe",map,error);
     }
   }
   }finally{wipeProcessing=false}
@@ -348,6 +360,6 @@ async function processScheduledWipes(client:Client):Promise<void>{
 
 export function startMapWipeScheduler(client:Client):void{
   if(wipeScheduler)clearInterval(wipeScheduler);
-  processScheduledWipes(client).catch(()=>{});
-  wipeScheduler=setInterval(()=>processScheduledWipes(client).catch(()=>{}),10_000);
+  const run=()=>processScheduledWipes(client).catch(error=>reportWipeFailure(client,0,"Agendador",undefined,error));
+  run();wipeScheduler=setInterval(run,10_000);
 }
