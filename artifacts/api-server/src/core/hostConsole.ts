@@ -13,27 +13,27 @@ async function api(path:string,init:RequestInit={}):Promise<any>{
 }
 
 export type ConsoleLine={id:number;at:string;text:string};
-const lines:ConsoleLine[]=[];let sequence=0,socket:WebSocket|null=null,connecting:Promise<void>|null=null,lastError:string|null=null,lastAttempt=0;
+const lines:ConsoleLine[]=[];let sequence=0,socket:WebSocket|null=null,authenticated=false,connecting:Promise<void>|null=null,lastError:string|null=null,lastAttempt=0;
 function append(value:unknown){const clean=String(value??"").replace(/\x1b\[[0-9;]*m/g,"").slice(0,8000);if(!clean)return;lines.push({id:++sequence,at:new Date().toISOString(),text:clean});if(lines.length>600)lines.splice(0,lines.length-600);}
 async function credentials(){const data=await api("/websocket");const token=String(data?.data?.token||""),url=String(data?.data?.socket||"");if(!token||!url)throw new Error("A host não retornou o WebSocket do console.");return{token,url};}
 async function authenticate(ws:WebSocket){const {token}=await credentials();ws.send(JSON.stringify({event:"auth",args:[token]}));}
 export async function ensureHostConsole():Promise<void>{
-  if(socket?.readyState===WebSocket.OPEN)return;if(connecting)return connecting;
+  if(socket?.readyState===WebSocket.OPEN&&authenticated)return;if(connecting)return connecting;
   if(Date.now()-lastAttempt<4_000)throw new Error(lastError||"Aguardando nova tentativa do console.");lastAttempt=Date.now();
   connecting=(async()=>{const {token,url}=await credentials();const origins:[string|undefined,string][]=[[panelUrl(),"origem do painel"],[undefined,"sem cabeçalho Origin"],[new URL(url).origin,"origem da Wings"]];let failure:Error|null=null;
-    for(const [origin,label]of origins){try{await new Promise<void>((resolve,reject)=>{let settled=false;const options:any={handshakeTimeout:20_000};if(origin)options.origin=origin;const ws=new WebSocket(url,options);socket=ws;
+    for(const [origin,label]of origins){try{await new Promise<void>((resolve,reject)=>{let settled=false,authTimer:ReturnType<typeof setTimeout>|null=null;const options:any={handshakeTimeout:8_000};if(origin)options.origin=origin;const ws=new WebSocket(url,options);socket=ws;authenticated=false;
       const fail=(error:Error)=>{lastError=`${label}: ${error.message}`;if(!settled){settled=true;reject(error)}};
-      ws.once("open",()=>{settled=true;ws.send(JSON.stringify({event:"auth",args:[token]}));ws.send(JSON.stringify({event:"send logs",args:[null]}));lastError=null;resolve();});
-      ws.on("message",raw=>{try{const msg=JSON.parse(String(raw));if(msg.event==="console output")for(const line of msg.args||[])append(line);else if(msg.event==="token expiring")authenticate(ws).catch(error=>{lastError=error.message});else if(msg.event==="status")append(`[HOST] Estado: ${msg.args?.[0]||"desconhecido"}`);else if(msg.event==="jwt error")lastError=String(msg.args?.[0]||"Token do console recusado");}catch{}});
-      ws.on("unexpected-response",(_request,response)=>fail(new Error(`handshake HTTP ${response.statusCode}`)));
+      ws.once("open",()=>{ws.send(JSON.stringify({event:"auth",args:[token]}));authTimer=setTimeout(()=>fail(new Error("a Wings não confirmou a autenticação em 8 segundos")),8_000);});
+      ws.on("message",raw=>{try{const msg=JSON.parse(String(raw));if(msg.event==="auth success"){if(authTimer)clearTimeout(authTimer);if(socket===ws)authenticated=true;if(!settled){settled=true;lastError=null;ws.send(JSON.stringify({event:"send logs",args:[null]}));resolve();}}else if(msg.event==="console output")for(const line of msg.args||[])append(line);else if(msg.event==="token expiring"){if(socket===ws)authenticated=false;authenticate(ws).catch(error=>{lastError=error.message})}else if(msg.event==="status")append(`[HOST] Estado: ${msg.args?.[0]||"desconhecido"}`);else if(msg.event==="jwt error")fail(new Error(String(msg.args?.[0]||"Token do console recusado")));}catch{}});
+      ws.on("unexpected-response",(_request,response)=>{response.resume();fail(new Error(`handshake HTTP ${response.statusCode}`))});
       ws.on("error",error=>{logger.warn({error:error.message,origin:label},"Pterodactyl console websocket error");fail(error)});
-      ws.on("close",(code,reason)=>{if(socket===ws)socket=null;if(!settled)fail(new Error(`conexão fechada (${code}) ${String(reason)}`));});
+      ws.on("close",(code,reason)=>{if(socket===ws){socket=null;authenticated=false}if(!settled)fail(new Error(`conexão fechada (${code}) ${String(reason)}`));});
     });return}catch(error){failure=error instanceof Error?error:new Error(String(error));if(socket){socket.terminate();socket=null;}}}
     throw new Error(`A Wings recusou o console: ${lastError||failure?.message||"handshake inválido"}`);
   })().finally(()=>{connecting=null});return connecting;
 }
-export async function hostConsoleSnapshot(after=0){await ensureHostConsole();return{connected:socket?.readyState===WebSocket.OPEN,lastError,lines:lines.filter(line=>line.id>after).slice(-300),lastId:sequence};}
-export async function sendHostConsoleCommand(command:string):Promise<void>{await ensureHostConsole();if(socket?.readyState!==WebSocket.OPEN)throw new Error("Console da host desconectado.");socket.send(JSON.stringify({event:"send command",args:[command]}));append(`> ${command}`);}
+export async function hostConsoleSnapshot(after=0){if((socket?.readyState!==WebSocket.OPEN||!authenticated)&&!connecting)void ensureHostConsole().catch(error=>{lastError=error instanceof Error?error.message:String(error)});return{connected:socket?.readyState===WebSocket.OPEN&&authenticated,connecting:Boolean(connecting),lastError,lines:lines.filter(line=>line.id>after).slice(-300),lastId:sequence};}
+export async function sendHostConsoleCommand(command:string):Promise<void>{await ensureHostConsole();if(socket?.readyState!==WebSocket.OPEN||!authenticated)throw new Error("Console da host não autenticado.");socket.send(JSON.stringify({event:"send command",args:[command]}));append(`> ${command}`);}
 
 function safePath(input:unknown):string{const raw=String(input||"/").replace(/\\/g,"/");const parts=raw.split("/").filter(Boolean);if(parts.some(part=>part===".."||part==="."))throw new Error("Caminho inválido.");return`/${parts.join("/")}`;}
 export async function listHostFiles(directory:unknown){const dir=safePath(directory);const data=await api(`/files/list?directory=${encodeURIComponent(dir)}`);const entries=(data?.data||[]).map((item:any)=>item?.attributes||item).map((item:any)=>({name:String(item.name||""),directory:item.is_file===false,size:Number(item.size||0),modifiedAt:item.modified_at||null,mime:item.mimetype||null}));return{directory:dir,entries};}
