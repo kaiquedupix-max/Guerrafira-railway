@@ -8,7 +8,7 @@ import { getGuerraFriaDisplayName } from "./permissions.js";
 import { notifySubscribedAdmins } from "./adminNotifications.js";
 import { controlHostPower, getHostPowerState, getHostResourceSnapshot, type HostPowerSignal } from "../core/hostWipe.js";
 import { sendGameAnnouncement } from "../bot/utils/gameAnnouncement.js";
-import { createHostFolder, deleteHostFiles, getHostFileDownloadUrl, hostConsoleSnapshot, listHostFiles, sendHostConsoleCommand, uploadHostFile } from "../core/hostConsole.js";
+import { createHostFolder, deleteHostFiles, getHostFileDownloadUrl, hostConsoleSnapshot, listHostFiles, readHostTextFile, sendHostConsoleCommand, uploadHostFile, writeHostTextFile } from "../core/hostConsole.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -92,6 +92,8 @@ router.post("/host-console/command",async(req,res)=>{try{const command=String(re
 router.get("/host-files",async(req,res)=>{try{res.json(await listHostFiles(req.query.directory))}catch(error:any){res.status(502).json({error:error?.message||"Não foi possível listar os arquivos."})}});
 router.post("/host-files/folder",async(req,res)=>{try{await createHostFolder(req.body?.directory,req.body?.name);res.status(201).json({ok:true})}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível criar a pasta."})}});
 router.get("/host-files/download",async(req,res)=>{try{const result=await getHostFileDownloadUrl(req.query.directory,req.query.name);res.json(result)}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível preparar o download."})}});
+router.get("/host-files/edit",async(req,res)=>{try{res.json(await readHostTextFile(req.query.directory,req.query.name))}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível abrir o arquivo."})}});
+router.put("/host-files/edit",async(req,res)=>{try{res.json(await writeHostTextFile(req.body?.directory,req.body?.name,req.body?.content))}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível salvar o arquivo."})}});
 router.post("/host-files/upload",async(req,res)=>{try{const result=await uploadHostFile(req.body?.directory,req.body?.name,req.body?.base64,req.body?.overwrite===true);res.status(201).json({ok:true,...result})}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível enviar o arquivo."})}});
 router.post("/host-files/delete",async(req,res)=>{try{await deleteHostFiles(req.body?.directory,req.body?.files);res.json({ok:true})}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível apagar."})}});
 
