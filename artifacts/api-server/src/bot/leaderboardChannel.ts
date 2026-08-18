@@ -21,17 +21,11 @@ function leaderboardButton() {
 
 function buildPanel(): EmbedBuilder {
   return new EmbedBuilder()
-    .setColor(0x8b5cf6)
+    .setColor(0xd6a934)
     .setTitle("🏆 Leaderboard Oficial — Guerra Fria 2X")
-    .setDescription(
-      "Acompanhe o desempenho dos jogadores durante o wipe no **Leaderboard Oficial do Guerra Fria**.\n\n" +
-      "📊 Consulte rankings detalhados de combate, farm, raid, precisão e outras estatísticas registradas automaticamente pelo servidor.\n\n" +
-      "🌐 Para visualizar o ranking completo, use o botão abaixo e abra o site no navegador.\n\n" +
-      "💬 Prefere consultar pelo Discord? Use **`/leaderboard`** e escolha a categoria desejada."
-    )
+    .setDescription("Consulte o ranking completo e atualizado do servidor pelo botão abaixo.")
     .setImage("https://raw.githubusercontent.com/kaiquedupix-max/Guerrafira-railway/main/assets/leaderboard-banner.png")
-    .setFooter({ text: "Guerra Fria 2X • Leaderboard Oficial" })
-    .setTimestamp();
+    .setFooter({ text: "Guerra Fria 2X • Leaderboard Oficial" });
 }
 
 async function updateChannel(client: Client): Promise<void> {
@@ -41,26 +35,14 @@ async function updateChannel(client: Client): Promise<void> {
   const ch = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
   if (!ch?.isSendable()) return;
 
-  const recent = await ch.messages.fetch({ limit: 30 }).catch(() => null);
-  const botMsgs = recent
-    ? [...recent.values()]
-      .filter((m) => m.author.id === client.user?.id && m.embeds.length > 0)
-      .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-    : [];
+  // O canal é apenas uma vitrine. Remove qualquer painel antigo publicado
+  // por este bot (Top Kills, KD, HS, Farm etc.) e recria um único cartão.
+  const recent = await ch.messages.fetch({ limit: 100 }).catch(() => null);
+  const botMsgs = recent ? [...recent.values()].filter(message => message.author.id === client.user?.id) : [];
+  for (const message of botMsgs) await message.delete().catch(() => {});
 
-  const panel = buildPanel();
-  const main = botMsgs[0];
-
-  // Remove os antigos embeds de Top Kills, KD, HS, Farm etc.
-  for (const extra of botMsgs.slice(1)) await extra.delete().catch(() => {});
-
-  if (main) {
-    await main.edit({ embeds: [panel], components: [leaderboardButton()] });
-    logger.info({ channelId }, "Leaderboard presentation panel updated");
-  } else {
-    await ch.send({ embeds: [panel], components: [leaderboardButton()] });
-    logger.info({ channelId }, "Leaderboard presentation panel created");
-  }
+  await ch.send({ embeds: [buildPanel()], components: [leaderboardButton()] });
+  logger.info({ channelId, removed: botMsgs.length }, "Single leaderboard presentation card published");
 }
 
 export function startLeaderboardChannel(client: Client): void {
