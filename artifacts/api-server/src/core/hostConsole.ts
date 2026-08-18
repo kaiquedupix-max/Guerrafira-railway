@@ -13,18 +13,24 @@ async function api(path:string,init:RequestInit={}):Promise<any>{
 }
 
 export type ConsoleLine={id:number;at:string;text:string};
-const lines:ConsoleLine[]=[];let sequence=0,socket:WebSocket|null=null,connecting:Promise<void>|null=null,lastError:string|null=null;
+const lines:ConsoleLine[]=[];let sequence=0,socket:WebSocket|null=null,connecting:Promise<void>|null=null,lastError:string|null=null,lastAttempt=0;
 function append(value:unknown){const clean=String(value??"").replace(/\x1b\[[0-9;]*m/g,"").slice(0,8000);if(!clean)return;lines.push({id:++sequence,at:new Date().toISOString(),text:clean});if(lines.length>600)lines.splice(0,lines.length-600);}
 async function credentials(){const data=await api("/websocket");const token=String(data?.data?.token||""),url=String(data?.data?.socket||"");if(!token||!url)throw new Error("A host não retornou o WebSocket do console.");return{token,url};}
 async function authenticate(ws:WebSocket){const {token}=await credentials();ws.send(JSON.stringify({event:"auth",args:[token]}));}
 export async function ensureHostConsole():Promise<void>{
   if(socket?.readyState===WebSocket.OPEN)return;if(connecting)return connecting;
-  connecting=(async()=>{const {token,url}=await credentials();await new Promise<void>((resolve,reject)=>{const ws=new WebSocket(url,{handshakeTimeout:20_000,origin:panelUrl()});socket=ws;
-    ws.once("open",()=>{ws.send(JSON.stringify({event:"auth",args:[token]}));ws.send(JSON.stringify({event:"send logs",args:[null]}));lastError=null;resolve();});
-    ws.on("message",raw=>{try{const msg=JSON.parse(String(raw));if(msg.event==="console output")for(const line of msg.args||[])append(line);else if(msg.event==="token expiring")authenticate(ws).catch(error=>{lastError=error.message});else if(msg.event==="status")append(`[HOST] Estado: ${msg.args?.[0]||"desconhecido"}`);}catch{}});
-    ws.on("error",error=>{lastError=error.message;logger.warn({error:error.message},"Pterodactyl console websocket error");});
-    ws.on("close",()=>{socket=null;});ws.once("error",reject);
-  });})().finally(()=>{connecting=null});return connecting;
+  if(Date.now()-lastAttempt<4_000)throw new Error(lastError||"Aguardando nova tentativa do console.");lastAttempt=Date.now();
+  connecting=(async()=>{const {token,url}=await credentials();const origins:[string|undefined,string][]=[[panelUrl(),"origem do painel"],[undefined,"sem cabeçalho Origin"],[new URL(url).origin,"origem da Wings"]];let failure:Error|null=null;
+    for(const [origin,label]of origins){try{await new Promise<void>((resolve,reject)=>{let settled=false;const options:any={handshakeTimeout:20_000};if(origin)options.origin=origin;const ws=new WebSocket(url,options);socket=ws;
+      const fail=(error:Error)=>{lastError=`${label}: ${error.message}`;if(!settled){settled=true;reject(error)}};
+      ws.once("open",()=>{settled=true;ws.send(JSON.stringify({event:"auth",args:[token]}));ws.send(JSON.stringify({event:"send logs",args:[null]}));lastError=null;resolve();});
+      ws.on("message",raw=>{try{const msg=JSON.parse(String(raw));if(msg.event==="console output")for(const line of msg.args||[])append(line);else if(msg.event==="token expiring")authenticate(ws).catch(error=>{lastError=error.message});else if(msg.event==="status")append(`[HOST] Estado: ${msg.args?.[0]||"desconhecido"}`);else if(msg.event==="jwt error")lastError=String(msg.args?.[0]||"Token do console recusado");}catch{}});
+      ws.on("unexpected-response",(_request,response)=>fail(new Error(`handshake HTTP ${response.statusCode}`)));
+      ws.on("error",error=>{logger.warn({error:error.message,origin:label},"Pterodactyl console websocket error");fail(error)});
+      ws.on("close",(code,reason)=>{if(socket===ws)socket=null;if(!settled)fail(new Error(`conexão fechada (${code}) ${String(reason)}`));});
+    });return}catch(error){failure=error instanceof Error?error:new Error(String(error));if(socket){socket.terminate();socket=null;}}}
+    throw new Error(`A Wings recusou o console: ${lastError||failure?.message||"handshake inválido"}`);
+  })().finally(()=>{connecting=null});return connecting;
 }
 export async function hostConsoleSnapshot(after=0){await ensureHostConsole();return{connected:socket?.readyState===WebSocket.OPEN,lastError,lines:lines.filter(line=>line.id>after).slice(-300),lastId:sequence};}
 export async function sendHostConsoleCommand(command:string):Promise<void>{await ensureHostConsole();if(socket?.readyState!==WebSocket.OPEN)throw new Error("Console da host desconectado.");socket.send(JSON.stringify({event:"send command",args:[command]}));append(`> ${command}`);}
