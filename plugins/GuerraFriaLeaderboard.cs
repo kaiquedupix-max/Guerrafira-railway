@@ -6,14 +6,13 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "Maciota", "2.0.1")]
+    [Info("GuerraFriaLeaderboard", "Maciota", "2.0.2")]
     [Description("Leaderboard Guerra Fria enviado ao bot por webhook, sem poluir o console.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
         private PluginConfig config;
         private readonly List<LeaderboardEvent> queue = new List<LeaderboardEvent>();
         private readonly Dictionary<string, int> observedScrapStacks = new Dictionary<string, int>();
-        private Oxide.Plugins.Timer flushTimer;
         private bool sending;
         private DateTime lastQueueWarning = DateTime.MinValue;
 
@@ -63,9 +62,9 @@ namespace Oxide.Plugins
         }
         protected override void SaveConfig() { Config.WriteObject(config, true); }
 
-        private void Init() { flushTimer = timer.Every(config.BatchSeconds, FlushQueue); }
+        private void Init() { timer.Every(config.BatchSeconds, FlushQueue); }
         private void OnServerInitialized() { Enqueue(new LeaderboardEvent { @event = "ready" }); }
-        private void Unload() { if (flushTimer != null) flushTimer.Destroy(); FlushQueue(); }
+        private void Unload() { FlushQueue(); }
 
         private bool IsRealPlayer(BasePlayer player)
         {
@@ -197,7 +196,7 @@ namespace Oxide.Plugins
         private void StatusCommand(ConsoleSystem.Arg arg)
         {
             if (arg == null) return;
-            arg.ReplyWith("GuerraFriaLeaderboard ONLINE | webhook=" + (!string.IsNullOrWhiteSpace(config.WebhookSecret) && !config.WebhookSecret.Contains("COLOQUE_") ? "configurado" : "pendente") + " | fila=" + queue.Count + " | enviando=" + sending);
+            arg.ReplyWith("GuerraFriaLeaderboard v2.0.2 ONLINE | webhook=" + (!string.IsNullOrWhiteSpace(config.WebhookSecret) && !config.WebhookSecret.Contains("COLOQUE_") ? "configurado" : "pendente") + " | fila=" + queue.Count + " | enviando=" + sending);
         }
     }
 }
