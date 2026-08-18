@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaAntiBot", "Maciota", "1.1.0")]
+    [Info("GuerraFriaAntiBot", "Maciota", "1.1.1")]
     [Description("Protecao L7 contra connection flood/bots com telemetria para o painel Guerra Fria.")]
     public class GuerraFriaAntiBot : RustPlugin
     {
@@ -39,49 +39,34 @@ namespace Oxide.Plugins
         {
             [JsonProperty("Janela global em segundos")]
             public float GlobalWindowSeconds = 5f;
-
             [JsonProperty("Tentativas globais na janela para ativar modo ataque")]
             public int GlobalAttackThreshold = 80;
-
             [JsonProperty("Duracao do modo ataque em segundos")]
             public int AttackModeSeconds = 120;
-
             [JsonProperty("Janela por IP em segundos")]
             public float PerIpWindowSeconds = 10f;
-
             [JsonProperty("Maximo de tentativas por IP fora de ataque")]
             public int NormalPerIpLimit = 12;
-
             [JsonProperty("Maximo de tentativas por IP durante ataque")]
             public int AttackPerIpLimit = 5;
-
             [JsonProperty("Cooldown minimo entre tentativas do mesmo IP em segundos")]
             public float MinimumReconnectSeconds = 0.75f;
-
             [JsonProperty("Bloqueio inicial por IP em segundos")]
             public int InitialBlockSeconds = 120;
-
             [JsonProperty("Bloqueio maximo por IP em segundos")]
             public int MaximumBlockSeconds = 1800;
-
             [JsonProperty("Multiplicador de bloqueio por reincidencia")]
             public float StrikeMultiplier = 2f;
-
             [JsonProperty("Mensagem enviada ao cliente bloqueado")]
             public string RejectMessage = "Muitas tentativas de conexao. Aguarde alguns instantes e tente novamente.";
-
             [JsonProperty("Ignorar administradores authLevel > 0")]
             public bool BypassServerAdmins = true;
-
             [JsonProperty("Ativar logs de deteccao no console")]
             public bool ConsoleAlerts = true;
-
             [JsonProperty("Intervalo minimo entre alertas no console em segundos")]
             public int AlertCooldownSeconds = 10;
-
             [JsonProperty("Limpeza de memoria a cada X segundos")]
             public int CleanupIntervalSeconds = 60;
-
             [JsonProperty("Esquecer IPs inativos apos X segundos")]
             public int ForgetInactiveIpsSeconds = 900;
         }
@@ -133,11 +118,12 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermBypass, this);
             permission.RegisterPermission(PermAdmin, this);
             timer.Every(_config.CleanupIntervalSeconds, Cleanup);
+            timer.Every(5f, BroadcastTelemetry);
         }
 
         private void OnServerInitialized()
         {
-            Puts("GuerraFriaAntiBot v1.1.0 carregado. Protecao L7 e telemetria ativas.");
+            Puts("GuerraFriaAntiBot v1.1.1 carregado. Protecao L7 e telemetria push ativas.");
         }
 
         private object CanClientLogin(Network.Connection connection)
@@ -286,6 +272,34 @@ namespace Oxide.Plugins
             TrimUniqueIpEvents(now);
         }
 
+        private string BuildTelemetryJson()
+        {
+            double now = Time.realtimeSinceStartupAsDouble;
+            TrimQueue(_globalAttempts, now - _config.GlobalWindowSeconds);
+            while (_attemptsOneSecond.Count > 0 && _attemptsOneSecond.Peek() < now - 1d) _attemptsOneSecond.Dequeue();
+            TrimUniqueIpEvents(now);
+
+            var payload = new
+            {
+                attackMode = _attackMode,
+                attackModeRemainingSeconds = _attackMode ? Math.Max(0, _attackModeUntil - now) : 0,
+                attemptsPerSecond = _attemptsOneSecond.Count,
+                attemptsLast5Seconds = _globalAttempts.Count,
+                uniqueIpsLastMinute = _uniqueIpMinuteCounts.Count,
+                blockedIps = _blockedIps.Count,
+                monitoredIps = _ipStates.Count,
+                rejected = _rejected,
+                allowed = _allowed,
+                blocksApplied = _blocked
+            };
+            return JsonConvert.SerializeObject(payload);
+        }
+
+        private void BroadcastTelemetry()
+        {
+            Puts("[GF_ANTIBOT]" + BuildTelemetryJson());
+        }
+
         [ConsoleCommand("antibot.status")]
         private void CmdStatus(ConsoleSystem.Arg arg)
         {
@@ -310,24 +324,7 @@ namespace Oxide.Plugins
         private void CmdJson(ConsoleSystem.Arg arg)
         {
             if (!CanUseAdminCommand(arg)) return;
-            double now = Time.realtimeSinceStartupAsDouble;
-            TrimQueue(_globalAttempts, now - _config.GlobalWindowSeconds);
-            while (_attemptsOneSecond.Count > 0 && _attemptsOneSecond.Peek() < now - 1d) _attemptsOneSecond.Dequeue();
-            TrimUniqueIpEvents(now);
-            var payload = new
-            {
-                attackMode = _attackMode,
-                attackModeRemainingSeconds = _attackMode ? Math.Max(0, _attackModeUntil - now) : 0,
-                attemptsPerSecond = _attemptsOneSecond.Count,
-                attemptsLast5Seconds = _globalAttempts.Count,
-                uniqueIpsLastMinute = _uniqueIpMinuteCounts.Count,
-                blockedIps = _blockedIps.Count,
-                monitoredIps = _ipStates.Count,
-                rejected = _rejected,
-                allowed = _allowed,
-                blocksApplied = _blocked
-            };
-            arg.ReplyWith(JsonConvert.SerializeObject(payload));
+            arg.ReplyWith(BuildTelemetryJson());
         }
 
         [ConsoleCommand("antibot.attack")]
