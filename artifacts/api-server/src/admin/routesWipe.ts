@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
-import { auditWipe, buildWipePlan, diagnoseHost, executeWipe, type WipeKind } from "../core/hostWipe.js";
+import { auditWipe, buildWipePlan, diagnoseHost, executeProceduralWipe, type WipeKind } from "../core/hostWipe.js";
 import { createMapVote, type MapImageUpload } from "../bot/commands/criarmapa.js";
 import { discordClient } from "../bot/client.js";
 import { db, mapVotesTable, mapVoteBallotsTable } from "@workspace/db";
@@ -17,7 +17,7 @@ router.get("/wipe/diagnostic", async (req,res) => {
   catch(error:any){res.status(502).json({error:error?.message||"Falha no diagnóstico."})}
 });
 router.get("/wipe/plan", async (req,res) => {
-  try { const plan=await buildWipePlan(kindOf(req.query.kind), String(req.query.rustmaps || "")); await auditWipe("WIPE_PLAN", {id:res.locals.admin.userId,name:res.locals.admin.username}, `${plan.kind}: ${plan.files.length} arquivos, nenhuma alteração.`); res.json(plan); }
+  try { const seed=Number(req.query.seed),size=Number(req.query.size);if(!Number.isInteger(seed)||seed<0||seed>2147483647)throw new Error("Seed inválida.");if(!Number.isInteger(size)||size<1000||size>6000)throw new Error("Size deve estar entre 1000 e 6000.");const plan=await buildWipePlan(kindOf(req.query.kind)); await auditWipe("WIPE_PLAN", {id:res.locals.admin.userId,name:res.locals.admin.username}, `${plan.kind}: ${plan.files.length} arquivos; seed ${seed}; size ${size}; nenhuma alteração.`); res.json({...plan,seed,size}); }
   catch(error:any){res.status(502).json({error:error?.message||"Falha ao planejar wipe."})}
 });
 router.get("/wipe/status",async(_req,res)=>{
@@ -27,7 +27,7 @@ router.post("/wipe/vote",async(req,res)=>{
   try{const client=discordClient();if(!client)return void res.status(503).json({error:"Bot do Discord ainda não está conectado."});const date=String(req.body?.date||"").trim();const maps=[1,2,3].map(n=>({seed:Number(req.body?.[`seed${n}`]),size:Number(req.body?.[`size${n}`])}));const imageFiles=[req.body?.image1,req.body?.image2,req.body?.image3].map(v=>v&&typeof v==="object"?{name:String(v.name||"imagem"),mime:String(v.mime||""),data:String(v.data||"")} as MapImageUpload:undefined);const expectedWipeAt=Number(req.body?.expectedWipeAt);const result=await createMapVote(client,{createdBy:res.locals.admin.userId,date,maps,imageFiles,expectedWipeAt:Number.isFinite(expectedWipeAt)?expectedWipeAt:undefined});await auditWipe("MAP_VOTE_CREATED",{id:res.locals.admin.userId,name:res.locals.admin.username},`Votação ${result.id} criada pelo painel; wipe ${new Date(result.wipeAt).toISOString()}.`);res.status(201).json(result);}catch(error:any){res.status(409).json({error:error?.message||"Falha ao criar votação."})}
 });
 router.post("/wipe/execute", async (req,res) => {
-  try { const result=await executeWipe(kindOf(req.body?.kind),String(req.body?.rustmaps||""),String(req.body?.confirmation||""),{id:res.locals.admin.userId,name:res.locals.admin.username}); res.json(result); }
+  try { const result=await executeProceduralWipe(kindOf(req.body?.kind),Number(req.body?.seed),Number(req.body?.size),String(req.body?.confirmation||""),{id:res.locals.admin.userId,name:res.locals.admin.username}); res.json(result); }
   catch(error:any){return void res.status(423).json({error:error?.message||"Wipe bloqueado."})}
 });
 export default router;

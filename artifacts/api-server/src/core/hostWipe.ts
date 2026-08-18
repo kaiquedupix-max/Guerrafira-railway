@@ -380,3 +380,8 @@ export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,si
 export async function executeWipe(kind: WipeKind, rustMapsUrl: string, confirmation: string, actor: WipeActor): Promise<{ filesDeleted: number; mapUrl: string }> {
   if (confirmation !== "WIPE GUERRA FRIA") throw new Error("Confirmação inválida."); return executePreparedWipe(kind, rustMapsUrl, actor, false);
 }
+
+export async function executeProceduralWipe(kind:WipeKind,seed:number,size:number,confirmation:string,actor:WipeActor):Promise<{filesDeleted:number;seed:number;size:number;mapFile:string}>{
+  if(confirmation!=="WIPE GUERRA FRIA")throw new Error("Confirmação inválida.");
+  return executePreparedProceduralWipe(kind,seed,size,actor,false);
+}
