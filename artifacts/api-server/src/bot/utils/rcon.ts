@@ -19,6 +19,25 @@ let connectionPromise: Promise<boolean> | null = null;
 const pendingResolvers = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let messageId = 1;
 
+let latestAntibotTelemetry: { json: string; at: number } | null = null;
+const ANTIBOT_PREFIX = "[GF_ANTIBOT]";
+
+function captureAntibotTelemetry(message: string): boolean {
+  const idx = message.indexOf(ANTIBOT_PREFIX);
+  if (idx < 0) return false;
+  const raw = message.slice(idx + ANTIBOT_PREFIX.length).trim();
+  const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
+  if (start < 0 || end < start) return false;
+  const json = raw.slice(start, end + 1);
+  try {
+    JSON.parse(json);
+    latestAntibotTelemetry = { json, at: Date.now() };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getRconUrl(): string | null {
   const host = process.env.RCON_HOST;
   const port = process.env.RCON_PORT ?? "28016";
@@ -38,6 +57,7 @@ function _doConnect(): Promise<boolean> {
     socket.on("message", data => {
       try {
         const msg = JSON.parse(data.toString()) as RconResponse;
+        if (msg.Message) captureAntibotTelemetry(msg.Message);
         const pending = pendingResolvers.get(msg.Identifier);
         if (pending) { clearTimeout(pending.timer); pendingResolvers.delete(msg.Identifier); pending.resolve(msg.Message); return; }
         if (msg.Message) {
@@ -61,6 +81,12 @@ async function ensureConnected(): Promise<boolean> {
 }
 
 export async function executeRconCommand(command: string): Promise<string | null> {
+  if (command === "antibot.json") {
+    const cached = latestAntibotTelemetry;
+    if (cached && Date.now() - cached.at <= 20_000) return cached.json;
+    return null;
+  }
+
   const connected = await ensureConnected();
   if (!connected || !ws) { logger.warn({ command }, "RCON not connected — skipping command"); return null; }
   const id = messageId++;
