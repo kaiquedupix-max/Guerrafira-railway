@@ -8,6 +8,7 @@ import { getGuerraFriaDisplayName } from "./permissions.js";
 import { notifySubscribedAdmins } from "./adminNotifications.js";
 import { controlHostPower, getHostPowerState, getHostResourceSnapshot, type HostPowerSignal } from "../core/hostWipe.js";
 import { sendGameAnnouncement } from "../bot/utils/gameAnnouncement.js";
+import { createHostFolder, deleteHostFiles, hostConsoleSnapshot, listHostFiles, sendHostConsoleCommand, uploadHostFile } from "../core/hostConsole.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -85,6 +86,13 @@ router.post("/restart-warning", async (req, res) => {
   warnedRestart = { timer, executeAt, requestedBy: actor.name };
   res.status(202).json({ ok: true, executeAt, requestedBy: actor.name });
 });
+
+router.get("/host-console",async(req,res)=>{try{res.json(await hostConsoleSnapshot(Number(req.query.after)||0))}catch(error:any){res.status(502).json({error:error?.message||"Console da host indisponível."})}});
+router.post("/host-console/command",async(req,res)=>{try{const command=String(req.body?.command||"").replace(/[\r\n]/g," ").trim().slice(0,500);if(!command)return void res.status(400).json({error:"Comando vazio."});await sendHostConsoleCommand(command);res.json({ok:true})}catch(error:any){res.status(502).json({error:error?.message||"Não foi possível enviar o comando."})}});
+router.get("/host-files",async(req,res)=>{try{res.json(await listHostFiles(req.query.directory))}catch(error:any){res.status(502).json({error:error?.message||"Não foi possível listar os arquivos."})}});
+router.post("/host-files/folder",async(req,res)=>{try{await createHostFolder(req.body?.directory,req.body?.name);res.status(201).json({ok:true})}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível criar a pasta."})}});
+router.post("/host-files/upload",async(req,res)=>{try{await uploadHostFile(req.body?.directory,req.body?.name,req.body?.base64);res.status(201).json({ok:true})}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível enviar o arquivo."})}});
+router.post("/host-files/delete",async(req,res)=>{try{await deleteHostFiles(req.body?.directory,req.body?.files);res.json({ok:true})}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível apagar."})}});
 
 router.get("/online", async (_req, res) => {
   const [players, info] = await Promise.all([getOnlinePlayers().catch(() => []), getServerInfo().catch(() => null)]);

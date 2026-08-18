@@ -1,0 +1,36 @@
+import WebSocket from "ws";
+import { logger } from "../lib/logger.js";
+
+const panelUrl=()=>String(process.env.ELGAE_PANEL_URL||"").replace(/\/$/,"");
+const serverId=()=>String(process.env.ELGAE_SERVER_ID||"").trim();
+const apiKey=()=>String(process.env.ELGAE_API_KEY||"").trim();
+
+async function api(path:string,init:RequestInit={}):Promise<any>{
+  if(!panelUrl()||!serverId()||!apiKey())throw new Error("Integração Pterodactyl incompleta.");
+  const response=await fetch(`${panelUrl()}/api/client/servers/${serverId()}${path}`,{...init,headers:{Authorization:`Bearer ${apiKey()}`,Accept:"Application/vnd.pterodactyl.v1+json","Content-Type":"application/json",...(init.headers||{})},signal:AbortSignal.timeout(30_000)});
+  const text=await response.text();let data:any=null;try{data=text?JSON.parse(text):null}catch{data=text}
+  if(!response.ok)throw new Error(`Pterodactyl ${response.status}: ${data?.errors?.[0]?.detail||String(data||"Falha na API").slice(0,180)}`);return data;
+}
+
+export type ConsoleLine={id:number;at:string;text:string};
+const lines:ConsoleLine[]=[];let sequence=0,socket:WebSocket|null=null,connecting:Promise<void>|null=null,lastError:string|null=null;
+function append(value:unknown){const clean=String(value??"").replace(/\x1b\[[0-9;]*m/g,"").slice(0,8000);if(!clean)return;lines.push({id:++sequence,at:new Date().toISOString(),text:clean});if(lines.length>600)lines.splice(0,lines.length-600);}
+async function credentials(){const data=await api("/websocket");const token=String(data?.data?.token||""),url=String(data?.data?.socket||"");if(!token||!url)throw new Error("A host não retornou o WebSocket do console.");return{token,url};}
+async function authenticate(ws:WebSocket){const {token}=await credentials();ws.send(JSON.stringify({event:"auth",args:[token]}));}
+export async function ensureHostConsole():Promise<void>{
+  if(socket?.readyState===WebSocket.OPEN)return;if(connecting)return connecting;
+  connecting=(async()=>{const {token,url}=await credentials();await new Promise<void>((resolve,reject)=>{const ws=new WebSocket(url,{handshakeTimeout:20_000,origin:panelUrl()});socket=ws;
+    ws.once("open",()=>{ws.send(JSON.stringify({event:"auth",args:[token]}));ws.send(JSON.stringify({event:"send logs",args:[null]}));lastError=null;resolve();});
+    ws.on("message",raw=>{try{const msg=JSON.parse(String(raw));if(msg.event==="console output")for(const line of msg.args||[])append(line);else if(msg.event==="token expiring")authenticate(ws).catch(error=>{lastError=error.message});else if(msg.event==="status")append(`[HOST] Estado: ${msg.args?.[0]||"desconhecido"}`);}catch{}});
+    ws.on("error",error=>{lastError=error.message;logger.warn({error:error.message},"Pterodactyl console websocket error");});
+    ws.on("close",()=>{socket=null;});ws.once("error",reject);
+  });})().finally(()=>{connecting=null});return connecting;
+}
+export async function hostConsoleSnapshot(after=0){await ensureHostConsole();return{connected:socket?.readyState===WebSocket.OPEN,lastError,lines:lines.filter(line=>line.id>after).slice(-300),lastId:sequence};}
+export async function sendHostConsoleCommand(command:string):Promise<void>{await ensureHostConsole();if(socket?.readyState!==WebSocket.OPEN)throw new Error("Console da host desconectado.");socket.send(JSON.stringify({event:"send command",args:[command]}));append(`> ${command}`);}
+
+function safePath(input:unknown):string{const raw=String(input||"/").replace(/\\/g,"/");const parts=raw.split("/").filter(Boolean);if(parts.some(part=>part===".."||part==="."))throw new Error("Caminho inválido.");return`/${parts.join("/")}`;}
+export async function listHostFiles(directory:unknown){const dir=safePath(directory);const data=await api(`/files/list?directory=${encodeURIComponent(dir)}`);const entries=(data?.data||[]).map((item:any)=>item?.attributes||item).map((item:any)=>({name:String(item.name||""),directory:item.is_file===false,size:Number(item.size||0),modifiedAt:item.modified_at||null,mime:item.mimetype||null}));return{directory:dir,entries};}
+export async function createHostFolder(directory:unknown,name:unknown){const root=safePath(directory),folder=String(name||"").trim();if(!folder||folder.includes("/")||folder==="."||folder==="..")throw new Error("Nome da pasta inválido.");await api("/files/create-folder",{method:"POST",body:JSON.stringify({root,name:folder})});}
+export async function deleteHostFiles(directory:unknown,names:unknown){const root=safePath(directory),files=Array.isArray(names)?names.map(value=>String(value)).filter(name=>name&&!name.includes("/")&&name!=="."&&name!=="..").slice(0,50):[];if(!files.length)throw new Error("Selecione pelo menos um arquivo.");await api("/files/delete",{method:"POST",body:JSON.stringify({root,files})});}
+export async function uploadHostFile(directory:unknown,name:unknown,base64:unknown){const root=safePath(directory),fileName=String(name||"").trim();if(!fileName||fileName.includes("/")||fileName==="."||fileName==="..")throw new Error("Nome do arquivo inválido.");const content=Buffer.from(String(base64||""),"base64");if(!content.length||content.length>12*1024*1024)throw new Error("O arquivo deve ter entre 1 byte e 12 MB.");const signed=await api(`/files/upload?directory=${encodeURIComponent(root)}`);const url=String(signed?.attributes?.url||signed?.data?.attributes?.url||"");if(!url)throw new Error("A host não retornou a URL segura de upload.");const form=new FormData();form.append("files",new Blob([new Uint8Array(content)]),fileName);const response=await fetch(url,{method:"POST",body:form,signal:AbortSignal.timeout(120_000)});if(!response.ok)throw new Error(`Upload recusado pela host (${response.status}).`);}
