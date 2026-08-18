@@ -7,6 +7,7 @@ import pwaRouter from "./pwa.js";
 import revenueView from "../admin/revenueView.js";
 import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
 import { startCardPaymentReconciler } from "./paymentReconciler.js";
+import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
@@ -14,6 +15,7 @@ startCardPaymentReconciler();
 const router: IRouter = Router();
 router.use(healthRouter);
 router.use(leaderboardRouter);
+router.use(leaderboardWebhookRouter);
 router.use(pwaRouter);
 router.use("/admin", adminRouter);
 router.use("/community", communityRouter);

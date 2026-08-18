@@ -16,6 +16,7 @@ const CATEGORIES = [
   { value: "kd",        name: "⚔️ Maior KD"               },
   { value: "hs",        name: "🎯 Maior Taxa de HS"       },
   { value: "farm",      name: "⛏️ Top Farm"               },
+  { value: "scrap",     name: "♻️ Top Sucata"             },
   { value: "explosive", name: "💣 Top Craft de Explosivos" },
 ] as const;
 
@@ -113,6 +114,16 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       .where(gt(playerStatsTable.resourcesGathered, 0))
       .orderBy(desc(playerStatsTable.resourcesGathered))
       .limit(10);
+  } else if (cat === "scrap") {
+    embedTitle = "♻️  Top Sucata";
+    valueLabel = "Sucata";
+    color = 0xd5b45b;
+    rows = await db
+      .select({ steamId: playerStatsTable.steamId, playerName: playerStatsTable.playerName, value: playerStatsTable.scrapGathered })
+      .from(playerStatsTable)
+      .where(gt(playerStatsTable.scrapGathered, 0))
+      .orderBy(desc(playerStatsTable.scrapGathered))
+      .limit(10);
   } else {
     embedTitle = "💣  Top Craft de Explosivos";
     valueLabel = "Explosivos";
@@ -133,7 +144,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   if (!rows.length) {
     const noDataNote =
-      cat === "farm" || cat === "explosive"
+      cat === "farm" || cat === "scrap" || cat === "explosive"
         ? "\n\n> ℹ️ A coleta começa após instalar o plugin **GuerraFriaLeaderboard.cs** no servidor Rust."
         : "";
     embed.setDescription(

@@ -91,68 +91,77 @@ export function parseArrowHitEvent(type: string, message: string): boolean {
 
 interface GatherPayload extends Record<string, unknown> { event?: string; steamid?: string; player?: string; item?: string; amount?: number; }
 
-export function parseGatherEvent(type: string, message: string): boolean {
-  const obj = extractJson(message) as GatherPayload | null;
-  if (!obj?.steamid) return false;
-  const ev = eventName(obj); const lowerType = type.toLowerCase();
-  if (ev !== "gather" && !lowerType.includes("gather") && !lowerType.includes("resource")) return false;
+async function recordGatherPayload(obj: GatherPayload): Promise<boolean> {
+  if (!obj?.steamid || !/^7656119\d{10}$/.test(String(obj.steamid))) return false;
   const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
   if (amount <= 0) return false;
-
   const item = String(obj.item ?? "").toLowerCase();
   const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown", resourcesGathered: amount };
   const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", resourcesGathered: sql`${playerStatsTable.resourcesGathered} + ${amount}`, updatedAt: sql`now()` };
-
   if (item === "wood") { values.woodGathered = amount; set.woodGathered = sql`${playerStatsTable.woodGathered} + ${amount}`; }
   else if (item === "stones" || item === "stone") { values.stoneGathered = amount; set.stoneGathered = sql`${playerStatsTable.stoneGathered} + ${amount}`; }
   else if (item === "metal.ore") { values.metalOreGathered = amount; set.metalOreGathered = sql`${playerStatsTable.metalOreGathered} + ${amount}`; }
   else if (item === "sulfur.ore") { values.sulfurOreGathered = amount; set.sulfurOreGathered = sql`${playerStatsTable.sulfurOreGathered} + ${amount}`; }
   else if (item === "scrap") { values.scrapGathered = amount; set.scrapGathered = sql`${playerStatsTable.scrapGathered} + ${amount}`; }
+  else return false;
+  await db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any });
+  return true;
+}
 
-  db.insert(playerStatsTable)
-    .values(values as typeof playerStatsTable.$inferInsert)
-    .onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any })
-    .catch(err => logger.error({ err }, "recordGather error"));
+export function parseGatherEvent(type: string, message: string): boolean {
+  const obj = extractJson(message) as GatherPayload | null;
+  if (!obj?.steamid) return false;
+  const ev = eventName(obj); const lowerType = type.toLowerCase();
+  if (ev !== "gather" && !lowerType.includes("gather") && !lowerType.includes("resource")) return false;
+  recordGatherPayload(obj).catch(err => logger.error({ err }, "recordGather error"));
   return true;
 }
 
 const EXPLOSIVE_SHORTNAMES = new Set(["explosives", "explosive.timed", "grenade.f1", "grenade.beancan", "ammo.rocket.basic", "ammo.rocket.hv", "ammo.rocket.fire", "ammo.rifle.explosive", "surveycharge"]);
 
+async function recordCraftPayload(obj: GatherPayload): Promise<boolean> {
+  if (!obj?.steamid || !/^7656119\d{10}$/.test(String(obj.steamid))) return false;
+  const ev = eventName(obj), item = String(obj.item ?? "").toLowerCase();
+  const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
+  if (amount <= 0) return false;
+  const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown" };
+  const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", updatedAt: sql`now()` };
+  if (ev === "raid_use") {
+    if (item === "c4") { values.c4Used = amount; set.c4Used = sql`${playerStatsTable.c4Used} + ${amount}`; }
+    else if (item === "rocket") { values.rocketsUsed = amount; set.rocketsUsed = sql`${playerStatsTable.rocketsUsed} + ${amount}`; }
+    else return false;
+  } else {
+    const isGunpowder = item === "gunpowder", isExplosive = EXPLOSIVE_SHORTNAMES.has(item);
+    if (!isGunpowder && !isExplosive) return false;
+    if (isGunpowder) { values.gunpowderCrafted = amount; set.gunpowderCrafted = sql`${playerStatsTable.gunpowderCrafted} + ${amount}`; }
+    if (isExplosive) { values.explosivesCrafted = amount; set.explosivesCrafted = sql`${playerStatsTable.explosivesCrafted} + ${amount}`; }
+  }
+  await db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any });
+  return true;
+}
+
 export function parseCraftEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as GatherPayload | null;
   if (!obj?.steamid) return false;
-  const ev = eventName(obj);
-  const item = String(obj.item ?? "").toLowerCase();
-  const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
-  if (amount <= 0) return false;
+  const ev = eventName(obj),lowerType=type.toLowerCase();
+  if(ev!=="raid_use"&&ev!=="craft"&&!lowerType.includes("craft"))return false;
+  recordCraftPayload(obj).catch(err=>logger.error({err},"recordCraft error"));
+  return true;
+}
 
-  if (ev === "raid_use") {
-    if (item !== "c4" && item !== "rocket") return false;
-    const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown" };
-    const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", updatedAt: sql`now()` };
-    if (item === "c4") { values.c4Used = amount; set.c4Used = sql`${playerStatsTable.c4Used} + ${amount}`; }
-    if (item === "rocket") { values.rocketsUsed = amount; set.rocketsUsed = sql`${playerStatsTable.rocketsUsed} + ${amount}`; }
-    db.insert(playerStatsTable)
-      .values(values as typeof playerStatsTable.$inferInsert)
-      .onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any })
-      .catch(err => logger.error({ err }, "recordRaidUse error"));
+export async function ingestLeaderboardPayload(obj: Record<string, unknown>): Promise<boolean> {
+  const ev = eventName(obj);
+  if (ev === "ready") return true;
+  if (ev === "kill") {
+    const killerId=String(obj.attacker_steamid??""),victimId=String(obj.victim_steamid??"");
+    if(!/^7656119\d{10}$/.test(killerId)||!/^7656119\d{10}$/.test(victimId)||killerId===victimId)return false;
+    const killerName=String(obj.attacker??"Unknown"),victimName=String(obj.victim??"Unknown"),headshot=obj.headshot===true;
+    await recordKill({killerSteamId:killerId,killerName,victimSteamId:victimId,victimName,headshot});
+    void analyzeKill({attackerSteamId:killerId,attackerName:killerName,victimSteamId:victimId,victimName,headshot,weapon:typeof obj.weapon==="string"?obj.weapon:undefined,distance:Number.isFinite(Number(obj.distance))?Number(obj.distance):undefined,timestamp:Number.isFinite(Number(obj.timestamp))?Number(obj.timestamp):undefined}).catch(err=>logger.error({err},"webhook kill detector error"));
     return true;
   }
-
-  const lowerType = type.toLowerCase();
-  if (ev !== "craft" && !lowerType.includes("craft")) return false;
-  const isGunpowder = item === "gunpowder";
-  const isExplosive = EXPLOSIVE_SHORTNAMES.has(item);
-  if (!isGunpowder && !isExplosive) return false;
-
-  const values: Record<string, unknown> = { steamId: obj.steamid, playerName: obj.player ?? "Unknown" };
-  const set: Record<string, unknown> = { playerName: obj.player ?? "Unknown", updatedAt: sql`now()` };
-  if (isGunpowder) { values.gunpowderCrafted = amount; set.gunpowderCrafted = sql`${playerStatsTable.gunpowderCrafted} + ${amount}`; }
-  if (isExplosive) { values.explosivesCrafted = amount; set.explosivesCrafted = sql`${playerStatsTable.explosivesCrafted} + ${amount}`; }
-
-  db.insert(playerStatsTable)
-    .values(values as typeof playerStatsTable.$inferInsert)
-    .onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any })
-    .catch(err => logger.error({ err }, "recordCraft error"));
-  return true;
+  if(ev==="arrow_hit")return processArrowHit(obj as CombatPayload);
+  if(ev==="gather")return recordGatherPayload(obj as GatherPayload);
+  if(ev==="craft"||ev==="raid_use")return recordCraftPayload(obj as GatherPayload);
+  return false;
 }
