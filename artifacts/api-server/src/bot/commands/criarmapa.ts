@@ -24,6 +24,7 @@ const CHAT_CHANNEL_ID = "1499084541791436861";
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
 const ANNOUNCEMENT_INTERVAL = 4 * 60 * 60_000;
+const WIPE_DELAY_MS = 25 * 60_000;
 
 const VIP_MENTION = `<@&${VIP_ROLE_ID}>`;
 const BOOSTER_MENTION = `<@&${BOOSTER_ROLE_ID}>`;
@@ -77,7 +78,7 @@ async function sendWipeAnnouncement(client: Client, phase: "offline" | "online",
 export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addStringOption(o => o.setName("data").setDescription("Data: votação 18h e fluxo do wipe 18h20 (AAAA-MM-DD)").setRequired(true))
+  .addStringOption(o => o.setName("data").setDescription("Data: votação 18h e fluxo do wipe 18h25 (AAAA-MM-DD)").setRequired(true))
   .addStringOption(o => o.setName("modo1").setDescription("Fonte do Mapa 1").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
   .addStringOption(o => o.setName("modo2").setDescription("Fonte do Mapa 2").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
   .addStringOption(o => o.setName("modo3").setDescription("Fonte do Mapa 3").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
@@ -99,7 +100,7 @@ export function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeA
   const base = new Date(Date.UTC(Number(parts.year), Number(parts.month)-1, Number(parts.day), 21, 0));
   for (let add=0; add<8; add++) {
     const candidate = new Date(base.getTime()+add*86_400_000); const day=candidate.getUTCDay();
-    if ((day===1||day===5) && candidate.getTime()>now.getTime()) return { voteEndsAt:candidate.getTime(), wipeAt:candidate.getTime()+20*60_000 };
+    if ((day===1||day===5) && candidate.getTime()>now.getTime()) return { voteEndsAt:candidate.getTime(), wipeAt:candidate.getTime()+WIPE_DELAY_MS };
   }
   throw new Error("Não foi possível calcular o próximo wipe.");
 }
@@ -109,7 +110,7 @@ export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
   const [year,month,day]=date.split("-").map(Number);const voteAt=Date.UTC(year,month-1,day,21,0,0);const check=new Date(voteAt);
   if(check.getUTCFullYear()!==year||check.getUTCMonth()!==month-1||check.getUTCDate()!==day)throw new Error("Data inválida.");
   if(voteAt<=Date.now()+5*60_000)throw new Error("Escolha uma data futura com pelo menos 5 minutos de antecedência.");
-  return{voteEndsAt:voteAt,wipeAt:voteAt+20*60_000};
+  return{voteEndsAt:voteAt,wipeAt:voteAt+WIPE_DELAY_MS};
 }
 
 function headerEmbed(endsAt: number) {
@@ -182,7 +183,7 @@ async function loadVote(messageId: string, client?: Client): Promise<MapVoteRunt
   const rowsSaved = await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.messageId, messageId), eq(mapVotesTable.status, "active"))).limit(1);
   const saved = rowsSaved[0]; if (!saved) return null;
   let maps: MapOption[]; try { maps = (JSON.parse(saved.mapsJson) as any[]).map(normalizeMap); } catch { return null; }
-  const vote: MapVoteRuntime = { id: saved.id, messageId: saved.messageId, channelId: saved.channelId, endsAt: saved.endsAt.getTime(), wipeAt: saved.wipeAt?.getTime() || saved.endsAt.getTime()+20*60_000, maps };
+  const vote: MapVoteRuntime = { id: saved.id, messageId: saved.messageId, channelId: saved.channelId, endsAt: saved.endsAt.getTime(), wipeAt: saved.wipeAt?.getTime() || saved.endsAt.getTime()+WIPE_DELAY_MS, maps };
   if (client) scheduleRuntime(client, vote);
   return vote;
 }
@@ -197,10 +198,10 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
       messageId: saved.messageId,
       channelId: saved.channelId,
       endsAt: saved.endsAt.getTime(),
-      wipeAt: saved.wipeAt?.getTime() || saved.endsAt.getTime()+20*60_000,
+      wipeAt: saved.wipeAt?.getTime() || saved.endsAt.getTime()+WIPE_DELAY_MS,
       maps,
     };
-    const correctedWipeAt=vote.endsAt+20*60_000;
+    const correctedWipeAt=vote.endsAt+WIPE_DELAY_MS;
     if(vote.wipeAt!==correctedWipeAt){vote.wipeAt=correctedWipeAt;await db.update(mapVotesTable).set({wipeAt:new Date(correctedWipeAt)}).where(eq(mapVotesTable.id,vote.id));}
     if (vote.endsAt <= Date.now()) { await finishVote(client, vote.messageId).catch(() => {}); continue; }
     scheduleRuntime(client, vote);
@@ -330,7 +331,7 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
   const winner=vote.maps[winnerIndex];
   const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
   if(chat?.isSendable()) await chat.send(`🏆 **MAPA VENCEDOR:** ${winner.name}\n${winner.mode==="link"?"Fonte: `RustMaps .map`":`Seed: \`${winner.seed}\` • Size: \`${winner.size}\``}\n🧊 O fluxo do wipe será iniciado às <t:${Math.floor(vote.wipeAt/1000)}:t>.`).catch(()=>{});
-  await sendGameAnnouncement("GUERRA FRIA",`${winner.name} venceu. O wipe inicia as 18:20.`,"#7CFC00").catch(()=>null);
+  await sendGameAnnouncement("GUERRA FRIA",`${winner.name} venceu. O wipe inicia as 18:25.`,"#7CFC00").catch(()=>null);
 }
 
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
