@@ -294,17 +294,18 @@ async function deletePlannedFiles(files: HostFile[]): Promise<void> {
   for (const [root, names] of grouped) await panelRequest("/files/delete", { method: "POST", body: JSON.stringify({ root, files: names }) });
   for(const [root,names] of grouped){const remaining=new Set((await listDirectory(root)).map(item=>String(item.name)));const failed=names.filter(name=>remaining.has(name));if(failed.length)throw new Error(`A exclusão não foi confirmada em ${root}: ${failed.join(", ")}`);}
 }
-async function waitForGeneratedProceduralMap(seed:number,size:number,timeoutMs=5*60_000):Promise<string>{
-  const expected=new RegExp(`(?:^|\\.)${size}\\.${seed}(?:\\.|$)`);
+async function waitForGeneratedProceduralMap(seed:number,size:number,timeoutMs=10*60_000):Promise<string>{
+  const expected=new RegExp(`(?:^|\\.)${size}(?:\\.1)?\\.${seed}(?:\\.|$)`,"i");
   const started=Date.now();
   while(Date.now()-started<timeoutMs){
     const directories=await discoverIdentityDirectories();
     const maps:(HostFile[])=(await Promise.all(directories.map(directory=>collectWipeFiles(directory)))).flat().filter(file=>file.name.toLowerCase().endsWith(".map"));
     const correct=maps.find(file=>expected.test(file.name));if(correct)return correct.path;
-    if(maps.length)throw new Error(`O servidor gerou um mapa diferente do vencedor: ${maps.map(file=>file.name).join(", ")}.`);
     await new Promise(resolve=>setTimeout(resolve,5_000));
   }
-  throw new Error(`O arquivo do mapa vencedor (size ${size}, seed ${seed}) não apareceu em 5 minutos.`);
+  const directories=await discoverIdentityDirectories();
+  const maps:(HostFile[])=(await Promise.all(directories.map(directory=>collectWipeFiles(directory)))).flat().filter(file=>file.name.toLowerCase().endsWith(".map"));
+  throw new Error(`Mapa esperado size ${size} seed ${seed} não apareceu. Encontrados: ${maps.map(file=>file.name).join(", ")||"nenhum"}.`);
 }
 export async function prepareProceduralWipeBackup(kind:WipeKind,seed:number,size:number,actor:WipeActor):Promise<string>{
   await assertWipeUnlocked();
@@ -326,16 +327,19 @@ export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, a
   await auditWipe("WIPE_STARTED", actor, `${kind}; ${plan.files.length} arquivos; ${plan.map.pageUrl}`); const backupId=await createBackup(kind);await assertWipeUnlocked();
   await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "stop" }) }); await waitForState("offline");
   await lifecycle.onStopped?.();
-  let startIssued=false;
   try {
     await setMapUrl(plan.map.mapUrl); await deletePlannedFiles(plan.files);
-    await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) });startIssued=true;await waitForState("running", 180_000);
+    await panelRequest("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) });
+    try { await waitForState("running", 10*60_000); }
+    catch (error) {
+      const current=await state().catch(()=>"unknown");
+      throw new Error(`O comando START foi enviado, mas o Pterodactyl não confirmou running no tempo esperado. Estado atual: ${current}. O bot NÃO enviou STOP.`);
+    }
     await resetAllLeaderboardStats();
     await auditWipe("LEADERBOARD_RESET_AFTER_WIPE", actor, `${kind}; reset automático concluído.`);
     await auditWipe("WIPE_COMPLETED", actor, `${kind}; ${plan.files.length} arquivos; mapa ${plan.map.pageUrl}; backup ${backupId}`); return { filesDeleted: plan.files.length, mapUrl: plan.map.mapUrl };
   } catch (error) {
-    if(startIssued){await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"stop"})}).catch(()=>null);await waitForState("offline",120_000).catch(()=>null);}
-    await auditWipe("WIPE_FAILED_SAFE_OFFLINE", actor, error instanceof Error ? error.message : "Falha desconhecida"); throw error;
+    await auditWipe("WIPE_FAILED_AFTER_START_NO_STOP", actor, error instanceof Error ? error.message : "Falha desconhecida"); throw error;
   }
 }
 export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,size:number,actor:WipeActor,automated=false,lifecycle:WipeLifecycle={},preparedBackupId?:string):Promise<{filesDeleted:number;seed:number;size:number;mapFile:string}>{
@@ -346,21 +350,33 @@ export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,si
   if(automated&&!automationEnabled())throw new Error("Automação bloqueada por WIPE_AUTOMATION_ENABLED=false.");
   const plan=await buildWipePlan(kind);if(!plan.files.some(f=>f.group==="map"))throw new Error("Nenhum save de mapa foi localizado; wipe cancelado por segurança.");
   await auditWipe("WIPE_STARTED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}`);
-  await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"stop"})});await waitForState("offline");await lifecycle.onStopped?.();
-  let startIssued=false;
+
+  // Fluxo oficial unificado com o /wipe test que já foi validado na VPS:
+  // STOP -> confirma offline -> backup -> seed/size -> apaga saves -> START -> running -> confirma .map.
+  await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"stop"})});
+  await waitForState("offline",120_000);
+  await lifecycle.onStopped?.();
+
+  const backupId=await createBackup(kind);
+  await assertWipeUnlocked();
+  const startup=await setProceduralMap(seed,size);
+  await auditWipe("WIPE_MAP_STARTUP_CONFIRMED",actor,`seed ${seed} via ${startup.seedKeys.join(",")}; size ${size} via ${startup.sizeKeys.join(",")}`);
+  await deletePlannedFiles(plan.files);
+  await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"start"})});
+
   try{
-    const backupId=preparedBackupId||await createBackup(kind);await assertWipeUnlocked();
-    const startup=await setProceduralMap(seed,size);
-    await auditWipe("WIPE_MAP_STARTUP_CONFIRMED",actor,`seed ${seed} via ${startup.seedKeys.join(",")}; size ${size} via ${startup.sizeKeys.join(",")}`);
-    await deletePlannedFiles(plan.files);
-    await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"start"})});startIssued=true;await waitForState("running",180_000);
-    const mapFile=await waitForGeneratedProceduralMap(seed,size);
-    await resetAllLeaderboardStats();await auditWipe("LEADERBOARD_RESET_AFTER_WIPE",actor,`${kind}; reset automático concluído.`);
-    await auditWipe("WIPE_COMPLETED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}; mapa ${mapFile}; backup ${backupId}`);return{filesDeleted:plan.files.length,seed,size,mapFile};
+    await waitForState("running",10*60_000);
   }catch(error){
-    if(startIssued){await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"stop"})}).catch(()=>null);await waitForState("offline",120_000).catch(()=>null);}
-    await auditWipe("WIPE_FAILED_SAFE_OFFLINE",actor,error instanceof Error?error.message:"Falha desconhecida");throw error;
+    const current=await state().catch(()=>"unknown");
+    await auditWipe("WIPE_START_NOT_CONFIRMED_NO_STOP",actor,`seed ${seed}; size ${size}; estado ${current}; nenhum STOP adicional enviado.`).catch(()=>{});
+    throw new Error(`O comando START foi enviado, mas o Pterodactyl não confirmou running no tempo esperado. Estado atual: ${current}. O bot NÃO enviou STOP.`);
   }
+
+  const mapFile=await waitForGeneratedProceduralMap(seed,size,10*60_000);
+  await resetAllLeaderboardStats();
+  await auditWipe("LEADERBOARD_RESET_AFTER_WIPE",actor,`${kind}; reset automático concluído.`);
+  await auditWipe("WIPE_COMPLETED",actor,`${kind}; ${plan.files.length} arquivos; seed ${seed}; size ${size}; mapa ${mapFile}; backup ${backupId}; fluxo unificado com wipe test.`);
+  return{filesDeleted:plan.files.length,seed,size,mapFile};
 }
 export async function executeWipe(kind: WipeKind, rustMapsUrl: string, confirmation: string, actor: WipeActor): Promise<{ filesDeleted: number; mapUrl: string }> {
   if (confirmation !== "WIPE GUERRA FRIA") throw new Error("Confirmação inválida."); return executePreparedWipe(kind, rustMapsUrl, actor, false);
