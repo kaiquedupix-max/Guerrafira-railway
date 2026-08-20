@@ -82,16 +82,24 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub=>sub.setName("destravar").setDescription("Libera as execuções manuais e automáticas de wipe."))
   .addSubcommand(sub=>sub.setName("trava").setDescription("Mostra o estado atual da trava do wipe."))
   .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Simula o wipe e testa permissões usando somente um arquivo temporário."))
-  .addSubcommand(sub=>addMapSourceOptions(sub.setName("test").setDescription("Testa o wipe na VPS nova por seed/size ou link .map.")
-    .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite TESTE VPS").setRequired(true))))
-  .addSubcommand(sub=>addMapSourceOptions(sub.setName("planejar").setDescription("Lista exatamente o que seria removido.")
-    .addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices(
-      {name:"Wipe mapa",value:"map"},{name:"Wipe geral (mapa + BPs)",value:"general"}
-    ))))
-  .addSubcommand(sub=>addMapSourceOptions(sub.setName("mapa").setDescription("Wipa somente o mapa por seed/size ou link .map."))
-    .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite WIPE GUERRA FRIA").setRequired(true)))
-  .addSubcommand(sub=>addMapSourceOptions(sub.setName("geral").setDescription("Wipa mapa e blueprints por seed/size ou link .map."))
-    .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite WIPE GUERRA FRIA").setRequired(true)));
+  .addSubcommand(sub=>addMapSourceOptions(
+    sub.setName("test").setDescription("Testa o wipe na VPS nova por seed/size ou link .map.")
+      .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite TESTE VPS").setRequired(true))
+  ))
+  .addSubcommand(sub=>addMapSourceOptions(
+    sub.setName("planejar").setDescription("Lista exatamente o que seria removido.")
+      .addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices(
+        {name:"Wipe mapa",value:"map"},{name:"Wipe geral (mapa + BPs)",value:"general"}
+      ))
+  ))
+  .addSubcommand(sub=>addMapSourceOptions(
+    sub.setName("mapa").setDescription("Wipa somente o mapa por seed/size ou link .map.")
+      .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite WIPE GUERRA FRIA").setRequired(true))
+  ))
+  .addSubcommand(sub=>addMapSourceOptions(
+    sub.setName("geral").setDescription("Wipa mapa e blueprints por seed/size ou link .map.")
+      .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite WIPE GUERRA FRIA").setRequired(true))
+  ));
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -201,7 +209,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     await sendGameAnnouncement("GUERRA FRIA",selection.mode==="seed"?`Wipe iniciado. Novo mapa: seed ${selection.seed}, size ${selection.size}.`:"Wipe iniciado. Novo mapa customizado do RustMaps sera carregado.","#FFD700").catch(()=>null);
 
     if(selection.mode==="link"){
-      const result=await executeWipe(kind,selection.mapUrl,confirmation,actor);
+      await executeWipe(kind,selection.mapUrl,confirmation,actor);
       await sendManualWipeAnnouncement(interaction,"completed",kind,selection);
       await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
       await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe concluído").setDescription("Servidor online com o mapa customizado carregado via URL do RustMaps.").setTimestamp()]});
