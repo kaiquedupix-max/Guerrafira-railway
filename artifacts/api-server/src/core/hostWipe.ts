@@ -93,8 +93,6 @@ async function waitForRestart(previousUptime: number | null, timeoutMs = 180_000
     if (current.state !== "running") transitionSeen = true;
     if (previousUptime !== null && current.uptime !== null && current.uptime + 5_000 < previousUptime) transitionSeen = true;
     if (transitionSeen && current.state === "running") return;
-    // Alguns painéis não expõem a curta transição do comando restart. Se a API
-    // aceitou o comando e o servidor continua estável após 30 s, não gere falso erro.
     if (Date.now() - started >= 30_000 && current.state === "running") return;
     await new Promise(resolve => setTimeout(resolve, 1_000));
   }
@@ -167,13 +165,8 @@ function startupKeys(info:StartupInfo,aliases:string[]):string[]{
   return [...new Set(selected.map(variable=>String(variable.env_variable||variable.name||"")).filter(Boolean))];
 }
 function proceduralKeys(variables:any[]): {seed:string|null;size:string|null;levelUrl:string|null} {
-  return {
-    seed:findStartupVariable(variables,SEED_ALIASES),
-    size:findStartupVariable(variables,SIZE_ALIASES),
-    levelUrl:findLevelUrlVariable(variables),
-  };
+  return { seed:findStartupVariable(variables,SEED_ALIASES), size:findStartupVariable(variables,SIZE_ALIASES), levelUrl:findLevelUrlVariable(variables) };
 }
-
 function startupValue(variables:any[],key:string|null):string|null{
   if(!key)return null;
   const variable=variables.find(item=>String(item.env_variable||item.name||"")===key);
@@ -231,7 +224,6 @@ function classify(name: string): "map" | "blueprints" | null {
   if (/player\.blueprints.*\.db(?:-(?:wal|shm))?$/.test(lower)) return "blueprints";
   return null;
 }
-
 async function collectWipeFiles(directory:string,depth=0):Promise<HostFile[]>{
   if(depth>3)return[];
   const files:HostFile[]=[];
@@ -243,7 +235,6 @@ async function collectWipeFiles(directory:string,depth=0):Promise<HostFile[]>{
   }
   return files;
 }
-
 export async function buildWipePlan(kind: WipeKind, rustMapsUrl?: string): Promise<{ kind: WipeKind; map?: Awaited<ReturnType<typeof resolveRustMapsUrl>>; files: HostFile[]; directories: string[]; totalBytes: number; destructiveEnabled: boolean }> {
   const map = rustMapsUrl ? await resolveRustMapsUrl(rustMapsUrl) : undefined;
   const directories = await discoverIdentityDirectories(); const files: HostFile[] = [];
@@ -252,7 +243,6 @@ export async function buildWipePlan(kind: WipeKind, rustMapsUrl?: string): Promi
   }
   return { kind, map, files, directories, totalBytes: files.reduce((sum,file)=>sum+file.size,0), destructiveEnabled: executionEnabled() };
 }
-
 export async function auditWipe(action: string, actor: WipeActor, reason: string): Promise<void> {
   await db.insert(modLogsTable).values({ action, steamId: "SERVER", playerName: "Servidor Guerra Fria", reason, adminId: actor.id, adminName: actor.name });
 }
@@ -281,8 +271,9 @@ async function setStartupValue(key:string,value:string):Promise<void>{
   if(String(current?.server_value??current?.value??"")!==value)throw new Error(`A host não confirmou a variável ${key}.`);
 }
 function commandHasValue(command:string,argument:string,value:number):boolean{
+  const normalized=command.replace(/\\(["'])/g,"$1");
   const escaped=argument.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-  return new RegExp(`(?:^|\\s)[+-]?${escaped}(?:=|\\s+)["']?${value}(?:["']?(?:\\s|$))`,`i`).test(command);
+  return new RegExp(`(?:^|\\s)[+-]?${escaped}(?:=|\\s+)["']?${value}(?:["']?(?:\\s|$))`,`i`).test(normalized);
 }
 async function setProceduralMap(seed:number,size:number):Promise<{seedKeys:string[];sizeKeys:string[];startupCommand:string}>{
   const before=await startupInfo();const seedKeys=startupKeys(before,SEED_ALIASES),sizeKeys=startupKeys(before,SIZE_ALIASES),levelKeys=startupKeys(before,LEVEL_URL_ALIASES);
@@ -303,7 +294,6 @@ async function deletePlannedFiles(files: HostFile[]): Promise<void> {
   for (const [root, names] of grouped) await panelRequest("/files/delete", { method: "POST", body: JSON.stringify({ root, files: names }) });
   for(const [root,names] of grouped){const remaining=new Set((await listDirectory(root)).map(item=>String(item.name)));const failed=names.filter(name=>remaining.has(name));if(failed.length)throw new Error(`A exclusão não foi confirmada em ${root}: ${failed.join(", ")}`);}
 }
-
 async function waitForGeneratedProceduralMap(seed:number,size:number,timeoutMs=5*60_000):Promise<string>{
   const expected=new RegExp(`(?:^|\\.)${size}\\.${seed}(?:\\.|$)`);
   const started=Date.now();
@@ -316,7 +306,6 @@ async function waitForGeneratedProceduralMap(seed:number,size:number,timeoutMs=5
   }
   throw new Error(`O arquivo do mapa vencedor (size ${size}, seed ${seed}) não apareceu em 5 minutos.`);
 }
-
 export async function prepareProceduralWipeBackup(kind:WipeKind,seed:number,size:number,actor:WipeActor):Promise<string>{
   await assertWipeUnlocked();
   if(!Number.isInteger(seed)||!Number.isInteger(size))throw new Error("Seed ou size inválidos para preparar o wipe.");
@@ -324,12 +313,10 @@ export async function prepareProceduralWipeBackup(kind:WipeKind,seed:number,size
   const startup=await setProceduralMap(seed,size);
   const backupId=await createBackup(kind);await auditWipe("WIPE_BACKUP_PREPARED",actor,`${kind}; seed ${seed} via ${startup.seedKeys.join(",")}; size ${size} via ${startup.sizeKeys.join(",")}; backup ${backupId}`);return backupId;
 }
-
 export async function restartHostServer(actor:WipeActor):Promise<void>{
   await panelRequest("/power",{method:"POST",body:JSON.stringify({signal:"restart"})});
   await auditWipe("AUTO_RESTART_TRIGGERED",actor,"Reinício diário enviado para a host.");
 }
-
 export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, actor: WipeActor, automated = false, lifecycle: WipeLifecycle = {}): Promise<{ filesDeleted: number; mapUrl: string }> {
   await assertWipeUnlocked();
   if (!executionEnabled()) throw new Error("Execução bloqueada por WIPE_EXECUTION_ENABLED=false.");
@@ -351,7 +338,6 @@ export async function executePreparedWipe(kind: WipeKind, rustMapsUrl: string, a
     await auditWipe("WIPE_FAILED_SAFE_OFFLINE", actor, error instanceof Error ? error.message : "Falha desconhecida"); throw error;
   }
 }
-
 export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,size:number,actor:WipeActor,automated=false,lifecycle:WipeLifecycle={},preparedBackupId?:string):Promise<{filesDeleted:number;seed:number;size:number;mapFile:string}>{
   await assertWipeUnlocked();
   if(!Number.isInteger(seed)||seed<0||seed>2147483647)throw new Error("Seed inválida.");
@@ -376,11 +362,9 @@ export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,si
     await auditWipe("WIPE_FAILED_SAFE_OFFLINE",actor,error instanceof Error?error.message:"Falha desconhecida");throw error;
   }
 }
-
 export async function executeWipe(kind: WipeKind, rustMapsUrl: string, confirmation: string, actor: WipeActor): Promise<{ filesDeleted: number; mapUrl: string }> {
   if (confirmation !== "WIPE GUERRA FRIA") throw new Error("Confirmação inválida."); return executePreparedWipe(kind, rustMapsUrl, actor, false);
 }
-
 export async function executeProceduralWipe(kind:WipeKind,seed:number,size:number,confirmation:string,actor:WipeActor):Promise<{filesDeleted:number;seed:number;size:number;mapFile:string}>{
   if(confirmation!=="WIPE GUERRA FRIA")throw new Error("Confirmação inválida.");
   return executePreparedProceduralWipe(kind,seed,size,actor,false);
