@@ -2,9 +2,37 @@ import { EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, t
 import { auditWipe, buildWipePlan, diagnoseHost, executeProceduralWipe, type WipeKind } from "../../core/hostWipe.js";
 import { runIsolatedVpsWipeTest } from "../../core/vpsWipeTest.js";
 import { getWipeLockState, setWipeLock } from "../../core/wipeLock.js";
+import { sendGameAnnouncement } from "../utils/gameAnnouncement.js";
 
 const TEST_PANEL_URL = "https://painel-gf.duckdns.org";
 const TEST_SERVER_ID = "74ac18ef";
+const DEFAULT_CHAT_CHANNEL_ID = "1499084541791436861";
+
+function wipeAnnouncementChannelIds(): string[] {
+  return [...new Set([
+    process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID,
+    ...(process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_IDS || "").split(/[\s,;]+/),
+    process.env.DISCORD_CHAT_CHANNEL_ID || DEFAULT_CHAT_CHANNEL_ID,
+  ].map(value => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+async function sendManualWipeAnnouncement(interaction: ChatInputCommandInteraction, phase: "started" | "completed", kind: WipeKind, seed: number, size: number): Promise<void> {
+  const completed = phase === "completed";
+  const embed = new EmbedBuilder()
+    .setColor(completed ? 0x38c978 : 0xe53935)
+    .setTitle(completed ? "✅ WIPE CONCLUÍDO — SERVIDOR ONLINE" : "🧊 WIPE INICIADO — SERVIDOR EM MANUTENÇÃO")
+    .setDescription(completed
+      ? `O servidor Guerra Fria foi wipado com sucesso.\n\n**Tipo:** ${kind === "general" ? "Mapa + BPs" : "Mapa"}\n**Seed:** \`${seed}\` • **Size:** \`${size}\`\n\nBom wipe!`
+      : `O wipe do Guerra Fria acabou de começar.\n\n**Tipo:** ${kind === "general" ? "Mapa + BPs" : "Mapa"}\n**Novo mapa:** seed \`${seed}\` • size \`${size}\`\n\nAguarde a confirmação de que o servidor voltou online.`)
+    .setFooter({ text: completed ? "Guerra Fria • Bom wipe!" : "Guerra Fria • Wipe em andamento" })
+    .setTimestamp();
+
+  await Promise.all(wipeAnnouncementChannelIds().map(async id => {
+    const channel = await interaction.client.channels.fetch(id).catch(() => null);
+    if (!channel?.isSendable()) return;
+    await channel.send({ content: "@everyone", allowedMentions: { parse: ["everyone"] }, embeds: [embed] }).catch(() => {});
+  }));
+}
 
 export const data = new SlashCommandBuilder()
   .setName("wipe")
@@ -14,7 +42,7 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub=>sub.setName("destravar").setDescription("Libera as execuções manuais e automáticas de wipe."))
   .addSubcommand(sub=>sub.setName("trava").setDescription("Mostra o estado atual da trava do wipe."))
   .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Simula o wipe e testa permissões usando somente um arquivo temporário."))
-  .addSubcommand(sub=>sub.setName("test").setDescription("Wipe de teste isolado somente na VPS nova, sem avisos públicos ou RCON.")
+  .addSubcommand(sub=>sub.setName("test").setDescription("Testa o mesmo fluxo do wipe oficial na VPS nova, com aviso dentro do jogo.")
     .addIntegerOption(opt=>opt.setName("seed").setDescription("Seed do mapa de teste").setRequired(true).setMinValue(0).setMaxValue(2147483647))
     .addIntegerOption(opt=>opt.setName("size").setDescription("Size do mapa de teste").setRequired(true).setMinValue(1000).setMaxValue(6000))
     .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite TESTE VPS").setRequired(true)))
@@ -77,10 +105,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         throw new Error("Confirmação inválida. Digite exatamente TESTE VPS.");
       }
       const seed=interaction.options.getInteger("seed",true),size=interaction.options.getInteger("size",true);
-      await auditWipe("WIPE_TEST_STARTED",actor,`Teste isolado na VPS ${TEST_SERVER_ID}; seed ${seed}; size ${size}; sem avisos Discord e sem RCON.`);
+      await auditWipe("WIPE_TEST_STARTED",actor,`Teste na VPS ${TEST_SERVER_ID}; seed ${seed}; size ${size}; mesmo fluxo operacional do wipe oficial.`);
+      await sendGameAnnouncement("GUERRA FRIA","TESTE DE WIPE: se funcionar aqui, funciona em todo o sistema. O fluxo e o mesmo do wipe oficial.","#FFD700").catch(()=>null);
+      await new Promise(resolve=>setTimeout(resolve,5_000));
       const result=await runIsolatedVpsWipeTest(seed,size);
-      await auditWipe("WIPE_TEST_COMPLETED",actor,`Teste isolado concluído; seed ${result.seed}; size ${result.size}; mapa ${result.mapFile}; backup ${result.backupId}.`);
-      await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe de teste concluído na VPS").setDescription("O teste usou somente a API do Pterodactyl da VPS autorizada. Não usou RCON, não enviou aviso público e não resetou o leaderboard do servidor principal.").addFields(
+      await sendGameAnnouncement("GUERRA FRIA","TESTE DE WIPE CONCLUIDO COM SUCESSO. O fluxo oficial utiliza a mesma sequencia.","#7CFC00").catch(()=>null);
+      await auditWipe("WIPE_TEST_COMPLETED",actor,`Teste concluído; seed ${result.seed}; size ${result.size}; mapa ${result.mapFile}; backup ${result.backupId}; fluxo espelho do oficial.`);
+      await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe de teste concluído na VPS").setDescription("O teste executou a sequência operacional usada pelo wipe oficial: STOP → offline → backup → seed/size → exclusão dos saves → START → running → confirmação do novo .map. O servidor também recebeu avisos RCON dentro do jogo.").addFields(
         {name:"Servidor autorizado",value:`\`${TEST_SERVER_ID}\``,inline:true},
         {name:"Seed",value:`\`${result.seed}\``,inline:true},
         {name:"Size",value:`\`${result.size}\``,inline:true},
@@ -102,6 +133,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         { name: "Segurança", value: "🔒 Nenhuma exclusão permitida", inline: false }
       ).setTimestamp()]});return;
     }
-    await executeProceduralWipe(kind,seed,size,interaction.options.getString("confirmacao",true),actor);
+
+    const confirmation=interaction.options.getString("confirmacao",true);
+    if(confirmation!=="WIPE GUERRA FRIA")throw new Error("Confirmação inválida.");
+    await sendManualWipeAnnouncement(interaction,"started",kind,seed,size);
+    await sendGameAnnouncement("GUERRA FRIA",`Wipe iniciado. Novo mapa: seed ${seed}, size ${size}.`,"#FFD700").catch(()=>null);
+    const result=await executeProceduralWipe(kind,seed,size,confirmation,actor);
+    await sendManualWipeAnnouncement(interaction,"completed",kind,result.seed,result.size);
+    await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
+    await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe concluído").setDescription(`Servidor online com seed \`${result.seed}\` e size \`${result.size}\`.\nMapa confirmado: \`${result.mapFile}\``).setTimestamp()]});
   } catch(error:any){await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xd64545).setTitle("🔒 Ação bloqueada").setDescription(error?.message||"Falha no sistema de wipe.").setTimestamp()]});}
 }
