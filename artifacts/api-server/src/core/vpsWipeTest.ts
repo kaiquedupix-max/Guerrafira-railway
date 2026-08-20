@@ -178,7 +178,7 @@ async function createBackup(): Promise<string> {
   throw new Error("O backup não terminou em 15 minutos; teste cancelado.");
 }
 
-async function waitForExpectedMap(seed: number, size: number, timeoutMs = 8 * 60_000): Promise<string> {
+async function waitForExpectedMap(seed: number, size: number, timeoutMs = 10 * 60_000): Promise<string> {
   const exact = new RegExp(`(?:^|\\.)${size}(?:\\.1)?\\.${seed}(?:\\.|$)`, "i");
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -204,21 +204,18 @@ export async function runIsolatedVpsWipeTest(seed: number, size: number): Promis
   await request("/power", { method: "POST", body: JSON.stringify({ signal: "stop" }) });
   await waitForState("offline", 120_000);
 
-  let started = false;
+  const backupId = await createBackup();
+  await configureProceduralMap(seed, size);
+  await deleteFiles(files);
+  await request("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) });
+
   try {
-    const backupId = await createBackup();
-    await configureProceduralMap(seed, size);
-    await deleteFiles(files);
-    await request("/power", { method: "POST", body: JSON.stringify({ signal: "start" }) });
-    started = true;
-    await waitForState("running", 180_000);
-    const mapFile = await waitForExpectedMap(seed, size);
-    return { filesDeleted: files.length, seed, size, mapFile, backupId };
+    await waitForState("running", 10 * 60_000);
   } catch (error) {
-    if (started) {
-      await request("/power", { method: "POST", body: JSON.stringify({ signal: "stop" }) }).catch(() => null);
-      await waitForState("offline", 120_000).catch(() => null);
-    }
-    throw error;
+    const current = await state().catch(() => "unknown");
+    throw new Error(`O comando START foi enviado, mas o Pterodactyl não confirmou running no tempo esperado. Estado atual: ${current}. O bot NÃO enviou STOP.`);
   }
+
+  const mapFile = await waitForExpectedMap(seed, size);
+  return { filesDeleted: files.length, seed, size, mapFile, backupId };
 }
