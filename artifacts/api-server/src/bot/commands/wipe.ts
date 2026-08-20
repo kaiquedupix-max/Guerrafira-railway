@@ -2,6 +2,9 @@ import { EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, t
 import { auditWipe, buildWipePlan, diagnoseHost, executeProceduralWipe, type WipeKind } from "../../core/hostWipe.js";
 import { getWipeLockState, setWipeLock } from "../../core/wipeLock.js";
 
+const TEST_PANEL_URL = "https://painel-gf.duckdns.org";
+const TEST_SERVER_ID = "74ac18ef";
+
 export const data = new SlashCommandBuilder()
   .setName("wipe")
   .setDescription("Diagnostica e prepara o wipe do servidor (modo seguro).")
@@ -10,6 +13,10 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub=>sub.setName("destravar").setDescription("Libera as execuções manuais e automáticas de wipe."))
   .addSubcommand(sub=>sub.setName("trava").setDescription("Mostra o estado atual da trava do wipe."))
   .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Simula o wipe e testa permissões usando somente um arquivo temporário."))
+  .addSubcommand(sub=>sub.setName("test").setDescription("Wipe de teste isolado somente na VPS nova, sem avisos públicos ou RCON.")
+    .addIntegerOption(opt=>opt.setName("seed").setDescription("Seed do mapa de teste").setRequired(true).setMinValue(0).setMaxValue(2147483647))
+    .addIntegerOption(opt=>opt.setName("size").setDescription("Size do mapa de teste").setRequired(true).setMinValue(1000).setMaxValue(6000))
+    .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite TESTE VPS").setRequired(true)))
   .addSubcommand(sub=>sub.setName("planejar").setDescription("Lista exatamente o que seria removido.").addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices(
     {name:"Wipe mapa",value:"map"},{name:"Wipe geral (mapa + BPs)",value:"general"}
   )).addIntegerOption(opt=>opt.setName("seed").setDescription("Seed do novo mapa").setRequired(true).setMinValue(0).setMaxValue(2147483647)).addIntegerOption(opt=>opt.setName("size").setDescription("Size do novo mapa").setRequired(true).setMinValue(1000).setMaxValue(6000)))
@@ -58,6 +65,26 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         { name: "Simulação das exclusões", value: `Wipe mapa: **${mapFiles.length}** arquivos\nWipe geral: **${allFiles.length}** arquivos\nA lista completa está no arquivo anexado.`, inline: false },
         { name: "Execução destrutiva", value: d.capabilities.destructiveEnabled&&d.capabilities.wipeUnlocked ? "🔓 Habilitada" : "🔒 Bloqueada", inline: true }
       ).setTimestamp()],files:[{attachment:Buffer.from(report,"utf8"),name:`diagnostico-wipe-${Date.now()}.txt`} ]}); return;
+    }
+    if(sub==="test"){
+      const configuredPanel=String(process.env.ELGAE_PANEL_URL||"").replace(/\/$/,"");
+      const configuredServer=String(process.env.ELGAE_SERVER_ID||"").trim();
+      if(configuredPanel!==TEST_PANEL_URL||configuredServer!==TEST_SERVER_ID){
+        throw new Error("/wipe test bloqueado: as variáveis não apontam para a VPS de teste autorizada.");
+      }
+      if(interaction.options.getString("confirmacao",true)!=="TESTE VPS"){
+        throw new Error("Confirmação inválida. Digite exatamente TESTE VPS.");
+      }
+      const seed=interaction.options.getInteger("seed",true),size=interaction.options.getInteger("size",true);
+      await auditWipe("WIPE_TEST_STARTED",actor,`Teste isolado na VPS ${TEST_SERVER_ID}; seed ${seed}; size ${size}; sem avisos Discord e sem RCON.`);
+      const result=await executeProceduralWipe("map",seed,size,"WIPE GUERRA FRIA",actor);
+      await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe de teste concluído na VPS").setDescription("O teste usou somente a integração do Pterodactyl configurada nas variáveis ELGAE_PANEL_URL, ELGAE_SERVER_ID e ELGAE_API_KEY. Nenhum aviso público de wipe foi enviado e nenhum comando RCON foi usado.").addFields(
+        {name:"Servidor autorizado",value:`\`${TEST_SERVER_ID}\``,inline:true},
+        {name:"Seed",value:`\`${result.seed}\``,inline:true},
+        {name:"Size",value:`\`${result.size}\``,inline:true},
+        {name:"Arquivos removidos",value:String(result.filesDeleted),inline:true},
+        {name:"Mapa gerado",value:`\`${result.mapFile}\``,inline:false}
+      ).setTimestamp()]});return;
     }
     const kind=(sub==="geral"?"general":sub==="mapa"?"map":interaction.options.getString("tipo",true)) as WipeKind;
     const seed=interaction.options.getInteger("seed",true),size=interaction.options.getInteger("size",true);
