@@ -82,10 +82,8 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub=>sub.setName("destravar").setDescription("Libera as execuções manuais e automáticas de wipe."))
   .addSubcommand(sub=>sub.setName("trava").setDescription("Mostra o estado atual da trava do wipe."))
   .addSubcommand(sub=>sub.setName("diagnostico").setDescription("Simula o wipe e testa permissões usando somente um arquivo temporário."))
-  .addSubcommand(sub=>sub.setName("test").setDescription("Testa o fluxo procedural do wipe na VPS nova.")
-    .addIntegerOption(opt=>opt.setName("seed").setDescription("Seed do mapa de teste").setRequired(true).setMinValue(0).setMaxValue(2147483647))
-    .addIntegerOption(opt=>opt.setName("size").setDescription("Size do mapa de teste").setRequired(true).setMinValue(1000).setMaxValue(6000))
-    .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite TESTE VPS").setRequired(true)))
+  .addSubcommand(sub=>addMapSourceOptions(sub.setName("test").setDescription("Testa o wipe na VPS nova por seed/size ou link .map.")
+    .addStringOption(opt=>opt.setName("confirmacao").setDescription("Digite TESTE VPS").setRequired(true))))
   .addSubcommand(sub=>addMapSourceOptions(sub.setName("planejar").setDescription("Lista exatamente o que seria removido.")
     .addStringOption(opt=>opt.setName("tipo").setDescription("Tipo de wipe").setRequired(true).addChoices(
       {name:"Wipe mapa",value:"map"},{name:"Wipe geral (mapa + BPs)",value:"general"}
@@ -151,11 +149,22 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       const configuredServer=String(process.env.ELGAE_SERVER_ID||"").trim();
       if(configuredPanel!==TEST_PANEL_URL||configuredServer!==TEST_SERVER_ID) throw new Error("/wipe test bloqueado: as variáveis não apontam para a VPS de teste autorizada.");
       if(interaction.options.getString("confirmacao",true)!=="TESTE VPS") throw new Error("Confirmação inválida. Digite exatamente TESTE VPS.");
-      const seed=interaction.options.getInteger("seed",true),size=interaction.options.getInteger("size",true);
-      await auditWipe("WIPE_TEST_STARTED",actor,`Teste na VPS ${TEST_SERVER_ID}; seed ${seed}; size ${size}; mesmo fluxo operacional do wipe oficial.`);
+      const selection=readMapSelection(interaction);
+      await auditWipe("WIPE_TEST_STARTED",actor,`Teste na VPS ${TEST_SERVER_ID}; modo ${selection.mode}; mesmo fluxo operacional do wipe oficial.`);
       await sendGameAnnouncement("GUERRA FRIA","TESTE DE WIPE: se funcionar aqui, funciona em todo o sistema. O fluxo e o mesmo do wipe oficial.","#FFD700").catch(()=>null);
       await new Promise(resolve=>setTimeout(resolve,5_000));
-      const result=await runIsolatedVpsWipeTest(seed,size);
+      if(selection.mode==="link"){
+        const result=await executeWipe("map",selection.mapUrl,"WIPE GUERRA FRIA",actor);
+        await sendGameAnnouncement("GUERRA FRIA","TESTE DE WIPE COM MAPA CUSTOMIZADO CONCLUIDO COM SUCESSO.","#7CFC00").catch(()=>null);
+        await auditWipe("WIPE_TEST_COMPLETED",actor,`Teste por link .map concluído; mapa ${result.mapUrl}.`);
+        await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe de teste concluído na VPS").setDescription("O teste executou o fluxo oficial usando um mapa customizado via link `.map`.").addFields(
+          {name:"Servidor autorizado",value:`\`${TEST_SERVER_ID}\``,inline:true},
+          {name:"Modo",value:"Link .map",inline:true},
+          {name:"Resultado",value:"✅ URL de mapa aplicada e servidor iniciado",inline:false}
+        ).setTimestamp()]});
+        return;
+      }
+      const result=await runIsolatedVpsWipeTest(selection.seed,selection.size);
       await sendGameAnnouncement("GUERRA FRIA","TESTE DE WIPE CONCLUIDO COM SUCESSO. O fluxo oficial utiliza a mesma sequencia.","#7CFC00").catch(()=>null);
       await auditWipe("WIPE_TEST_COMPLETED",actor,`Teste concluído; seed ${result.seed}; size ${result.size}; mapa ${result.mapFile}; backup ${result.backupId}; fluxo espelho do oficial.`);
       await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe de teste concluído na VPS").setDescription("O teste executou a sequência procedural do wipe oficial.").addFields(
@@ -195,7 +204,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       const result=await executeWipe(kind,selection.mapUrl,confirmation,actor);
       await sendManualWipeAnnouncement(interaction,"completed",kind,selection);
       await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
-      await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe concluído").setDescription(`Servidor online com o mapa customizado carregado via URL.\nMapa aplicado: \`${result.mapUrl.slice(0,180)}\``).setTimestamp()]});
+      await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x38c978).setTitle("✅ Wipe concluído").setDescription("Servidor online com o mapa customizado carregado via URL do RustMaps.").setTimestamp()]});
       return;
     }
 
