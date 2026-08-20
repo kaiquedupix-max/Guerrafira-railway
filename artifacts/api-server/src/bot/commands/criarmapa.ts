@@ -5,12 +5,13 @@ import {
 } from "discord.js";
 import { and, eq, gt, isNull, lte } from "drizzle-orm";
 import { db, pool, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, boosterLinksTable } from "@workspace/db";
-import { diagnoseHost, executePreparedProceduralWipe, prepareProceduralWipeBackup } from "../../core/hostWipe.js";
+import { diagnoseHost, executePreparedProceduralWipe, executePreparedWipe, prepareProceduralWipeBackup } from "../../core/hostWipe.js";
 import { getWipeLockState } from "../../core/wipeLock.js";
 import { sendGameAnnouncement } from "../utils/gameAnnouncement.js";
 import { logger } from "../../lib/logger.js";
 
-interface MapOption { name: string; image?: string; seed: number; size: number; }
+type MapMode = "seed" | "link";
+interface MapOption { name: string; image?: string; mode: MapMode; seed?: number; size?: number; mapUrl?: string; }
 export interface MapImageUpload { name: string; mime: string; data: string; }
 interface MapVoteRuntime {
   id: number; messageId: string; channelId: string; endsAt: number; wipeAt: number; maps: MapOption[];
@@ -27,6 +28,22 @@ const ANNOUNCEMENT_INTERVAL = 4 * 60 * 60_000;
 const VIP_MENTION = `<@&${VIP_ROLE_ID}>`;
 const BOOSTER_MENTION = `<@&${BOOSTER_ROLE_ID}>`;
 
+function normalizeMap(raw: any, index: number): MapOption {
+  const mode: MapMode = raw?.mode === "link" || raw?.mapUrl ? "link" : "seed";
+  if (mode === "link") return { name: raw?.name || `Mapa ${index + 1}`, image: raw?.image, mode, mapUrl: String(raw?.mapUrl || "").trim() };
+  return { name: raw?.name || `Mapa ${index + 1}`, image: raw?.image, mode, seed: Number(raw?.seed), size: Number(raw?.size) };
+}
+
+function mapDetails(map: MapOption): string {
+  return map.mode === "link"
+    ? "**Fonte:** `RustMaps .map`"
+    : `**Seed:** \`${map.seed}\`\n**Size:** \`${map.size}\``;
+}
+
+function mapLogDetails(map: MapOption): string {
+  return map.mode === "link" ? `${map.name} • link .map` : `${map.name} • seed ${map.seed} • size ${map.size}`;
+}
+
 function announcementChannelIds(includeGeneralChat = false): string[] {
   const configured = [
     process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID,
@@ -42,8 +59,8 @@ async function sendWipeAnnouncement(client: Client, phase: "offline" | "online",
     .setColor(online ? 0xd6a934 : 0xb45309)
     .setTitle(online ? "✅ SERVIDOR WIPADO — JÁ ESTÁ ONLINE" : "🧊 SERVIDOR DESLIGADO PARA WIPE")
     .setDescription(online
-      ? `O Guerra Fria iniciou já wipeado com **${map.name}**.\n\nSeed: \`${map.seed}\` • Size: \`${map.size}\`\n\nO leaderboard também foi resetado automaticamente.`
-      : `O servidor foi desligado e o wipe de **${map.name}** começou.\n\nAguarde a confirmação de que ele voltou online.`)
+      ? `O Guerra Fria iniciou já wipeado com **${map.name}**.\n\n${mapDetails(map)}\n\nO leaderboard também foi resetado automaticamente.`
+      : `O servidor foi desligado e o wipe de **${map.name}** começou.\n\n${map.mode === "link" ? "Mapa customizado do RustMaps será carregado pelo link `.map`." : `Seed: \`${map.seed}\` • Size: \`${map.size}\``}\n\nAguarde a confirmação de que ele voltou online.`)
     .setFooter({ text: online ? "Guerra Fria • Bom wipe!" : "Guerra Fria • Wipe em andamento" })
     .setTimestamp();
   const components = online
@@ -61,12 +78,18 @@ export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addStringOption(o => o.setName("data").setDescription("Data: votação 18h e fluxo do wipe 18h20 (AAAA-MM-DD)").setRequired(true))
-  .addIntegerOption(o => o.setName("seed1").setDescription("Seed do Mapa 1").setRequired(true).setMinValue(0).setMaxValue(2147483647))
-  .addIntegerOption(o => o.setName("size1").setDescription("Size do Mapa 1").setRequired(true).setMinValue(1000).setMaxValue(6000))
-  .addIntegerOption(o => o.setName("seed2").setDescription("Seed do Mapa 2").setRequired(true).setMinValue(0).setMaxValue(2147483647))
-  .addIntegerOption(o => o.setName("size2").setDescription("Size do Mapa 2").setRequired(true).setMinValue(1000).setMaxValue(6000))
-  .addIntegerOption(o => o.setName("seed3").setDescription("Seed do Mapa 3").setRequired(true).setMinValue(0).setMaxValue(2147483647))
-  .addIntegerOption(o => o.setName("size3").setDescription("Size do Mapa 3").setRequired(true).setMinValue(1000).setMaxValue(6000))
+  .addStringOption(o => o.setName("modo1").setDescription("Fonte do Mapa 1").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
+  .addStringOption(o => o.setName("modo2").setDescription("Fonte do Mapa 2").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
+  .addStringOption(o => o.setName("modo3").setDescription("Fonte do Mapa 3").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
+  .addIntegerOption(o => o.setName("seed1").setDescription("Seed do Mapa 1 (modo seed)").setMinValue(0).setMaxValue(2147483647))
+  .addIntegerOption(o => o.setName("size1").setDescription("Size do Mapa 1 (modo seed)").setMinValue(1000).setMaxValue(6000))
+  .addStringOption(o => o.setName("mapa1").setDescription("Link .map do Mapa 1 (modo link)"))
+  .addIntegerOption(o => o.setName("seed2").setDescription("Seed do Mapa 2 (modo seed)").setMinValue(0).setMaxValue(2147483647))
+  .addIntegerOption(o => o.setName("size2").setDescription("Size do Mapa 2 (modo seed)").setMinValue(1000).setMaxValue(6000))
+  .addStringOption(o => o.setName("mapa2").setDescription("Link .map do Mapa 2 (modo link)"))
+  .addIntegerOption(o => o.setName("seed3").setDescription("Seed do Mapa 3 (modo seed)").setMinValue(0).setMaxValue(2147483647))
+  .addIntegerOption(o => o.setName("size3").setDescription("Size do Mapa 3 (modo seed)").setMinValue(1000).setMaxValue(6000))
+  .addStringOption(o => o.setName("mapa3").setDescription("Link .map do Mapa 3 (modo link)"))
   .addAttachmentOption(o => o.setName("imagem1").setDescription("Imagem opcional do Mapa 1"))
   .addAttachmentOption(o => o.setName("imagem2").setDescription("Imagem opcional do Mapa 2"))
   .addAttachmentOption(o => o.setName("imagem3").setDescription("Imagem opcional do Mapa 3"));
@@ -80,6 +103,7 @@ export function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeA
   }
   throw new Error("Não foi possível calcular o próximo wipe.");
 }
+
 export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error("Informe a data no formato AAAA-MM-DD.");
   const [year,month,day]=date.split("-").map(Number);const voteAt=Date.UTC(year,month-1,day,21,0,0);const check=new Date(voteAt);
@@ -103,7 +127,11 @@ function headerEmbed(endsAt: number) {
 
 function mapEmbeds(maps: MapOption[]) {
   const colors = [0xe53935, 0x5865f2, 0x2ecc71];
-  return maps.map((m, i) => { const embed=new EmbedBuilder().setColor(colors[i] ?? 0x5865f2).setTitle(`🗺️ ${m.name}`).setDescription(`**Seed:** \`${m.seed}\`\n**Size:** \`${m.size}\``); if(m.image)embed.setImage(m.image); return embed; });
+  return maps.map((m, i) => {
+    const embed=new EmbedBuilder().setColor(colors[i] ?? 0x5865f2).setTitle(`🗺️ ${m.name}`).setDescription(mapDetails(m));
+    if(m.image)embed.setImage(m.image);
+    return embed;
+  });
 }
 
 function rows(maps: MapOption[]) {
@@ -153,21 +181,17 @@ async function loadVote(messageId: string, client?: Client): Promise<MapVoteRunt
   const cached = activeVotes.get(messageId); if (cached) return cached;
   const rowsSaved = await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.messageId, messageId), eq(mapVotesTable.status, "active"))).limit(1);
   const saved = rowsSaved[0]; if (!saved) return null;
-  let maps: MapOption[]; try { maps = JSON.parse(saved.mapsJson) as MapOption[]; } catch { return null; }
+  let maps: MapOption[]; try { maps = (JSON.parse(saved.mapsJson) as any[]).map(normalizeMap); } catch { return null; }
   const vote: MapVoteRuntime = { id: saved.id, messageId: saved.messageId, channelId: saved.channelId, endsAt: saved.endsAt.getTime(), wipeAt: saved.wipeAt?.getTime() || saved.endsAt.getTime()+20*60_000, maps };
   if (client) scheduleRuntime(client, vote);
   return vote;
 }
 
-/**
- * Recarrega votações ativas depois de restart/deploy e atualiza a PRÓPRIA mensagem.
- * Não cria votação nova, não apaga votos e não muda o horário de encerramento.
- */
 export async function restoreActiveMapVotes(client: Client): Promise<void> {
   const savedVotes = await db.select().from(mapVotesTable).where(eq(mapVotesTable.status, "active"));
   for (const saved of savedVotes) {
     let maps: MapOption[];
-    try { maps = JSON.parse(saved.mapsJson) as MapOption[]; } catch { continue; }
+    try { maps = (JSON.parse(saved.mapsJson) as any[]).map(normalizeMap); } catch { continue; }
     const vote: MapVoteRuntime = {
       id: saved.id,
       messageId: saved.messageId,
@@ -176,11 +200,9 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
       wipeAt: saved.wipeAt?.getTime() || saved.endsAt.getTime()+20*60_000,
       maps,
     };
-    const correctedWipeAt=vote.endsAt+20*60_000;if(vote.wipeAt!==correctedWipeAt){vote.wipeAt=correctedWipeAt;await db.update(mapVotesTable).set({wipeAt:new Date(correctedWipeAt)}).where(eq(mapVotesTable.id,vote.id));}
-    if (vote.endsAt <= Date.now()) {
-      await finishVote(client, vote.messageId).catch(() => {});
-      continue;
-    }
+    const correctedWipeAt=vote.endsAt+20*60_000;
+    if(vote.wipeAt!==correctedWipeAt){vote.wipeAt=correctedWipeAt;await db.update(mapVotesTable).set({wipeAt:new Date(correctedWipeAt)}).where(eq(mapVotesTable.id,vote.id));}
+    if (vote.endsAt <= Date.now()) { await finishVote(client, vote.messageId).catch(() => {}); continue; }
     scheduleRuntime(client, vote);
     const channel = await client.channels.fetch(vote.channelId).catch(() => null) as TextChannel | null;
     if (!channel?.isTextBased()) continue;
@@ -202,16 +224,38 @@ async function getVoteWeight(discordUserId: string): Promise<{ weight: number; v
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   try{
-  const result=await createMapVote(interaction.client,{createdBy:interaction.user.id,date:interaction.options.getString("data",true),maps:[1,2,3].map(n=>({seed:interaction.options.getInteger(`seed${n}`,true),size:interaction.options.getInteger(`size${n}`,true)})),images:[1,2,3].map(n=>{const a=interaction.options.getAttachment(`imagem${n}`);if(a&&!a.contentType?.startsWith("image/"))throw new Error(`imagem${n} não é uma imagem válida.`);return a?.url})});
-  await interaction.editReply(`✅ Votação criada em <#${result.channelId}>.\n🏆 Resultado: <t:${Math.floor(result.endsAt/1000)}:F>.\n🧊 Wipe automático preparado: <t:${Math.floor(result.wipeAt/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
+    const maps = [1,2,3].map(n => ({
+      mode: interaction.options.getString(`modo${n}`,true) as MapMode,
+      seed: interaction.options.getInteger(`seed${n}`) ?? undefined,
+      size: interaction.options.getInteger(`size${n}`) ?? undefined,
+      mapUrl: interaction.options.getString(`mapa${n}`)?.trim() || undefined,
+    }));
+    const result=await createMapVote(interaction.client,{
+      createdBy:interaction.user.id,
+      date:interaction.options.getString("data",true),
+      maps,
+      images:[1,2,3].map(n=>{const a=interaction.options.getAttachment(`imagem${n}`);if(a&&!a.contentType?.startsWith("image/"))throw new Error(`imagem${n} não é uma imagem válida.`);return a?.url}),
+    });
+    await interaction.editReply(`✅ Votação criada em <#${result.channelId}>.\n🏆 Resultado: <t:${Math.floor(result.endsAt/1000)}:F>.\n🧊 Wipe automático preparado: <t:${Math.floor(result.wipeAt/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
   }catch(error){await interaction.editReply(`❌ ${error instanceof Error?error.message:"Falha ao criar votação."}`)}
 }
 
-export async function createMapVote(client:Client,input:{createdBy:string;date:string;maps:Array<{seed:number;size:number}>;images?:Array<string|undefined>;imageFiles?:Array<MapImageUpload|undefined>;expectedWipeAt?:number}):Promise<{id:number;messageId:string;channelId:string;endsAt:number;wipeAt:number;maps:MapOption[]}>{
+export async function createMapVote(client:Client,input:{createdBy:string;date:string;maps:Array<{mode?:MapMode;seed?:number;size?:number;mapUrl?:string}>;images?:Array<string|undefined>;imageFiles?:Array<MapImageUpload|undefined>;expectedWipeAt?:number}):Promise<{id:number;messageId:string;channelId:string;endsAt:number;wipeAt:number;maps:MapOption[]}>{
   if(input.maps.length!==3)throw new Error("Informe exatamente três mapas.");
-  for(const [i,map]of input.maps.entries()){if(!Number.isInteger(map.seed)||map.seed<0||map.seed>2147483647)throw new Error(`Seed do Mapa ${i+1} inválida.`);if(!Number.isInteger(map.size)||map.size<1000||map.size>6000)throw new Error(`Size do Mapa ${i+1} deve estar entre 1000 e 6000.`)}
+  const normalizedInput=input.maps.map((raw,i)=>normalizeMap({...raw,name:`Mapa ${i+1}`},i));
+  for(const [i,map] of normalizedInput.entries()){
+    if(map.mode==="link"){
+      if(!map.mapUrl)throw new Error(`Informe o link .map do Mapa ${i+1}.`);
+      let url:URL;try{url=new URL(map.mapUrl)}catch{throw new Error(`Link .map do Mapa ${i+1} inválido.`)}
+      if(url.protocol!=="https:"&&url.protocol!=="http:")throw new Error(`Link .map do Mapa ${i+1} precisa usar HTTPS.`);
+    }else{
+      if(!Number.isInteger(map.seed)||Number(map.seed)<0||Number(map.seed)>2147483647)throw new Error(`Seed do Mapa ${i+1} inválida.`);
+      if(!Number.isInteger(map.size)||Number(map.size)<1000||Number(map.size)>6000)throw new Error(`Size do Mapa ${i+1} deve estar entre 1000 e 6000.`);
+    }
+  }
   const readiness=await diagnoseHost();
-  if(!readiness.capabilities?.proceduralStartup)throw new Error("A host não disponibilizou as variáveis de seed e size. A votação não foi criada para evitar um wipe sem mapa.");
+  if(normalizedInput.some(m=>m.mode==="seed")&&!readiness.capabilities?.proceduralStartup)throw new Error("A host não disponibilizou as variáveis de seed e size para mapas procedurais.");
+  if(normalizedInput.some(m=>m.mode==="link")&&!readiness.levelUrlVariable)throw new Error("A host não disponibilizou uma variável LEVEL_URL/MAP_URL para carregar mapas .map.");
   const existing=await db.select({id:mapVotesTable.id,endsAt:mapVotesTable.endsAt}).from(mapVotesTable).where(eq(mapVotesTable.status,"active")).limit(1);
   if(existing[0])throw new Error(`Já existe uma votação ativa com encerramento em ${existing[0].endsAt.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})}.`);
   const channelId = process.env.DISCORD_VIP_MAP_CHANNEL_ID?.trim() || VOTE_CHANNEL_ID;
@@ -229,7 +273,7 @@ export async function createMapVote(client:Client,input:{createdBy:string;date:s
       const attachment=Buffer.from(match[1],"base64");if(!attachment.length||attachment.length>5*1024*1024)throw new Error(`A imagem do Mapa ${n} deve ter no máximo 5 MB.`);
       const ext=upload.mime.toLowerCase()==="image/jpeg"?"jpg":upload.mime.split("/")[1].toLowerCase();uploadedName=`mapa-${n}.${ext}`;files.push({attachment,name:uploadedName});
     }
-    maps.push({name:`Mapa ${n}`,seed:input.maps[n-1].seed,size:input.maps[n-1].size,image:uploadedName?`attachment://${uploadedName}`:input.images?.[n-1]});
+    maps.push({...normalizedInput[n-1],name:`Mapa ${n}`,image:uploadedName?`attachment://${uploadedName}`:input.images?.[n-1]});
   }
   const endsAt=schedule.voteEndsAt;
   const message = await channel.send({...voteMessagePayload({ endsAt, maps }),files});
@@ -283,26 +327,29 @@ async function finishVote(client: Client, messageId: string): Promise<void> {
     .addFields(...vote.maps.map((m, i) => ({ name: `🗺️ ${m.name}`, value: `**${counts[i]} voto(s)**`, inline: true })))
     .setFooter({ text: `Guerra Fria • ${ballots.length} participante(s)` }).setTimestamp();
   await channel.send({ embeds: [embed] });
+  const winner=vote.maps[winnerIndex];
   const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
-  if(chat?.isSendable()) await chat.send(`🏆 **MAPA VENCEDOR:** ${vote.maps[winnerIndex].name}\nSeed: \`${vote.maps[winnerIndex].seed}\` • Size: \`${vote.maps[winnerIndex].size}\`\n🧊 O fluxo do wipe será iniciado às <t:${Math.floor(vote.wipeAt/1000)}:t>.`).catch(()=>{});
-  await sendGameAnnouncement("GUERRA FRIA",`${vote.maps[winnerIndex].name} venceu. O wipe inicia as 18:20.`,"#7CFC00").catch(()=>null);
+  if(chat?.isSendable()) await chat.send(`🏆 **MAPA VENCEDOR:** ${winner.name}\n${winner.mode==="link"?"Fonte: `RustMaps .map`":`Seed: \`${winner.seed}\` • Size: \`${winner.size}\``}\n🧊 O fluxo do wipe será iniciado às <t:${Math.floor(vote.wipeAt/1000)}:t>.`).catch(()=>{});
+  await sendGameAnnouncement("GUERRA FRIA",`${winner.name} venceu. O wipe inicia as 18:20.`,"#7CFC00").catch(()=>null);
 }
 
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
 let wipeProcessing=false;const wipeWarnings=new Set<string>();
 const preparedWipeBackups=new Map<number,string>();const backupRetryAt=new Map<number,number>();
 const wipeFailureAlerts=new Set<string>();
+
 async function reportWipeFailure(client:Client,voteId:number,stage:string,map:MapOption|undefined,error:unknown):Promise<void>{
   const raw=error instanceof Error?error.message:String(error||"Falha desconhecida");
   const reason=raw.replace(/(Bearer|token|password|secret|authorization)\s*[:=]\s*\S+/gi,"$1: [oculto]").slice(0,1500);
   const key=`${voteId}:${stage}:${reason}`;if(wipeFailureAlerts.has(key))return;wipeFailureAlerts.add(key);
-  logger.error({voteId,stage,seed:map?.seed,size:map?.size,reason},"Automatic wipe failure");
-  const description=`**Etapa:** ${stage}\n**Votação:** #${voteId}\n${map?`**Mapa:** ${map.name} • seed \`${map.seed}\` • size \`${map.size}\`\n`:""}**Erro:** ${reason}\n\nO sucesso não será anunciado enquanto a falha não for resolvida.`;
+  logger.error({voteId,stage,mode:map?.mode,seed:map?.seed,size:map?.size,reason},"Automatic wipe failure");
+  const description=`**Etapa:** ${stage}\n**Votação:** #${voteId}\n${map?`**Mapa:** ${mapLogDetails(map)}\n`:""}**Erro:** ${reason}\n\nO sucesso não será anunciado enquanto a falha não for resolvida.`;
   const embed=new EmbedBuilder().setColor(0xef4444).setTitle("🚨 Erro no wipe automático").setDescription(description).setFooter({text:"Guerra Fria • Log técnico do wipe"}).setTimestamp();
   const channels=[process.env.DISCORD_LOG_CHANNEL_ID,process.env.DISCORD_CHAT_CHANNEL_ID||CHAT_CHANNEL_ID].map(value=>value?.trim()).filter((value):value is string=>Boolean(value));
   await Promise.all([...new Set(channels)].map(async id=>{const channel=await client.channels.fetch(id).catch(()=>null);if(channel?.isSendable())await channel.send({embeds:[embed]}).catch(()=>{});}));
   try{const {notifySubscribedAdmins}=await import("../../admin/adminNotifications.js");await notifySubscribedAdmins({kind:"system",title:"Erro no wipe automático",message:`${stage}: ${reason}`,severity:"critical"});}catch{}
 }
+
 let preparationTableReady=false;
 async function ensurePreparationTable():Promise<void>{
   if(preparationTableReady)return;
@@ -322,39 +369,52 @@ async function savePreparedBackup(voteId:number,backupId:string,seed:number,size
   await ensurePreparationTable();await pool.query(`INSERT INTO wipe_preparations (vote_id,backup_uuid,seed,size) VALUES ($1,$2,$3,$4) ON CONFLICT (vote_id) DO UPDATE SET backup_uuid=EXCLUDED.backup_uuid,seed=EXCLUDED.seed,size=EXCLUDED.size,prepared_at=NOW()`,[voteId,backupId,seed,size]);
 }
 async function clearPreparedBackup(voteId:number):Promise<void>{await ensurePreparationTable();await pool.query(`DELETE FROM wipe_preparations WHERE vote_id=$1`,[voteId]);}
+
 async function processScheduledWipes(client:Client):Promise<void>{
   if(wipeProcessing||process.env.WIPE_EXECUTION_ENABLED!=="true"||process.env.WIPE_AUTOMATION_ENABLED!=="true")return;
   if(!(await getWipeLockState()).unlocked)return;wipeProcessing=true;
   try{
-  const now=new Date();const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));
-  for(const row of upcoming){
-    let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue}const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;
-    const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);
-    for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await sendGameAnnouncement("GUERRA FRIA",`Wipe em ${label}. Prepare-se!`).catch(()=>null);}}
-    if(!preparedWipeBackups.has(row.id)){const saved=await loadPreparedBackup(row.id,map.seed,map.size).catch(()=>null);if(saved)preparedWipeBackups.set(row.id,saved);}
-    if(remaining<=900&&!preparedWipeBackups.has(row.id)&&Date.now()>=(backupRetryAt.get(row.id)||0)){
-      try{const backupId=await prepareProceduralWipeBackup("map",map.seed,map.size,{id:"AUTOMATION",name:"Preparação do wipe automático"});await savePreparedBackup(row.id,backupId,map.seed,map.size);preparedWipeBackups.set(row.id,backupId);backupRetryAt.delete(row.id);await db.update(mapVotesTable).set({failureReason:null}).where(eq(mapVotesTable.id,row.id));}
-      catch(error){backupRetryAt.set(row.id,Date.now()+2*60_000);const reason=error instanceof Error?error.message:"Falha ao preparar backup";await db.update(mapVotesTable).set({failureReason:`Preparação do backup: ${reason}`}).where(eq(mapVotesTable.id,row.id));await reportWipeFailure(client,row.id,"Preparação/backup",map,error);}
+    const now=new Date();
+    const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));
+    for(const row of upcoming){
+      let maps:MapOption[];try{maps=(JSON.parse(row.mapsJson) as any[]).map(normalizeMap)}catch{continue}
+      const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)continue;
+      const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);
+      for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await sendGameAnnouncement("GUERRA FRIA",`Wipe em ${label}. Prepare-se!`).catch(()=>null);}}
+      if(map.mode!=="seed")continue;
+      const seed=Number(map.seed),size=Number(map.size);
+      if(!preparedWipeBackups.has(row.id)){const saved=await loadPreparedBackup(row.id,seed,size).catch(()=>null);if(saved)preparedWipeBackups.set(row.id,saved);}
+      if(remaining<=900&&!preparedWipeBackups.has(row.id)&&Date.now()>=(backupRetryAt.get(row.id)||0)){
+        try{const backupId=await prepareProceduralWipeBackup("map",seed,size,{id:"AUTOMATION",name:"Preparação do wipe automático"});await savePreparedBackup(row.id,backupId,seed,size);preparedWipeBackups.set(row.id,backupId);backupRetryAt.delete(row.id);await db.update(mapVotesTable).set({failureReason:null}).where(eq(mapVotesTable.id,row.id));}
+        catch(error){backupRetryAt.set(row.id,Date.now()+2*60_000);const reason=error instanceof Error?error.message:"Falha ao preparar backup";await db.update(mapVotesTable).set({failureReason:`Preparação do backup: ${reason}`}).where(eq(mapVotesTable.id,row.id));await reportWipeFailure(client,row.id,"Preparação/backup",map,error);}
+      }
     }
-  }
-  const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));
-  for(const row of due){
-    let maps:MapOption[];try{maps=JSON.parse(row.mapsJson)}catch{continue} const winner=row.winnerIndex??0; const map=maps[winner];if(!map)continue;
-    try{
-      const backupId=preparedWipeBackups.get(row.id)||await loadPreparedBackup(row.id,map.seed,map.size)||undefined;
-      await executePreparedProceduralWipe("map",map.seed,map.size,{id:"AUTOMATION",name:"Wipe automático"},true,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)},backupId);
-      preparedWipeBackups.delete(row.id);backupRetryAt.delete(row.id);await clearPreparedBackup(row.id);
-      await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
-      try{const {refreshLeaderboardChannel}=await import("../leaderboardChannel.js");await refreshLeaderboardChannel(client)}catch{}
-      await sendWipeAnnouncement(client,"online",map);
-      await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
-    }catch(error){
-      preparedWipeBackups.delete(row.id);backupRetryAt.delete(row.id);await clearPreparedBackup(row.id).catch(()=>{});
-      const reason=error instanceof Error?error.message:"Falha desconhecida";
-      await db.update(mapVotesTable).set({status:"failed",failureReason:reason}).where(eq(mapVotesTable.id,row.id));
-      await reportWipeFailure(client,row.id,"Execução do wipe",map,error);
+
+    const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));
+    for(const row of due){
+      let maps:MapOption[];try{maps=(JSON.parse(row.mapsJson) as any[]).map(normalizeMap)}catch{continue}
+      const winner=row.winnerIndex??0; const map=maps[winner];if(!map)continue;
+      try{
+        if(map.mode==="link"){
+          if(!map.mapUrl)throw new Error("O mapa vencedor não possui link .map.");
+          await executePreparedWipe("map",map.mapUrl,{id:"AUTOMATION",name:"Wipe automático"},true,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)});
+        }else{
+          const seed=Number(map.seed),size=Number(map.size);
+          const backupId=preparedWipeBackups.get(row.id)||await loadPreparedBackup(row.id,seed,size)||undefined;
+          await executePreparedProceduralWipe("map",seed,size,{id:"AUTOMATION",name:"Wipe automático"},true,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)},backupId);
+        }
+        preparedWipeBackups.delete(row.id);backupRetryAt.delete(row.id);await clearPreparedBackup(row.id).catch(()=>{});
+        await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
+        try{const {refreshLeaderboardChannel}=await import("../leaderboardChannel.js");await refreshLeaderboardChannel(client)}catch{}
+        await sendWipeAnnouncement(client,"online",map);
+        await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
+      }catch(error){
+        preparedWipeBackups.delete(row.id);backupRetryAt.delete(row.id);await clearPreparedBackup(row.id).catch(()=>{});
+        const reason=error instanceof Error?error.message:"Falha desconhecida";
+        await db.update(mapVotesTable).set({status:"failed",failureReason:reason}).where(eq(mapVotesTable.id,row.id));
+        await reportWipeFailure(client,row.id,"Execução do wipe",map,error);
+      }
     }
-  }
   }finally{wipeProcessing=false}
 }
 
