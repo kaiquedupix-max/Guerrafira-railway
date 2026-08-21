@@ -8,7 +8,7 @@ import { issueCommunitySession, revokeCommunitySession } from "./communitySessio
 
 type Target = "admin" | "community" | "home" | "leaderboard";
 const states = new Map<string, { expires: number; target: Target }>();
-const redirectUri = () => process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || "https://guerrafria.up.railway.app/api/admin/auth/callback";
+const redirectUri = () => process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || "https://www.guerrafriarust.com.br/api/admin/auth/callback";
 
 export function adminLoginV3(req: Request, res: Response): void {
   const clientId = process.env.DISCORD_CLIENT_ID?.trim();
@@ -56,10 +56,10 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
 
   if (stored.target === "admin") {
     if (!isAdmin) return void res.status(403).send("Acesso negado. Sua conta não possui permissão administrativa no Guerra Fria.");
-    return void res.redirect("/admin");
+    return void res.redirect("/painel");
   }
 
-  if (stored.target === "community") return void res.redirect("/comunidade");
+  if (stored.target === "community") return void res.redirect("/integridade");
   if (stored.target === "leaderboard") return void res.redirect("/leaderboard");
   return void res.redirect("/");
 }
