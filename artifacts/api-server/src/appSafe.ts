@@ -55,7 +55,7 @@ app.get("/leaderboard", (req, res) => {
 app.get("/loja", (req, res) => {
   const session = getCommunitySession(req);
   if (!session) return res.redirect("/api/admin/auth/login?target=store");
-  return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username), "store", { isAdmin: session.isAdmin, username: session.username }));
+  return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username), "home", { isAdmin: session.isAdmin, username: session.username }));
 });
 
 const renderIntegrity = (req: express.Request, res: express.Response) => {
