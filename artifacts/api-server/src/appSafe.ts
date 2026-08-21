@@ -36,7 +36,7 @@ app.use(express.json({ limit: "18mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use((req, res, next) => {
-  if (req.path.startsWith("/admin") || req.path.startsWith("/api/admin")) {
+  if (req.path.startsWith("/admin") || req.path.startsWith("/painel") || req.path.startsWith("/api/admin")) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -50,26 +50,31 @@ app.get("/leaderboard", (req, res) => {
   if (!session) return res.redirect("/");
   return res.status(200).type("html").send(withSiteChrome(leaderboardHtml, "leaderboard", { isAdmin: session.isAdmin, username: session.username }));
 });
-app.get("/comunidade", (req, res) => {
+
+const renderIntegrity = (req: express.Request, res: express.Response) => {
   const session = getCommunitySession(req);
   const html = renderCommunityPage(req);
   return res.status(200).type("html").send(session ? withSiteChrome(html, "integrity", { isAdmin: session.isAdmin, username: session.username }) : html);
-});
+};
+app.get("/integridade", renderIntegrity);
+app.get("/comunidade", (req, res) => res.redirect(301, "/integridade"));
 
-app.get("/admin", (req, res) => {
+const renderAdminPanel = (req: express.Request, res: express.Response) => {
   let admin = getAdminSessionV3(req);
 
   if (!admin) {
     const community = getCommunitySession(req);
     if (community?.isAdmin) {
       issueAdminSessionV3(res, community.userId, community.username);
-      return res.redirect("/admin");
+      return res.redirect("/painel");
     }
     return res.redirect("/api/admin/auth/login?target=admin");
   }
 
   return res.status(200).type("html").send(withSiteChrome(renderAdmin(req), "admin", { isAdmin: true, username: admin.username }));
-});
+};
+app.get("/painel", renderAdminPanel);
+app.get("/admin", (req, res) => res.redirect(302, "/painel"));
 
 app.get("/status", (_req, res) => res.status(200).json({ status: "ok", service: "guerra-fria" }));
 app.use("/api", router);
