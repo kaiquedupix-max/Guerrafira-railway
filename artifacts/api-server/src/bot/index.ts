@@ -45,6 +45,8 @@ import * as criarmapaCommand from "./commands/criarmapa.js";
 import * as steamCommand from "./commands/steam.js";
 import * as wipeCommand from "./commands/wipe.js";
 import * as testeftpCommand from "./commands/testeftp.js";
+import * as enviarjsonCommand from "./commands/enviarjson.js";
+import * as wipedatasCommand from "./commands/wipedatas.js";
 import { handleMapVote } from "./commands/criarmapa.js";
 import { parseKillEvent, parseGatherEvent, parseCraftEvent } from "./killTracker.js";
 import { setupTicketPanel, handleTicketCreate, handleTicketTypeSelect, handleTicketClose, handleVipPayPix, handleVipPayCard, handlePixCopy } from "./tickets.js";
@@ -75,6 +77,8 @@ commands.set(criarmapaCommand.data.name, criarmapaCommand);
 commands.set(steamCommand.data.name, steamCommand);
 commands.set(wipeCommand.data.name, wipeCommand);
 commands.set(testeftpCommand.data.name, testeftpCommand);
+commands.set(enviarjsonCommand.data.name, enviarjsonCommand);
+commands.set(wipedatasCommand.data.name, wipedatasCommand);
 
 export async function startBot(): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -104,7 +108,7 @@ export async function startBot(): Promise<void> {
     setDiscordClient(c);
     c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
     await registerSlashCommands(c);
-    startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); await startBoosterSystem(c);
+    startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
     await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
   });
 
@@ -227,7 +231,7 @@ async function handleConnectButton(interaction: Parameters<typeof handleTicketCr
 async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID; const guildId = process.env.DISCORD_GUILD_ID;
   if (!clientId) { logger.warn("DISCORD_CLIENT_ID not set"); return; }
-  const commandData = [banirCommand, kickarCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand, steamCommand, wipeCommand, testeftpCommand].map(c => c.data.toJSON());
+  const commandData = [banirCommand, kickarCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand, steamCommand, wipeCommand, testeftpCommand, enviarjsonCommand, wipedatasCommand].map(c => c.data.toJSON());
   try {
     if (guildId) { const guild = await client.guilds.fetch(guildId); await guild.commands.set(commandData); logger.info({ guildId }, "Slash commands registered"); }
     else { await client.application?.commands.set(commandData); logger.info("Slash commands registered globally"); }
