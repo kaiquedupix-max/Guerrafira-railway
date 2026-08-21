@@ -8,6 +8,7 @@ import { leaderboardHtml } from "./routes/leaderboardV2";
 import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
 import { renderHome } from "./admin/homePageEnhanced.js";
+import { renderStorePage } from "./admin/storePage.js";
 import { withSiteChrome } from "./admin/siteChrome.js";
 import { getCommunitySession } from "./admin/communitySession.js";
 import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js";
@@ -47,8 +48,14 @@ app.use((req, res, next) => {
 app.get("/", (req, res) => res.status(200).type("html").send(renderHome(req)));
 app.get("/leaderboard", (req, res) => {
   const session = getCommunitySession(req);
-  if (!session) return res.redirect("/");
+  if (!session) return res.redirect("/api/admin/auth/login?target=leaderboard");
   return res.status(200).type("html").send(withSiteChrome(leaderboardHtml, "leaderboard", { isAdmin: session.isAdmin, username: session.username }));
+});
+
+app.get("/loja", (req, res) => {
+  const session = getCommunitySession(req);
+  if (!session) return res.redirect("/api/admin/auth/login?target=store");
+  return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username), "store", { isAdmin: session.isAdmin, username: session.username }));
 });
 
 const renderIntegrity = (req: express.Request, res: express.Response) => {
