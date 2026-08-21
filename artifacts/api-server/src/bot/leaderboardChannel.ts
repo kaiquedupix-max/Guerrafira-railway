@@ -7,7 +7,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Client, type TextChannel } from "discord.js";
 import { logger } from "../lib/logger.js";
 
-const LEADERBOARD_URL = process.env.LEADERBOARD_URL?.trim() || "https://guerrafria.up.railway.app";
+const LEADERBOARD_URL = "https://www.guerrafriarust.com.br/leaderboard";
 
 function leaderboardButton() {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
