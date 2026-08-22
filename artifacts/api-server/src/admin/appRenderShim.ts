@@ -14,10 +14,11 @@ import { panelFinanceLabelsJs } from "./panelFinanceLabels.js";
 import { panelProfessionalJs } from "./panelProfessional.js";
 import { panelWipeJs } from "./panelWipe.js";
 import { panelServerControlJs } from "./panelServerControl.js";
+import { panelPlayerCountJs } from "./panelPlayerCount.js";
 import { getAdminSessionV3 } from "./sessionBearer.js";
 
 const normalizedWipeJs = panelWipeJs.replace(/API ELGAE/g, "API PTERODACTYL");
-const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script><script>${panelSlotControlJs}</script><script>${panelBrandingJs}</script><script>${panelMobileFixJs}</script><script>${panelFinanceLabelsJs}</script><script>${panelProfessionalJs}</script><script>${normalizedWipeJs}</script><script>${panelServerControlJs}</script></body>`);
+const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script><script>${panelSlotControlJs}</script><script>${panelBrandingJs}</script><script>${panelMobileFixJs}</script><script>${panelFinanceLabelsJs}</script><script>${panelProfessionalJs}</script><script>${normalizedWipeJs}</script><script>${panelServerControlJs}</script><script>${panelPlayerCountJs}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSessionV3(req);
