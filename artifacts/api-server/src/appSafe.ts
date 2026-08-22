@@ -15,6 +15,12 @@ import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
 
+// O entrypoint de produção usa appSafe.ts. Padronizamos PTERODACTYL_* aqui
+// e mantemos os aliases ELGAE_* temporariamente para módulos legados.
+if (process.env.PTERODACTYL_URL) process.env.ELGAE_PANEL_URL = process.env.PTERODACTYL_URL;
+if (process.env.PTERODACTYL_SERVER_ID) process.env.ELGAE_SERVER_ID = process.env.PTERODACTYL_SERVER_ID;
+if (process.env.PTERODACTYL_API_KEY) process.env.ELGAE_API_KEY = process.env.PTERODACTYL_API_KEY;
+
 const app: Express = express();
 startStoragePolicy();
 
