@@ -4,6 +4,7 @@ import { panelV5Js } from "./panelV5Js.js";
 import { panelV5PolishJs } from "./panelV5Polish.js";
 import { panelAuthRecoveryJs } from "./panelAuthRecovery.js";
 import { panelOverviewFastJs } from "./panelOverviewFast.js";
+import { panelOverviewJoiningJs } from "./panelOverviewJoining.js";
 import { panelModerationParityJs } from "./panelModerationParity.js";
 import { panelIntegrityManagerJs } from "./panelIntegrityManager.js";
 import { panelAlertsJs } from "./panelAlerts.js";
@@ -18,7 +19,7 @@ import { panelPlayerCountJs } from "./panelPlayerCount.js";
 import { getAdminSessionV3 } from "./sessionBearer.js";
 
 const normalizedWipeJs = panelWipeJs.replace(/API ELGAE/g, "API PTERODACTYL");
-const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script><script>${panelSlotControlJs}</script><script>${panelBrandingJs}</script><script>${panelMobileFixJs}</script><script>${panelFinanceLabelsJs}</script><script>${panelProfessionalJs}</script><script>${normalizedWipeJs}</script><script>${panelServerControlJs}</script><script>${panelPlayerCountJs}</script></body>`);
+const page = panelV5Html.replace("</body>", `<script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewFastJs}</script><script>${panelOverviewJoiningJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script><script>${panelSlotControlJs}</script><script>${panelBrandingJs}</script><script>${panelMobileFixJs}</script><script>${panelFinanceLabelsJs}</script><script>${panelProfessionalJs}</script><script>${normalizedWipeJs}</script><script>${panelServerControlJs}</script><script>${panelPlayerCountJs}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSessionV3(req);
