@@ -9,6 +9,12 @@ import { renderAdmin } from "./admin/appRenderShim.js";
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
 
+// Padroniza a integração do painel em PTERODACTYL_*.
+// Mantém aliases internos ELGAE_* apenas para módulos legados até a migração completa.
+if (process.env.PTERODACTYL_URL) process.env.ELGAE_PANEL_URL = process.env.PTERODACTYL_URL;
+if (process.env.PTERODACTYL_SERVER_ID) process.env.ELGAE_SERVER_ID = process.env.PTERODACTYL_SERVER_ID;
+if (process.env.PTERODACTYL_API_KEY) process.env.ELGAE_API_KEY = process.env.PTERODACTYL_API_KEY;
+
 const app: Express = express();
 startStoragePolicy();
 
