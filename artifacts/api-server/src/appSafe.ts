@@ -5,6 +5,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import webhookRouter from "./routes/webhook.js";
 import { leaderboardHtml } from "./routes/leaderboardV2";
+import { renderSeasonPage } from "./routes/seasonPage.js";
 import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
 import { renderHome } from "./admin/homePageEnhanced.js";
@@ -56,6 +57,13 @@ app.get("/leaderboard", (req, res) => {
   const session = getCommunitySession(req);
   if (!session) return res.redirect("/api/admin/auth/login?target=leaderboard");
   return res.status(200).type("html").send(withSiteChrome(leaderboardHtml, "leaderboard", { isAdmin: session.isAdmin, username: session.username }));
+});
+
+// Página pública da Season: /season1, /season2, /season3...
+app.get("/season:seasonNumber", (req, res) => {
+  const seasonNumber = Math.max(1, Math.trunc(Number(req.params.seasonNumber) || 1));
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  return res.status(200).type("html").send(renderSeasonPage(seasonNumber));
 });
 
 app.get("/loja", (req, res) => {
