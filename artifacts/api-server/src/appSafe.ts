@@ -16,8 +16,6 @@ import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
 
-// O entrypoint de produção usa appSafe.ts. Padronizamos PTERODACTYL_* aqui
-// e mantemos os aliases ELGAE_* temporariamente para módulos legados.
 if (process.env.PTERODACTYL_URL) process.env.ELGAE_PANEL_URL = process.env.PTERODACTYL_URL;
 if (process.env.PTERODACTYL_SERVER_ID) process.env.ELGAE_SERVER_ID = process.env.PTERODACTYL_SERVER_ID;
 if (process.env.PTERODACTYL_API_KEY) process.env.ELGAE_API_KEY = process.env.PTERODACTYL_API_KEY;
@@ -53,10 +51,15 @@ app.use((req, res, next) => {
 });
 
 app.get("/", (req, res) => res.status(200).type("html").send(renderHome(req)));
+
+// Ranking é público. Login com Discord fica restrito à loja e ao painel administrativo.
 app.get("/leaderboard", (req, res) => {
   const session = getCommunitySession(req);
-  if (!session) return res.redirect("/api/admin/auth/login?target=leaderboard");
-  return res.status(200).type("html").send(withSiteChrome(leaderboardHtml, "leaderboard", { isAdmin: session.isAdmin, username: session.username }));
+  return res.status(200).type("html").send(
+    session
+      ? withSiteChrome(leaderboardHtml, "leaderboard", { isAdmin: session.isAdmin, username: session.username })
+      : leaderboardHtml,
+  );
 });
 
 // Página pública da Season: /season1, /season2, /season3...
@@ -66,18 +69,23 @@ app.get("/season:seasonNumber", (req, res) => {
   return res.status(200).type("html").send(renderSeasonPage(seasonNumber));
 });
 
+// Loja continua exigindo Discord.
 app.get("/loja", (req, res) => {
   const session = getCommunitySession(req);
   if (!session) return res.redirect("/api/admin/auth/login?target=store");
   return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username), "home", { isAdmin: session.isAdmin, username: session.username }));
 });
 
+// Auditoria/Integridade é pública e não força login.
 const renderIntegrity = (req: express.Request, res: express.Response) => {
   const session = getCommunitySession(req);
   const html = renderCommunityPage(req);
-  return res.status(200).type("html").send(session ? withSiteChrome(html, "integrity", { isAdmin: session.isAdmin, username: session.username }) : html);
+  return res.status(200).type("html").send(
+    session ? withSiteChrome(html, "integrity", { isAdmin: session.isAdmin, username: session.username }) : html,
+  );
 };
 app.get("/integridade", renderIntegrity);
+app.get("/auditoria", renderIntegrity);
 app.get("/comunidade", (req, res) => res.redirect(301, "/integridade"));
 
 const renderAdminPanel = (req: express.Request, res: express.Response) => {
