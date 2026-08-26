@@ -1,5 +1,6 @@
 export type SiteSection = "home" | "leaderboard" | "integrity" | "admin" | "season";
 import { brandThemeCss } from "./brandTheme.js";
+import { publicMilitaryThemeCss } from "./publicMilitaryTheme.js";
 
 function esc(v: string): string {
   return String(v).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c] || c));
@@ -8,16 +9,18 @@ function esc(v: string): string {
 export function withSiteChrome(html: string, section: SiteSection, opts?: { isAdmin?: boolean; username?: string }): string {
   const isAdmin = Boolean(opts?.isAdmin);
   const username = esc(opts?.username || "");
+  const isAdminPage = section === "admin";
   const links = [
-    ["home", "/", "⌂", "Portal"],
+    ["home", "/", "★", "Início"],
     ["leaderboard", "/leaderboard", "🏆", "Ranking"],
+    ["season", "/season1/guia", "🎖", "Season"],
     ["integrity", "/comunidade", "🛡️", "Integridade"],
     ...(isAdmin ? [["admin", "/admin", "⚙", "Controle"]] : []),
   ] as string[][];
   const navLinks = links.map(([id, href, icon, label]) => `<a class="gfNavItem${section===id?" active":""}" href="${href}"><span>${icon}</span><b>${label}</b></a>`).join("");
-  const installButton = isAdmin && section === "admin" ? `<button class="gfInstall" id="gfInstall" type="button"><span>📲</span><b>Instalar</b></button>` : "";
-  const chrome = `<div class="gfChrome"><div class="gfChromeInner"><button class="gfBack" type="button" onclick="history.length>1?history.back():location.href='/'" aria-label="Voltar">← <span>Voltar</span></button><a class="gfChromeBrand" href="/"><i>GF</i><span><b>GUERRA FRIA</b><small>PORTAL OFICIAL</small></span></a><nav class="gfNav">${navLinks}</nav>${installButton}${username?`<div class="gfUser"><span class="gfOnline"></span><span>${username}</span></div>`:""}</div></div>`;
-  const installModal = isAdmin && section === "admin" ? `<div class="gfInstallModal" id="gfInstallModal"><div class="gfInstallCard"><button class="gfInstallClose" id="gfInstallClose">×</button><div class="gfInstallIcon">GF</div><h2>Guerra Fria Admin</h2><p>Instale a Central de Controle na Tela de Início. Ela abrirá diretamente no painel administrativo em modo aplicativo.</p><div class="gfSteps"><div><b>1</b><span>No iPhone, abra pelo <strong>Safari</strong>.</span></div><div><b>2</b><span>Toque em <strong>Compartilhar</strong>.</span></div><div><b>3</b><span>Escolha <strong>Adicionar à Tela de Início</strong>.</span></div><div><b>4</b><span>Abra o ícone <strong>Guerra Fria Admin</strong>.</span></div></div><p class="gfInstallNote">No Android, use a opção Instalar aplicativo/Adicionar à tela inicial do navegador. Depois de instalado, o app também pode receber Web Push em segundo plano quando autorizado.</p></div></div>` : "";
+  const installButton = isAdmin && isAdminPage ? `<button class="gfInstall" id="gfInstall" type="button"><span>📲</span><b>Instalar</b></button>` : "";
+  const chrome = `<div class="gfChrome"><div class="gfChromeInner"><button class="gfBack" type="button" onclick="history.length>1?history.back():location.href='/'" aria-label="Voltar">← <span>Voltar</span></button><a class="gfChromeBrand" href="/"><i>GF</i><span><b>GUERRA FRIA</b><small>${isAdminPage?"PORTAL OFICIAL":"RUST • PORTAL OFICIAL"}</small></span></a><nav class="gfNav">${navLinks}</nav>${installButton}${username?`<div class="gfUser"><span class="gfOnline"></span><span>${username}</span></div>`:""}</div></div>`;
+  const installModal = isAdmin && isAdminPage ? `<div class="gfInstallModal" id="gfInstallModal"><div class="gfInstallCard"><button class="gfInstallClose" id="gfInstallClose">×</button><div class="gfInstallIcon">GF</div><h2>Guerra Fria Admin</h2><p>Instale a Central de Controle na Tela de Início. Ela abrirá diretamente no painel administrativo em modo aplicativo.</p><div class="gfSteps"><div><b>1</b><span>No iPhone, abra pelo <strong>Safari</strong>.</span></div><div><b>2</b><span>Toque em <strong>Compartilhar</strong>.</span></div><div><b>3</b><span>Escolha <strong>Adicionar à Tela de Início</strong>.</span></div><div><b>4</b><span>Abra o ícone <strong>Guerra Fria Admin</strong>.</span></div></div><p class="gfInstallNote">No Android, use a opção Instalar aplicativo/Adicionar à tela inicial do navegador. Depois de instalado, o app também pode receber Web Push em segundo plano quando autorizado.</p></div></div>` : "";
   const pwaMeta = `<link rel="manifest" href="/api/pwa/manifest"><link rel="apple-touch-icon" href="/api/pwa/icon.svg"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="GF Admin">`;
   const css = `<style id="gf-site-chrome">
 :root{--gf-chrome:#09060ef2;--gf-chrome-line:#352445;--gf-chrome-text:#fff;--gf-chrome-muted:#93859f;--gf-chrome-purple:#9b6cff;--gf-chrome-yellow:#ffd84d}
@@ -25,7 +28,8 @@ html{scroll-padding-top:78px}body{padding-top:68px!important}.gfChrome{position:
 @media(max-width:760px){html{scroll-padding-top:0}body{padding-top:0!important;padding-bottom:calc(150px + env(safe-area-inset-bottom))!important;max-width:100vw;overflow-x:hidden}.gfChrome{height:0!important;inset:auto 0 0 0!important;background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;pointer-events:none}.gfChromeInner{width:100%;height:0}.gfBack,.gfChromeBrand,.gfUser,.gfInstall{display:none!important}.gfNav{pointer-events:auto;position:fixed;left:6px;right:6px;bottom:calc(68px + max(7px,env(safe-area-inset-bottom)));height:55px;padding:4px;background:#0b0712fa;border:1px solid #39274b;border-radius:16px;display:grid;grid-template-columns:repeat(${links.length},minmax(0,1fr));gap:3px;box-shadow:0 -10px 35px #000b;backdrop-filter:blur(18px);max-width:calc(100vw - 12px);overflow:hidden}.gfNavItem{min-width:0;height:45px;padding:3px 2px;display:flex;flex-direction:column;justify-content:center;gap:1px;font-size:8px;text-align:center;overflow:hidden}.gfNavItem span{font-size:15px}.gfNavItem b{font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.gfNavItem.active{border-color:#6c4790}.gfInstallCard{padding:22px;max-height:calc(100vh - 30px);overflow:auto}.gfInstallCard h2{font-size:25px}}
 </style>`;
   const js = `<script id="gf-pwa-script">(function(){if('serviceWorker'in navigator){navigator.serviceWorker.register('/api/pwa/sw.js',{scope:'/'}).catch(()=>{})}let deferred=null;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e});const b=document.getElementById('gfInstall'),m=document.getElementById('gfInstallModal'),c=document.getElementById('gfInstallClose');if(!b)return;const standalone=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;if(standalone){b.style.display='none';return}b.onclick=async()=>{if(deferred){deferred.prompt();await deferred.userChoice;deferred=null;return}m&&m.classList.add('open')};c&&(c.onclick=()=>m.classList.remove('open'));m&&(m.onclick=e=>{if(e.target===m)m.classList.remove('open')})})();</script>`;
-  let out = html.replace("</head>", `${pwaMeta}${css}${brandThemeCss}</head>`);
+  const sectionTheme = isAdminPage ? brandThemeCss : publicMilitaryThemeCss;
+  let out = html.replace("</head>", `${pwaMeta}${css}${sectionTheme}</head>`);
   out = out.replace(/<body([^>]*)>/i, `<body$1>${chrome}${installModal}`);
   out = out.replace("</body>", `${js}</body>`);
   return out;
