@@ -1,9 +1,12 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
+import { getCommunitySession } from "../admin/communitySession.js";
+import { getAdminSessionV3 } from "../admin/sessionBearer.js";
 
 const router: IRouter = Router();
+const SEASON_1_START_AT = Date.parse("2026-09-03T00:00:00-03:00");
 
 function num(value: unknown, fallback = 0): number {
   const parsed = Number(value);
@@ -18,9 +21,15 @@ function text(value: unknown, max = 64): string {
   return String(value ?? "").slice(0, max);
 }
 
+function canReadSeason(req: Request, seasonNumber: number): boolean {
+  if (seasonNumber !== 1 || Date.now() >= SEASON_1_START_AT) return true;
+  return Boolean(getCommunitySession(req)?.isAdmin || getAdminSessionV3(req));
+}
+
 router.get("/season/:number/player/:steamId/audit", async (req, res) => {
   try {
     const seasonNumber = Math.max(1, int(req.params.number, 1));
+    if (!canReadSeason(req, seasonNumber)) return void res.status(403).json({ error: "Em breve" });
     const steamId = text(req.params.steamId, 32);
     const limit = Math.min(200, Math.max(25, int(req.query.limit, 100)));
     const offset = Math.max(0, int(req.query.offset, 0));
