@@ -1,4 +1,4 @@
-export type SiteSection = "home" | "leaderboard" | "integrity" | "admin";
+export type SiteSection = "home" | "leaderboard" | "integrity" | "admin" | "season";
 import { brandThemeCss } from "./brandTheme.js";
 
 function esc(v: string): string {
