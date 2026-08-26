@@ -3,6 +3,8 @@ import type { Request, Response } from "express";
 
 export type AdminSession = { userId: string; username: string; expiresAt: number };
 
+const ADMIN_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+
 function secret(): string {
   return process.env.ADMIN_SESSION_SECRET?.trim() || process.env.DISCORD_CLIENT_SECRET?.trim() || "guerra-fria-session";
 }
@@ -29,10 +31,16 @@ function parseToken(token?: string | null): AdminSession | null {
 }
 
 export function issueAdminSessionV3(res: Response, userId: string, username: string): string {
-  const session: AdminSession = { userId, username, expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
+  const session: AdminSession = { userId, username, expiresAt: Date.now() + ADMIN_SESSION_MS };
   const payload = Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
   const token = `${payload}.${sign(payload)}`;
-  res.cookie("gf_admin", token, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 12 * 60 * 60 * 1000 });
+  res.cookie("gf_admin", token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: ADMIN_SESSION_MS,
+  });
   return token;
 }
 
