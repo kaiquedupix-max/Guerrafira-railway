@@ -10,6 +10,7 @@ import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
 import { startCardPaymentReconciler } from "./paymentReconciler.js";
 import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonRouter from "./season.js";
+import seasonAuditRouter from "./seasonAudit.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
@@ -18,6 +19,7 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
+router.use(seasonAuditRouter);
 router.use(seasonRouter);
 router.use(pwaRouter);
 router.use("/store", storeRouter);
