@@ -5,6 +5,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import webhookRouter from "./routes/webhook.js";
 import { leaderboardHtml } from "./routes/leaderboardV2";
+import { renderSeasonPage } from "./routes/seasonPage.js";
 import { renderAdmin } from "./admin/appRenderShim.js";
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
@@ -28,6 +29,10 @@ const leaderboardPage = leaderboardHtml.replace("</body>", '<a href="/api/admin/
 
 app.get("/", (_req, res) => res.status(200).type("html").send(leaderboardPage));
 app.get("/leaderboard", (_req, res) => res.status(200).type("html").send(leaderboardPage));
+app.get("/season:seasonNumber", (req, res) => {
+  const seasonNumber = Math.max(1, Math.trunc(Number(req.params.seasonNumber) || 1));
+  return res.status(200).type("html").send(renderSeasonPage(seasonNumber));
+});
 app.get("/admin", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
