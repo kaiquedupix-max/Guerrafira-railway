@@ -9,6 +9,7 @@ import revenueView from "../admin/revenueView.js";
 import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
 import { startCardPaymentReconciler } from "./paymentReconciler.js";
 import leaderboardWebhookRouter from "./leaderboardWebhook.js";
+import seasonRouter from "./season.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
@@ -17,6 +18,7 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
+router.use(seasonRouter);
 router.use(pwaRouter);
 router.use("/store", storeRouter);
 router.use("/admin", adminRouter);
