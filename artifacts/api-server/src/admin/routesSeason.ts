@@ -37,25 +37,30 @@ router.get("/registrations", async (req, res) => {
         WHERE season_number=${season} AND category='admin' GROUP BY steam_id
       )
       SELECT r.season_number,r.discord_id,r.discord_name,r.mode,r.status,r.accepted_rules_at,r.created_at,
-        COALESCE(r.steam_id,b.steam_id) steam_id,p.player_name,p.mmr raw_mmr,
+        NULLIF(TRIM(r.steam_id),'') registration_steam_id,
+        NULLIF(TRIM(b.steam_id),'') legacy_steam_id,
+        COALESCE(NULLIF(TRIM(r.steam_id),''),NULLIF(TRIM(b.steam_id),'')) steam_id,
+        p.player_name,p.mmr raw_mmr,
         CASE WHEN p.mmr IS NULL THEN NULL ELSE p.mmr+COALESCE(a.delta,0) END mmr,
         COALESCE(a.delta,0) admin_delta,p.kills,p.deaths,p.headshots,p.raids_participated,p.raids_defended,
         p.bradley_participations,p.heli_participations,p.crates_hacked,p.updated_at
       FROM season_registrations r
       LEFT JOIN booster_links b ON b.discord_user_id=r.discord_id
-      LEFT JOIN season_players p ON p.season_number=r.season_number AND p.steam_id=COALESCE(r.steam_id,b.steam_id)
-      LEFT JOIN admin_delta a ON a.steam_id=COALESCE(r.steam_id,b.steam_id)
+      LEFT JOIN season_players p ON p.season_number=r.season_number AND p.steam_id=COALESCE(NULLIF(TRIM(r.steam_id),''),NULLIF(TRIM(b.steam_id),''))
+      LEFT JOIN admin_delta a ON a.steam_id=COALESCE(NULLIF(TRIM(r.steam_id),''),NULLIF(TRIM(b.steam_id),''))
       WHERE r.season_number=${season} AND r.status='active'
       ORDER BY mmr DESC NULLS LAST,r.created_at ASC`);
     const rows=Array.isArray(result?.rows)?result.rows:[];
     let position=0;
     const registrations=rows.map((row:any)=>{
-      const has=row.mmr!=null;if(has)position++;
-      return {position:has?position:null,discordId:String(row.discord_id||""),discordName:String(row.discord_name||""),steamId:row.steam_id?String(row.steam_id):null,playerName:row.player_name?String(row.player_name):null,mode:String(row.mode||"beta_free"),status:String(row.status||"active"),acceptedRulesAt:row.accepted_rules_at,createdAt:row.created_at,mmr:row.mmr==null?null:Number(row.mmr),rawMmr:row.raw_mmr==null?null:Number(row.raw_mmr),adminDelta:Number(row.admin_delta||0),rank:row.mmr==null?"Aguardando dados":rankName(row.mmr),kills:Number(row.kills||0),deaths:Number(row.deaths||0),headshots:Number(row.headshots||0),raids:Number(row.raids_participated||0)+Number(row.raids_defended||0),events:Number(row.bradley_participations||0)+Number(row.heli_participations||0)+Number(row.crates_hacked||0),updatedAt:row.updated_at,testerRole:true};
+      const steamId=row.steam_id?String(row.steam_id).trim():null;
+      const hasSeasonData=row.mmr!=null;
+      if(hasSeasonData)position++;
+      return {position:hasSeasonData?position:null,discordId:String(row.discord_id||""),discordName:String(row.discord_name||""),steamId,steamConfirmed:Boolean(row.registration_steam_id),steamSource:row.registration_steam_id?"registration":row.legacy_steam_id?"legacy":null,hasSeasonData,playerName:row.player_name?String(row.player_name):null,mode:String(row.mode||"beta_free"),status:String(row.status||"active"),acceptedRulesAt:row.accepted_rules_at,createdAt:row.created_at,mmr:row.mmr==null?null:Number(row.mmr),rawMmr:row.raw_mmr==null?null:Number(row.raw_mmr),adminDelta:Number(row.admin_delta||0),rank:hasSeasonData?rankName(row.mmr):steamId?"Aguardando primeira atividade":"Steam não vinculada",kills:Number(row.kills||0),deaths:Number(row.deaths||0),headshots:Number(row.headshots||0),raids:Number(row.raids_participated||0)+Number(row.raids_defended||0),events:Number(row.bradley_participations||0)+Number(row.heli_participations||0)+Number(row.crates_hacked||0),updatedAt:row.updated_at,testerRole:true};
     });
-    const ranked=registrations.filter((x:any)=>x.mmr!=null);
+    const ranked=registrations.filter((x:any)=>x.hasSeasonData);
     res.setHeader("Cache-Control","no-store");
-    return void res.json({ok:true,beta:season===1,season,roleId:process.env.SEASON_BETA_ROLE_ID||null,summary:{total:registrations.length,linkedSteam:registrations.filter((x:any)=>x.steamId).length,withSeasonData:ranked.length,leader:ranked[0]||null},registrations});
+    return void res.json({ok:true,beta:season===1,season,roleId:process.env.SEASON_BETA_ROLE_ID||null,summary:{total:registrations.length,linkedSteam:registrations.filter((x:any)=>x.steamId).length,confirmedSteam:registrations.filter((x:any)=>x.steamConfirmed).length,withSeasonData:ranked.length,leader:ranked[0]||null},registrations});
   } catch (error) {
     req.log?.error?.({ error }, "admin season registrations failed");
     return void res.status(500).json({ error: "Falha ao carregar inscritos da Season." });
@@ -87,7 +92,7 @@ router.post("/player/:steamId/adjust",async(req,res)=>{
   if(reason.length<3)return void res.status(400).json({error:"Informe o motivo do ajuste."});
   try{
     const p:any=await db.execute(sql`SELECT player_name,mmr,season_id FROM season_players WHERE season_number=${season} AND steam_id=${steamId} LIMIT 1`);
-    const row=p?.rows?.[0];if(!row)return void res.status(404).json({error:"Jogador não possui dados nesta Season."});
+    const row=p?.rows?.[0];if(!row)return void res.status(404).json({error:"Jogador ainda não possui atividade registrada nesta Season."});
     const d:any=await db.execute(sql`SELECT COALESCE(SUM(final_value),0) delta FROM season_transactions WHERE season_number=${season} AND steam_id=${steamId} AND category='admin'`);
     const before=Number(row.mmr||0)+Number(d?.rows?.[0]?.delta||0);const after=before+delta;
     const admin=getAdminSessionV3(req);const adminName=admin?.username||"Administrador";
