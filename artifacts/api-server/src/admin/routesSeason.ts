@@ -20,6 +20,8 @@ async function ensureRegistrationTable() {
       PRIMARY KEY (season_number, discord_id)
     )
   `);
+  await db.execute(sql`ALTER TABLE season_registrations ADD COLUMN IF NOT EXISTS steam_id TEXT`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS season_registrations_unique_steam ON season_registrations(season_number, steam_id) WHERE steam_id IS NOT NULL`);
 }
 
 function rankName(mmrValue: unknown) {
@@ -44,7 +46,7 @@ router.get("/registrations", async (req, res) => {
         r.status,
         r.accepted_rules_at,
         r.created_at,
-        b.steam_id,
+        COALESCE(r.steam_id, b.steam_id) AS steam_id,
         p.player_name,
         p.mmr,
         p.kills,
@@ -58,32 +60,36 @@ router.get("/registrations", async (req, res) => {
         p.updated_at
       FROM season_registrations r
       LEFT JOIN booster_links b ON b.discord_user_id = r.discord_id
-      LEFT JOIN season_players p ON p.season_number = r.season_number AND p.steam_id = b.steam_id
+      LEFT JOIN season_players p ON p.season_number = r.season_number AND p.steam_id = COALESCE(r.steam_id, b.steam_id)
       WHERE r.season_number = ${season} AND r.status = 'active'
       ORDER BY p.mmr DESC NULLS LAST, r.created_at ASC
     `);
 
     const rows = Array.isArray(result?.rows) ? result.rows : [];
-    const registrations = rows.map((row: any, index: number) => ({
-      position: row.mmr == null ? null : index + 1,
-      discordId: String(row.discord_id || ""),
-      discordName: String(row.discord_name || ""),
-      steamId: row.steam_id ? String(row.steam_id) : null,
-      playerName: row.player_name ? String(row.player_name) : null,
-      mode: String(row.mode || "beta_free"),
-      status: String(row.status || "active"),
-      acceptedRulesAt: row.accepted_rules_at,
-      createdAt: row.created_at,
-      mmr: row.mmr == null ? null : Number(row.mmr),
-      rank: row.mmr == null ? "Aguardando dados" : rankName(row.mmr),
-      kills: Number(row.kills || 0),
-      deaths: Number(row.deaths || 0),
-      headshots: Number(row.headshots || 0),
-      raids: Number(row.raids_participated || 0) + Number(row.raids_defended || 0),
-      events: Number(row.bradley_participations || 0) + Number(row.heli_participations || 0) + Number(row.crates_hacked || 0),
-      updatedAt: row.updated_at,
-      testerRole: true,
-    }));
+    let rankedPosition = 0;
+    const registrations = rows.map((row: any) => {
+      if (row.mmr != null) rankedPosition += 1;
+      return {
+        position: row.mmr == null ? null : rankedPosition,
+        discordId: String(row.discord_id || ""),
+        discordName: String(row.discord_name || ""),
+        steamId: row.steam_id ? String(row.steam_id) : null,
+        playerName: row.player_name ? String(row.player_name) : null,
+        mode: String(row.mode || "beta_free"),
+        status: String(row.status || "active"),
+        acceptedRulesAt: row.accepted_rules_at,
+        createdAt: row.created_at,
+        mmr: row.mmr == null ? null : Number(row.mmr),
+        rank: row.mmr == null ? "Aguardando dados" : rankName(row.mmr),
+        kills: Number(row.kills || 0),
+        deaths: Number(row.deaths || 0),
+        headshots: Number(row.headshots || 0),
+        raids: Number(row.raids_participated || 0) + Number(row.raids_defended || 0),
+        events: Number(row.bradley_participations || 0) + Number(row.heli_participations || 0) + Number(row.crates_hacked || 0),
+        updatedAt: row.updated_at,
+        testerRole: true,
+      };
+    });
 
     const ranked = registrations.filter((row: any) => row.mmr != null);
     res.setHeader("Cache-Control", "no-store");
