@@ -98,7 +98,7 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
   if (stored.target === "community") return void res.redirect("/integridade");
   if (stored.target === "leaderboard") return void res.redirect("/leaderboard");
   if (stored.target === "store") return void res.redirect("/loja");
-  if (stored.target === "season") return void res.redirect("/api/season/1/inscricao");
+  if (stored.target === "season") return void res.redirect("/api/season/1/inscricao?continue=1");
   return void res.redirect("/");
 }
 
