@@ -12,6 +12,7 @@ import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonTransportRouter from "./seasonTransport.js";
 import seasonRouter from "./season.js";
 import seasonAuditRouter from "./seasonAudit.js";
+import seasonSteamSignupRouter from "./seasonSteamSignup.js";
 import seasonBetaIntroRouter from "./seasonBetaIntro.js";
 import seasonBetaRouter, { startSeasonBetaController } from "./seasonBeta.js";
 
@@ -25,7 +26,11 @@ router.use(healthRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
 
-// Antes do OAuth, o jogador vê claramente que esta fase é Beta e sem premiação.
+// Fluxo oficial de inscrição Beta: Discord + Steam obrigatórios.
+// Fica antes das rotas antigas para assumir GET/POST e o OpenID da Steam.
+router.use(seasonSteamSignupRouter);
+
+// Antes do OAuth, quem ainda não conectou o Discord vê o aviso da Beta.
 router.use(seasonBetaIntroRouter);
 
 // A camada Beta fica antes da ingestão da Season para bloquear eventos antes
@@ -33,11 +38,9 @@ router.use(seasonBetaIntroRouter);
 router.use(seasonBetaRouter);
 
 // Transporte privado da Season: healthcheck, bootstrap RAM e snapshot em lote.
-// Registrado antes das rotas públicas para manter a ingestão independente da UI.
 router.use(seasonTransportRouter);
 
 // A página e a API pública da Season ficam disponíveis desde já.
-// A data de início controla a competição, não a visibilidade do ranking/guia.
 router.use(seasonAuditRouter);
 router.use(seasonRouter);
 
