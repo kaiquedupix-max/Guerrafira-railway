@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 
 export type AdminSession = { userId: string; username: string; expiresAt: number };
 
-const ADMIN_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const ADMIN_SESSION_MS = 180 * 24 * 60 * 60 * 1000;
 
 function secret(): string {
   return process.env.ADMIN_SESSION_SECRET?.trim() || process.env.DISCORD_CLIENT_SECRET?.trim() || "guerra-fria-session";
