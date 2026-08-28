@@ -13,6 +13,7 @@ import seasonTransportRouter from "./seasonTransport.js";
 import seasonRouter from "./season.js";
 import seasonAuditRouter from "./seasonAudit.js";
 import seasonSteamSignupRouter from "./seasonSteamSignup.js";
+import seasonAdjustedReadRouter from "./seasonAdjustedRead.js";
 import seasonBetaIntroRouter from "./seasonBetaIntro.js";
 import seasonBetaRouter, { startSeasonBetaController } from "./seasonBeta.js";
 
@@ -21,33 +22,20 @@ startCardPaymentReconciler();
 startSeasonBetaController();
 
 const router: IRouter = Router();
-
 router.use(healthRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
-
-// Fluxo oficial de inscrição Beta: Discord + Steam obrigatórios.
-// Fica antes das rotas antigas para assumir GET/POST e o OpenID da Steam.
 router.use(seasonSteamSignupRouter);
-
-// Antes do OAuth, quem ainda não conectou o Discord vê o aviso da Beta.
 router.use(seasonBetaIntroRouter);
-
-// A camada Beta fica antes da ingestão da Season para bloquear eventos antes
-// de 28/08/2026 18:30 e executar o reset coordenado plugin + banco uma única vez.
 router.use(seasonBetaRouter);
-
-// Transporte privado da Season: healthcheck, bootstrap RAM e snapshot em lote.
 router.use(seasonTransportRouter);
-
-// A página e a API pública da Season ficam disponíveis desde já.
 router.use(seasonAuditRouter);
+// Leitura pública ajustada vem antes da leitura legada; ingestão continua bruta do plugin.
+router.use(seasonAdjustedReadRouter);
 router.use(seasonRouter);
-
 router.use(pwaRouter);
 router.use("/store", storeRouter);
 router.use("/admin", adminRouter);
 router.use("/community", communityRouter);
 router.use("/finance", revenueView);
-
 export default router;
