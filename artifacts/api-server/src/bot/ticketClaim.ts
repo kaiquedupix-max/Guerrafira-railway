@@ -17,6 +17,7 @@ import { logger } from "../lib/logger.js";
 const DEFAULT_MOD_ROLE_ID = "1538735197611360347";
 const modRoleId = () => String(process.env.DISCORD_MOD_ROLE_ID || DEFAULT_MOD_ROLE_ID).trim();
 const ticketCategoryId = () => String(process.env.DISCORD_TICKETS_CATEGORY_ID || "").trim();
+const CLAIM_FOOTER = "Guerra Fria • Controle de atendimento";
 
 function isTicketChannel(channel: TextChannel): boolean {
   const category = ticketCategoryId();
@@ -42,6 +43,10 @@ async function isStaff(member: GuildMember, channel: TextChannel): Promise<boole
   return member.roles.cache.some((role) => role.id !== channel.guild.roles.everyone.id && role.position >= modPosition);
 }
 
+function isAdministrator(member: GuildMember): boolean {
+  return member.permissions.has(PermissionFlagsBits.Administrator);
+}
+
 function claimedMemberId(channel: TextChannel): string | null {
   const opener = openerId(channel);
   const botId = channel.client.user?.id;
@@ -64,25 +69,37 @@ function claimRow(claimedBy?: string | null): ActionRowBuilder<ButtonBuilder> {
   );
 }
 
+function isClaimControlMessage(message: Message): boolean {
+  if (message.author.id !== message.channel.client.user?.id) return false;
+  const hasButton = message.components.some((row) => row.components.some((component: any) =>
+    component?.customId === "ticket_claim" || component?.data?.customId === "ticket_claim",
+  ));
+  const hasFooter = message.embeds.some((embed) => embed.footer?.text === CLAIM_FOOTER);
+  const hasKnownTitle = message.embeds.some((embed) => embed.title === "✅ Ticket em atendimento" || embed.title === "🎟️ Aguardando atendimento");
+  return hasButton || (hasFooter && hasKnownTitle);
+}
+
 async function ensureClaimMessage(channel: TextChannel): Promise<void> {
-  const recent = await channel.messages.fetch({ limit: 30 }).catch(() => null);
-  const existing = recent?.find((message) =>
-    message.author.id === channel.client.user?.id &&
-    message.components.some((row) => row.components.some((component) => "customId" in component.data && component.data.customId === "ticket_claim")),
-  );
+  const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  const controls = recent ? [...recent.values()].filter(isClaimControlMessage).sort((a, b) => b.createdTimestamp - a.createdTimestamp) : [];
+  const existing = controls[0] ?? null;
   const claimedBy = claimedMemberId(channel);
   const embed = new EmbedBuilder()
     .setColor(claimedBy ? 0x2ecc71 : 0xf1c40f)
     .setTitle(claimedBy ? "✅ Ticket em atendimento" : "🎟️ Aguardando atendimento")
     .setDescription(
       claimedBy
-        ? `Este ticket está sendo atendido por <@${claimedBy}>.`
-        : "Moderadores e cargos acima podem visualizar este ticket. Para responder ao jogador, clique em **Atender Ticket**.",
+        ? `Este ticket está sendo atendido por <@${claimedBy}>.\n\nAdministradores podem responder normalmente. Moderadores precisam ser o responsável pelo atendimento.`
+        : "Moderadores e cargos acima podem visualizar este ticket. Para responder ao jogador, moderadores devem clicar em **Atender Ticket**. Administradores podem responder sem assumir.",
     )
-    .setFooter({ text: "Guerra Fria • Controle de atendimento" });
+    .setFooter({ text: CLAIM_FOOTER });
 
   if (existing) await existing.edit({ embeds: [embed], components: [claimRow(claimedBy)] }).catch(() => {});
   else await channel.send({ embeds: [embed], components: [claimRow(claimedBy)] }).catch(() => {});
+
+  for (const duplicate of controls.slice(1)) {
+    await duplicate.delete().catch(() => {});
+  }
 }
 
 async function configureTicketChannel(channel: TextChannel): Promise<void> {
@@ -100,14 +117,15 @@ async function configureTicketChannel(channel: TextChannel): Promise<void> {
   );
 
   for (const role of roles.values()) {
+    const adminRole = role.permissions.has(PermissionFlagsBits.Administrator);
     await channel.permissionOverwrites.edit(role.id, {
       ViewChannel: true,
       ReadMessageHistory: true,
       AttachFiles: true,
       EmbedLinks: true,
       ManageMessages: true,
-      SendMessages: false,
-    }, { reason: "Guerra Fria: equipe vê tickets, mas responde somente após assumir atendimento" }).catch((err) => {
+      SendMessages: adminRole ? true : false,
+    }, { reason: adminRole ? "Guerra Fria: administradores podem responder qualquer ticket" : "Guerra Fria: moderadores respondem somente após assumir atendimento" }).catch((err) => {
       logger.warn({ err, channelId: channel.id, roleId: role.id }, "Failed to configure ticket staff overwrite");
     });
   }
@@ -140,6 +158,11 @@ export async function handleTicketClaim(interaction: ButtonInteraction): Promise
     return;
   }
 
+  if (isAdministrator(member)) {
+    await interaction.reply({ content: "✅ Como administrador, você já pode responder este ticket sem precisar assumir o atendimento.", ephemeral: true });
+    return;
+  }
+
   const current = claimedMemberId(channel);
   if (current && current !== interaction.user.id) {
     await interaction.reply({ content: `⚠️ Este ticket já está sendo atendido por <@${current}>.`, ephemeral: true });
@@ -164,8 +187,8 @@ export async function handleTicketClaim(interaction: ButtonInteraction): Promise
       new EmbedBuilder()
         .setColor(0x2ecc71)
         .setTitle("✅ Ticket em atendimento")
-        .setDescription(`Atendimento assumido por <@${interaction.user.id}>.\n\nSomente o responsável pelo atendimento e o jogador podem conversar no ticket.`)
-        .setFooter({ text: "Guerra Fria • Controle de atendimento" }),
+        .setDescription(`Atendimento assumido por <@${interaction.user.id}>.\n\nModeradores que não assumiram continuam sem poder responder. Administradores podem participar do atendimento normalmente.`)
+        .setFooter({ text: CLAIM_FOOTER }),
     ],
     components: [claimRow(interaction.user.id)],
   });
@@ -181,11 +204,11 @@ async function enforceStaffMessage(message: Message): Promise<void> {
   if (message.author.id === openerId(channel)) return;
   const member = message.member;
   if (!member || !(await isStaff(member, channel))) return;
+  if (isAdministrator(member)) return;
 
   const claimedBy = claimedMemberId(channel);
   if (claimedBy === message.author.id) return;
 
-  // Administrator bypasses Discord overwrites, so this guarantees the workflow even for admin roles.
   await message.delete().catch(() => {});
   await message.author.send(
     claimedBy
