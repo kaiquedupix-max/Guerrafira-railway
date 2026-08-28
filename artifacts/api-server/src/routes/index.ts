@@ -12,15 +12,21 @@ import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonTransportRouter from "./seasonTransport.js";
 import seasonRouter from "./season.js";
 import seasonAuditRouter from "./seasonAudit.js";
+import seasonBetaRouter, { startSeasonBetaController } from "./seasonBeta.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
+startSeasonBetaController();
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
+
+// A camada Beta fica antes da ingestão da Season para bloquear eventos antes
+// de 28/08/2026 18:30 e executar o reset coordenado plugin + banco uma única vez.
+router.use(seasonBetaRouter);
 
 // Transporte privado da Season: healthcheck, bootstrap RAM e snapshot em lote.
 // Registrado antes das rotas públicas para manter a ingestão independente da UI.
