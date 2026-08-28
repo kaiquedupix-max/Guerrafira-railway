@@ -12,6 +12,7 @@ import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonTransportRouter from "./seasonTransport.js";
 import seasonRouter from "./season.js";
 import seasonAuditRouter from "./seasonAudit.js";
+import seasonBetaIntroRouter from "./seasonBetaIntro.js";
 import seasonBetaRouter, { startSeasonBetaController } from "./seasonBeta.js";
 
 startPaymentStatusNotifier();
@@ -23,6 +24,9 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
+
+// Antes do OAuth, o jogador vê claramente que esta fase é Beta e sem premiação.
+router.use(seasonBetaIntroRouter);
 
 // A camada Beta fica antes da ingestão da Season para bloquear eventos antes
 // de 28/08/2026 18:30 e executar o reset coordenado plugin + banco uma única vez.
