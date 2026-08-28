@@ -12,6 +12,7 @@ import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonTransportRouter from "./seasonTransport.js";
 import seasonRouter from "./season.js";
 import seasonAuditRouter from "./seasonAudit.js";
+import seasonSteamRegistrationRepairRouter from "./seasonSteamRegistrationRepair.js";
 import seasonSteamSignupRouter from "./seasonSteamSignup.js";
 import seasonAdjustedReadRouter from "./seasonAdjustedRead.js";
 import seasonBetaIntroRouter from "./seasonBetaIntro.js";
@@ -26,6 +27,7 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
+router.use(seasonSteamRegistrationRepairRouter);
 router.use(seasonSteamSignupRouter);
 router.use(seasonBetaIntroRouter);
 // Controle manual vem antes de qualquer endpoint de ingestão.
