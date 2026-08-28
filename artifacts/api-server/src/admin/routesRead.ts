@@ -9,6 +9,33 @@ import { isDiscordAdministrator } from "./permissions.js";
 const router = Router();
 router.use(requireAdmin);
 
+let overviewCache: any = null;
+let overviewCacheAt = 0;
+let overviewInFlight: Promise<any> | null = null;
+const OVERVIEW_TTL_MS = 5000;
+
+async function buildOverview() {
+  const [server, players, mods, links, vips] = await Promise.all([
+    getServerInfo(),
+    db.select().from(playersTable),
+    db.select().from(modLogsTable).orderBy(desc(modLogsTable.createdAt)).limit(20),
+    db.select().from(boosterLinksTable),
+    db.select().from(vipSubscriptionsTable),
+  ]);
+  const now = Date.now();
+  return {
+    server,
+    summary: {
+      knownPlayers: players.length,
+      onlinePlayers: players.filter(p => p.isOnline).length,
+      linkedSteam: links.length,
+      activeBoosters: links.filter(p => p.active).length,
+      activeVips: vips.filter(v => new Date(v.expiresAt).getTime() > now).length,
+    },
+    recentModeration: mods,
+  };
+}
+
 router.get("/me", async (req, res) => {
   const session = getAdminSessionV3(req);
   const canViewFinance = session ? await isDiscordAdministrator(session.userId) : false;
@@ -19,25 +46,31 @@ router.get("/me", async (req, res) => {
 });
 
 router.get("/overview", async (_req, res) => {
-  const [server, players, mods, links, vips] = await Promise.all([
-    getServerInfo(),
-    db.select().from(playersTable),
-    db.select().from(modLogsTable).orderBy(desc(modLogsTable.createdAt)).limit(20),
-    db.select().from(boosterLinksTable),
-    db.select().from(vipSubscriptionsTable),
-  ]);
-  const now = Date.now();
-  res.json({
-    server,
-    summary: {
-      knownPlayers: players.length,
-      onlinePlayers: players.filter(p => p.isOnline).length,
-      linkedSteam: links.length,
-      activeBoosters: links.filter(p => p.active).length,
-      activeVips: vips.filter(v => new Date(v.expiresAt).getTime() > now).length,
-    },
-    recentModeration: mods,
-  });
+  try {
+    const now = Date.now();
+    if (overviewCache && now - overviewCacheAt < OVERVIEW_TTL_MS) {
+      res.setHeader("Cache-Control", "private, max-age=3");
+      return void res.json(overviewCache);
+    }
+    if (!overviewInFlight) {
+      overviewInFlight = buildOverview()
+        .then(data => {
+          overviewCache = data;
+          overviewCacheAt = Date.now();
+          return data;
+        })
+        .finally(() => { overviewInFlight = null; });
+    }
+    const data = await overviewInFlight;
+    res.setHeader("Cache-Control", "private, max-age=3");
+    return void res.json(data);
+  } catch (_error) {
+    if (overviewCache) {
+      res.setHeader("X-GF-Stale", "1");
+      return void res.status(200).json(overviewCache);
+    }
+    return void res.status(503).json({ error: "Overview temporariamente indisponível." });
+  }
 });
 
 router.get("/players", async (req, res) => {
