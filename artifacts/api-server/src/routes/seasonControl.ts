@@ -28,8 +28,9 @@ export async function ensureSeasonControl() {
   `);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS season_beta_control (
-      beta_key TEXT PRIMARY KEY,
-      completed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      control_key TEXT PRIMARY KEY,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      details TEXT
     )
   `);
   await db.execute(sql`ALTER TABLE season_beta_control ADD COLUMN IF NOT EXISTS details TEXT`);
@@ -65,7 +66,7 @@ export async function markSeasonReset(seasonNumber: number, admin: string) {
 
 async function hasMarker(key: string) {
   await ensureSeasonControl();
-  const r: any = await db.execute(sql`SELECT beta_key FROM season_beta_control WHERE beta_key=${key} LIMIT 1`);
+  const r: any = await db.execute(sql`SELECT control_key FROM season_beta_control WHERE control_key=${key} LIMIT 1`);
   return Boolean(r?.rows?.[0]);
 }
 
@@ -82,15 +83,15 @@ async function prepareBetaBeforeStart() {
         last_reset_at=now(), last_reset_by='Beta automático 28/08'
     `);
     await tx.execute(sql`
-      INSERT INTO season_beta_control (beta_key, details)
+      INSERT INTO season_beta_control (control_key, details)
       VALUES (${PREP_KEY}, 'Pontuação anterior apagada e coleta bloqueada até 18:30 BRT.')
-      ON CONFLICT (beta_key) DO NOTHING
+      ON CONFLICT (control_key) DO NOTHING
     `);
     // Neutraliza o controller legado, que apagava inscrições no horário de início.
     await tx.execute(sql`
-      INSERT INTO season_beta_control (beta_key, details)
+      INSERT INTO season_beta_control (control_key, details)
       VALUES (${LEGACY_BETA_KEY}, 'Controller legado neutralizado; início controlado por seasonControl.')
-      ON CONFLICT (beta_key) DO NOTHING
+      ON CONFLICT (control_key) DO NOTHING
     `);
   });
   logger.info("[SEASON BETA] pontuação zerada; coleta bloqueada até 18:30 BRT");
@@ -119,9 +120,9 @@ async function startBetaScoring() {
           started_at=now(), ended_at=NULL, updated_at=now()
       `);
       await tx.execute(sql`
-        INSERT INTO season_beta_control (beta_key, details)
+        INSERT INTO season_beta_control (control_key, details)
         VALUES (${START_KEY}, 'Beta iniciada às 18:30 BRT; plugin e banco zerados; coleta liberada.')
-        ON CONFLICT (beta_key) DO NOTHING
+        ON CONFLICT (control_key) DO NOTHING
       `);
     });
 
