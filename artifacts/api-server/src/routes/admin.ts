@@ -14,6 +14,7 @@ import integrityManageRoutes from "../admin/routesIntegrityManage.js";
 import notificationRoutes from "../admin/routesNotifications.js";
 import wipeRoutes from "../admin/routesWipe.js";
 import seasonRoutes from "../admin/routesSeason.js";
+import seasonControlRoutes from "../admin/routesSeasonControl.js";
 import { requireFinanceAccess } from "../admin/financeGuard.js";
 
 const router = Router();
@@ -42,6 +43,7 @@ router.use("/discord", discordRoutes);
 router.use("/steam", steamRoutes);
 router.use("/vip", vipRoutes);
 router.use("/leaderboard", leaderboardRoutes);
+router.use("/season", seasonControlRoutes);
 router.use("/season", seasonRoutes);
 router.use("/finance", requireFinanceAccess);
 router.use(financeRoutes);
