@@ -1,9 +1,10 @@
 export const panelSeasonAddonJs = String.raw`
 (function(){'use strict';
 const $=id=>document.getElementById(id);
-const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
 const fmt=v=>{if(!v)return'—';const d=new Date(v);return Number.isNaN(d.getTime())?'—':d.toLocaleString('pt-BR')};
 let rows=[];
+let loading=false;
 
 function ensureView(){
   if($('seasonRegistrations')) return;
@@ -18,18 +19,22 @@ function ensureView(){
 }
 
 function addNav(){
+  ensureView();
   for(const box of [document.getElementById('nav'),document.getElementById('mobileNav')]){
     if(!box||box.querySelector('[data-season-registrations]')) continue;
     const b=document.createElement('button');
+    b.type='button';
     b.textContent='Season • Inscritos';
     b.dataset.seasonRegistrations='1';
+    b.setAttribute('aria-label','Abrir inscritos da Season');
     b.onclick=()=>showSeason();
     box.appendChild(b);
   }
 }
 
 function showSeason(){
-  ensureView();addNav();
+  ensureView();
+  addNav();
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('seasonRegistrations')?.classList.add('active');
   const title=$('pageTitle');if(title)title.textContent='Inscritos da Season';
@@ -46,6 +51,8 @@ function render(){
 }
 
 async function load(){
+  if(loading)return;
+  loading=true;
   try{
     const r=await fetch('/api/admin/season/registrations?season=1',{cache:'no-store'});
     const d=await r.json();if(!r.ok)throw new Error(d.error||('Erro '+r.status));
@@ -57,8 +64,33 @@ async function load(){
     if($('seasonLeader'))$('seasonLeader').textContent=s.leader?(s.leader.playerName||s.leader.discordName||'—'):'—';
     render();
   }catch(e){if($('seasonRows'))$('seasonRows').innerHTML='<tr><td colspan="11"><div class="empty danger">'+esc(e.message)+'</div></td></tr>'}
+  finally{loading=false}
 }
 
-function boot(){ensureView();addNav();setInterval(()=>{if($('seasonRegistrations')?.classList.contains('active'))load()},5000)}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,50));else setTimeout(boot,50);
+function watchNavigation(){
+  const attach=()=>{
+    addNav();
+    for(const id of ['nav','mobileNav']){
+      const el=$(id);
+      if(el&&!el.dataset.seasonObserved){
+        el.dataset.seasonObserved='1';
+        new MutationObserver(()=>{
+          if(!el.querySelector('[data-season-registrations]')) setTimeout(addNav,0);
+        }).observe(el,{childList:true});
+      }
+    }
+  };
+  attach();
+  [100,300,700,1200,2200,4000].forEach(ms=>setTimeout(attach,ms));
+}
+
+function boot(){
+  ensureView();
+  watchNavigation();
+  setInterval(()=>{
+    addNav();
+    if($('seasonRegistrations')?.classList.contains('active'))load();
+  },5000);
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0));else setTimeout(boot,0);
 })();`;
