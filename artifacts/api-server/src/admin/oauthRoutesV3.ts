@@ -6,7 +6,7 @@ import { getGuerraFriaDisplayName, isGuerraFriaAdmin } from "./permissions.js";
 import { issueAdminSessionV3, revokeAdminSessionV3 } from "./sessionBearer.js";
 import { issueCommunitySession, revokeCommunitySession } from "./communitySession.js";
 
-type Target = "admin" | "community" | "home" | "leaderboard" | "store";
+type Target = "admin" | "community" | "home" | "leaderboard" | "store" | "season";
 const states = new Map<string, { expires: number; target: Target }>();
 const redirectUri = () => process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || "https://www.guerrafriarust.com.br/api/admin/auth/callback";
 
@@ -15,7 +15,7 @@ export function adminLoginV3(req: Request, res: Response): void {
   if (!clientId) return void res.status(500).send("DISCORD_CLIENT_ID não configurado.");
 
   const raw = String(req.query.target || "");
-  const target: Target = raw === "community" ? "community" : raw === "home" ? "home" : raw === "leaderboard" ? "leaderboard" : raw === "store" ? "store" : "admin";
+  const target: Target = raw === "community" ? "community" : raw === "home" ? "home" : raw === "leaderboard" ? "leaderboard" : raw === "store" ? "store" : raw === "season" ? "season" : "admin";
   const state = randomUUID();
   states.set(state, { expires: Date.now() + 10 * 60 * 1000, target });
 
@@ -62,6 +62,7 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
   if (stored.target === "community") return void res.redirect("/integridade");
   if (stored.target === "leaderboard") return void res.redirect("/leaderboard");
   if (stored.target === "store") return void res.redirect("/loja");
+  if (stored.target === "season") return void res.redirect("/api/season/1/inscricao");
   return void res.redirect("/");
 }
 
