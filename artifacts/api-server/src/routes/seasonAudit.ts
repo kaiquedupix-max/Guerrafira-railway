@@ -1,35 +1,30 @@
-import { Router, type IRouter, type Request } from "express";
+import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
-import { getCommunitySession } from "../admin/communitySession.js";
-import { getAdminSessionV3 } from "../admin/sessionBearer.js";
 
 const router: IRouter = Router();
-const SEASON_1_START_AT = Date.parse("2026-09-03T00:00:00-03:00");
+const GENERAL_THRESHOLD = 1700;
 
 function num(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+function int(value: unknown, fallback = 0): number { return Math.trunc(num(value, fallback)); }
+function text(value: unknown, max = 64): string { return String(value ?? "").slice(0, max); }
 
-function int(value: unknown, fallback = 0): number {
-  return Math.trunc(num(value, fallback));
-}
-
-function text(value: unknown, max = 64): string {
-  return String(value ?? "").slice(0, max);
-}
-
-function canReadSeason(req: Request, seasonNumber: number): boolean {
-  if (seasonNumber !== 1 || Date.now() >= SEASON_1_START_AT) return true;
-  return Boolean(getCommunitySession(req)?.isAdmin || getAdminSessionV3(req));
+function rankName(mmr: unknown): string {
+  const v = num(mmr, 1000);
+  if (v >= GENERAL_THRESHOLD) return "General de Guerra";
+  if (v >= 1450) return "Coronel";
+  if (v >= 1250) return "Capitão";
+  if (v >= 1100) return "Soldado";
+  return "Recruta";
 }
 
 router.get("/season/:number/player/:steamId/audit", async (req, res) => {
   try {
     const seasonNumber = Math.max(1, int(req.params.number, 1));
-    if (!canReadSeason(req, seasonNumber)) return void res.status(403).json({ error: "Em breve" });
     const steamId = text(req.params.steamId, 32);
     const limit = Math.min(200, Math.max(25, int(req.query.limit, 100)));
     const offset = Math.max(0, int(req.query.offset, 0));
@@ -44,21 +39,38 @@ router.get("/season/:number/player/:steamId/audit", async (req, res) => {
       WHERE season_number=${seasonNumber} AND steam_id=${steamId}
       LIMIT 1
     `);
+    const row = playerResult?.rows?.[0] ?? null;
+    if (!row) return void res.status(404).json({ error: "Jogador não encontrado nesta Season." });
 
-    const player = playerResult?.rows?.[0] ?? null;
-    if (!player) return void res.status(404).json({ error: "Jogador não encontrado nesta Season." });
+    const patente = rankName(row.mmr);
+    const player: Record<string, any> = {
+      steam_id: row.steam_id,
+      player_name: row.player_name,
+      patente,
+      patente_maxima: patente === "General de Guerra",
+      kills: int(row.kills),
+      deaths: int(row.deaths),
+      headshots: int(row.headshots),
+      assists: int(row.assists),
+      raids_participated: int(row.raids_participated),
+      raids_defended: int(row.raids_defended),
+      bradley_participations: int(row.bradley_participations),
+      heli_participations: int(row.heli_participations),
+      crates_hacked: int(row.crates_hacked),
+      updated_at: row.updated_at,
+    };
+    if (player.patente_maxima) player.general_score = Math.round(num(row.mmr) * 100) / 100;
 
     const summaryResult: any = await db.execute(sql`
       SELECT
         category,
         COUNT(*)::int AS entries,
-        COALESCE(SUM(CASE WHEN final_value > 0 THEN final_value ELSE 0 END),0) AS gains,
-        COALESCE(SUM(CASE WHEN final_value < 0 THEN final_value ELSE 0 END),0) AS losses,
-        COALESCE(SUM(final_value),0) AS net
+        COUNT(*) FILTER (WHERE final_value > 0)::int AS gains,
+        COUNT(*) FILTER (WHERE final_value < 0)::int AS losses
       FROM season_transactions
       WHERE season_number=${seasonNumber} AND steam_id=${steamId}
       GROUP BY category
-      ORDER BY net DESC
+      ORDER BY entries DESC
     `);
 
     const totalResult: any = await db.execute(sql`
@@ -72,10 +84,7 @@ router.get("/season/:number/player/:steamId/audit", async (req, res) => {
         transaction_id,
         category,
         event_type,
-        base_value,
-        multiplier,
-        final_value,
-        resulting_mmr,
+        CASE WHEN final_value > 0 THEN 'gain' WHEN final_value < 0 THEN 'loss' ELSE 'neutral' END AS direction,
         details,
         happened_at
       FROM season_transactions
@@ -85,7 +94,6 @@ router.get("/season/:number/player/:steamId/audit", async (req, res) => {
     `);
 
     const total = Number(totalResult?.rows?.[0]?.total || 0);
-
     res.setHeader("Cache-Control", "public, max-age=5, stale-while-revalidate=10");
     return void res.json({
       ok: true,
@@ -93,12 +101,8 @@ router.get("/season/:number/player/:steamId/audit", async (req, res) => {
       player,
       summary: summaryResult?.rows ?? [],
       transactions: txResult?.rows ?? [],
-      pagination: {
-        limit,
-        offset,
-        total,
-        has_more: offset + limit < total,
-      },
+      disclosure: "Os valores individuais de MMR e o valor de cada ação não são públicos. A auditoria mostra quais ações contaram e se geraram ganho ou perda.",
+      pagination: { limit, offset, total, has_more: offset + limit < total },
     });
   } catch (error) {
     logger.error({ error }, "season public audit read failed");
