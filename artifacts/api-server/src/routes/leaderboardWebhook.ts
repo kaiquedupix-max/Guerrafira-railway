@@ -9,10 +9,18 @@ const router: IRouter = Router();
 let initialized=false;
 
 function authorized(value:unknown):boolean{
-  const expected=String(process.env.LEADERBOARD_WEBHOOK_SECRET||"").trim(),received=String(value||"").trim();
-  if(!expected||!received)return false;
-  const a=Buffer.from(expected),b=Buffer.from(received);
-  return a.length===b.length&&timingSafeEqual(a,b);
+  const received=String(value||"").trim();
+  if(!received)return false;
+  const expectedValues=[
+    String(process.env.LEADERBOARD_WEBHOOK_SECRET||"").trim(),
+    String(process.env.SEASON_WEBHOOK_SECRET||"").trim(),
+  ].filter(Boolean);
+  if(!expectedValues.length)return false;
+  const b=Buffer.from(received);
+  return expectedValues.some((expected)=>{
+    const a=Buffer.from(expected);
+    return a.length===b.length&&timingSafeEqual(a,b);
+  });
 }
 
 async function initializeReceipts(){
@@ -22,7 +30,7 @@ async function initializeReceipts(){
 }
 
 router.post("/leaderboard/events",async(req,res)=>{
-  if(!process.env.LEADERBOARD_WEBHOOK_SECRET?.trim())return void res.status(503).json({error:"LEADERBOARD_WEBHOOK_SECRET não configurada."});
+  if(!process.env.LEADERBOARD_WEBHOOK_SECRET?.trim()&&!process.env.SEASON_WEBHOOK_SECRET?.trim())return void res.status(503).json({error:"Segredo do webhook não configurado."});
   if(!authorized(req.header("x-gf-leaderboard-secret")))return void res.status(401).json({error:"Assinatura do leaderboard inválida."});
   const events=Array.isArray(req.body?.events)?req.body.events.slice(0,250):[];
   if(!events.length)return void res.status(400).json({error:"Nenhum evento recebido."});
