@@ -86,7 +86,7 @@ async function prepareBetaBeforeStart() {
       VALUES (${PREP_KEY}, 'Pontuação anterior apagada e coleta bloqueada até 18:30 BRT.')
       ON CONFLICT (control_key) DO NOTHING
     `);
-    -- Neutraliza o controller legado, que apagava inscrições no horário de início.
+    // Neutraliza o controller legado, que apagava inscrições no horário de início.
     await tx.execute(sql`
       INSERT INTO season_beta_control (control_key, details)
       VALUES (${LEGACY_BETA_KEY}, 'Controller legado neutralizado; início controlado por seasonControl.')
