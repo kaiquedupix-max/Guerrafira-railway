@@ -6,6 +6,7 @@ import router from "./routes";
 import webhookRouter from "./routes/webhook.js";
 import { leaderboardHtml } from "./routes/leaderboardV2";
 import { renderSeasonPage } from "./routes/seasonPage.js";
+import { renderSeasonGuide } from "./routes/seasonGuide.js";
 import { renderAdmin } from "./admin/appRenderShim.js";
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
@@ -32,6 +33,10 @@ app.get("/leaderboard", (_req, res) => res.status(200).type("html").send(leaderb
 app.get("/season:seasonNumber", (req, res) => {
   const seasonNumber = Math.max(1, Math.trunc(Number(req.params.seasonNumber) || 1));
   return res.status(200).type("html").send(renderSeasonPage(seasonNumber));
+});
+app.get("/season:seasonNumber/guia", (req, res) => {
+  const seasonNumber = Math.max(1, Math.trunc(Number(req.params.seasonNumber) || 1));
+  return res.status(200).type("html").send(renderSeasonGuide(seasonNumber));
 });
 app.get("/admin", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
