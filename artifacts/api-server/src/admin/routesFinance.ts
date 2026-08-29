@@ -12,81 +12,33 @@ function round(v: unknown): number { const n = Number(v); return Number.isFinite
 function validStatus(v: unknown): string { const s = clean(v, 30).toLowerCase(); return ["approved","pending","refunded","cancelled","rejected"].includes(s) ? s : "approved"; }
 
 /**
- * Financeiro do painel.
+ * Financeiro local do Guerra Fria.
  *
- * IMPORTANTE: esta rota NÃO consulta mais a API do Mercado Pago.
- * A fonte de verdade é o próprio banco do Guerra Fria:
- *   - payments: registra a venda e o valor pago;
- *   - vip_subscriptions: confirma que o VIP correspondente continua ativo.
- *
- * Assim, somente pagamentos aprovados que ainda possuem um VIP ativo entram
- * no cálculo. O filtro de dias é preservado e o gráfico é montado pela data
- * em que cada VIP foi vendido.
+ * Não consulta a API do Mercado Pago. O faturamento é calculado a partir dos
+ * pagamentos aprovados registrados no banco. Um VIP que expirou continua no
+ * histórico e continua compondo o faturamento do servidor. A tabela
+ * vip_subscriptions é usada apenas para informar quantos VIPs estão ativos
+ * agora e para marcar cada venda como ativa ou expirada.
  */
 router.get("/finance/live", async (req, res) => {
   const requested = Number(req.query.days ?? 30);
-  const days = Number.isFinite(requested) ? Math.min(365, Math.max(1, Math.floor(requested))) : 30;
+  const days = Number.isFinite(requested) ? Math.min(3650, Math.max(1, Math.floor(requested))) : 30;
 
   try {
-    const salesResult = await pool.query(`
-      SELECT
-        p.id,
-        p.mp_payment_id,
-        p.discord_user_id,
-        p.steam_id,
-        p.vip_tier,
-        p.amount,
-        p.method,
-        p.status,
-        p.created_at,
-        p.vip_granted_at
-      FROM payments p
-      WHERE p.status = 'approved'
-        AND p.created_at >= CURRENT_DATE - ($1::int - 1)
-        AND EXISTS (
-          SELECT 1
-          FROM vip_subscriptions v
-          WHERE v.expires_at > NOW()
-            AND LOWER(v.vip_tier) = LOWER(p.vip_tier)
-            AND (
-              v.discord_user_id = p.discord_user_id
-              OR (
-                p.steam_id IS NOT NULL
-                AND p.steam_id <> ''
-                AND v.steam_id = p.steam_id
-              )
-            )
-        )
-      ORDER BY p.created_at DESC
-      LIMIT 1000
-    `, [days]);
-
-    const activeResult = await pool.query(`
-      SELECT COUNT(*)::int AS active_vips
-      FROM vip_subscriptions
-      WHERE expires_at > NOW()
-    `);
-
-    const rows = salesResult.rows || [];
-    const total = round(rows.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0));
-    const avgTicket = rows.length ? round(total / rows.length) : 0;
-
-    const trendResult = await pool.query(`
-      WITH dates AS (
-        SELECT generate_series(
-          CURRENT_DATE - ($1::int - 1),
-          CURRENT_DATE,
-          interval '1 day'
-        )::date AS day
-      ), totals AS (
+    const [salesResult, activeResult, lifetimeResult, trendResult] = await Promise.all([
+      pool.query(`
         SELECT
-          p.created_at::date AS day,
-          COALESCE(SUM(p.amount::numeric), 0)::float AS revenue,
-          COUNT(*)::int AS sales
-        FROM payments p
-        WHERE p.status = 'approved'
-          AND p.created_at >= CURRENT_DATE - ($1::int - 1)
-          AND EXISTS (
+          p.id,
+          p.mp_payment_id,
+          p.discord_user_id,
+          p.steam_id,
+          p.vip_tier,
+          p.amount,
+          p.method,
+          p.status,
+          p.created_at,
+          p.vip_granted_at,
+          EXISTS (
             SELECT 1
             FROM vip_subscriptions v
             WHERE v.expires_at > NOW()
@@ -99,17 +51,58 @@ router.get("/finance/live", async (req, res) => {
                   AND v.steam_id = p.steam_id
                 )
               )
-          )
-        GROUP BY p.created_at::date
-      )
-      SELECT
-        to_char(d.day, 'YYYY-MM-DD') AS day,
-        COALESCE(t.revenue, 0)::float AS revenue,
-        COALESCE(t.sales, 0)::int AS sales
-      FROM dates d
-      LEFT JOIN totals t ON t.day = d.day
-      ORDER BY d.day
-    `, [days]);
+          ) AS vip_active
+        FROM payments p
+        WHERE p.status = 'approved'
+          AND p.created_at >= CURRENT_DATE - ($1::int - 1)
+        ORDER BY p.created_at DESC
+        LIMIT 2000
+      `, [days]),
+      pool.query(`
+        SELECT COUNT(*)::int AS active_vips
+        FROM vip_subscriptions
+        WHERE expires_at > NOW()
+      `),
+      pool.query(`
+        SELECT
+          COALESCE(SUM(amount::numeric), 0)::float AS lifetime_revenue,
+          COUNT(*)::int AS lifetime_sales
+        FROM payments
+        WHERE status = 'approved'
+      `),
+      pool.query(`
+        WITH dates AS (
+          SELECT generate_series(
+            CURRENT_DATE - ($1::int - 1),
+            CURRENT_DATE,
+            interval '1 day'
+          )::date AS day
+        ), totals AS (
+          SELECT
+            created_at::date AS day,
+            COALESCE(SUM(amount::numeric), 0)::float AS revenue,
+            COUNT(*)::int AS sales
+          FROM payments
+          WHERE status = 'approved'
+            AND created_at >= CURRENT_DATE - ($1::int - 1)
+          GROUP BY created_at::date
+        )
+        SELECT
+          to_char(d.day, 'YYYY-MM-DD') AS day,
+          COALESCE(t.revenue, 0)::float AS revenue,
+          COALESCE(t.sales, 0)::int AS sales
+        FROM dates d
+        LEFT JOIN totals t ON t.day = d.day
+        ORDER BY d.day
+      `, [days]),
+    ]);
+
+    const rows = salesResult.rows || [];
+    const periodRevenue = round(rows.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0));
+    const avgTicket = rows.length ? round(periodRevenue / rows.length) : 0;
+    const lifetimeRevenue = round(lifetimeResult.rows?.[0]?.lifetime_revenue || 0);
+    const lifetimeSales = Number(lifetimeResult.rows?.[0]?.lifetime_sales || 0);
+    const activeVips = Number(activeResult.rows?.[0]?.active_vips || 0);
 
     const trend = trendResult.rows.map((row: any) => ({
       day: row.day,
@@ -122,11 +115,13 @@ router.get("/finance/live", async (req, res) => {
     const payments = rows.map((row: any) => {
       const amount = round(row.amount);
       const tier = String(row.vip_tier || "VIP").toUpperCase();
+      const active = Boolean(row.vip_active);
       return {
         id: String(row.id),
         paymentId: row.mp_payment_id ? String(row.mp_payment_id) : null,
         status: "approved",
-        statusDetail: "vip_active",
+        statusDetail: active ? "vip_active" : "vip_expired",
+        vipActive: active,
         direction: "in",
         movement: "Venda de VIP",
         amount,
@@ -140,7 +135,7 @@ router.get("/finance/live", async (req, res) => {
         methodId: row.method ? String(row.method) : "local",
         type: "vip_sale",
         operationType: "vip_sale",
-        description: `VIP ${tier}`,
+        description: `VIP ${tier}${active ? " • ativo" : " • expirado"}`,
         externalReference: "",
         dateCreated: row.created_at,
         dateApproved: row.vip_granted_at || row.created_at,
@@ -152,40 +147,43 @@ router.get("/finance/live", async (req, res) => {
 
     res.setHeader("Cache-Control", "no-store");
     res.json({
-      source: "local_active_vips",
+      source: "local_vip_history",
       days,
       report: {
         status: "ready",
         complete: true,
-        detail: "Calculado localmente a partir dos VIPs ativos; nenhuma consulta ao Mercado Pago é realizada.",
+        detail: "Calculado pelo histórico local de vendas aprovadas. VIPs expirados continuam no faturamento.",
       },
       account: {
         id: "guerra-fria-vips",
-        nickname: "VIPs ativos",
-        balance: total,
+        nickname: "Faturamento histórico",
+        balance: lifetimeRevenue,
         balanceAvailable: true,
-        balanceType: "active_vip_sales",
-        activeVips: Number(activeResult.rows?.[0]?.active_vips || 0),
+        balanceType: "lifetime_vip_revenue",
+        activeVips,
+        lifetimeSales,
       },
       summary: {
-        grossRevenue: total,
-        netRevenue: total,
+        grossRevenue: periodRevenue,
+        netRevenue: periodRevenue,
         expenses: 0,
         fees: 0,
         refunded: 0,
-        cashFlow: total,
+        cashFlow: periodRevenue,
         approved: rows.length,
         outgoings: 0,
         total: rows.length,
         avgTicket,
-        activeVips: Number(activeResult.rows?.[0]?.active_vips || 0),
+        activeVips,
+        lifetimeRevenue,
+        lifetimeSales,
       },
       trend,
       payments,
     });
   } catch (error: any) {
-    console.error("[finance] Falha ao calcular VIPs ativos:", error);
-    res.status(500).json({ error: "Não foi possível calcular o financeiro dos VIPs ativos." });
+    console.error("[finance] Falha ao calcular histórico de VIPs:", error);
+    res.status(500).json({ error: "Não foi possível calcular o faturamento dos VIPs." });
   }
 });
 
