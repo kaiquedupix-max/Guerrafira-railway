@@ -11,6 +11,7 @@ import { startCardPaymentReconciler } from "./paymentReconciler.js";
 import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonTransportRouter from "./seasonTransport.js";
 import seasonRouter from "./season.js";
+import seasonIngestionSafeRouter from "./seasonIngestionSafe.js";
 import seasonAuditRouter from "./seasonAudit.js";
 import seasonSteamRegistrationRepairRouter from "./seasonSteamRegistrationRepair.js";
 import seasonSteamSignupRouter from "./seasonSteamSignup.js";
@@ -32,9 +33,12 @@ router.use(seasonSteamSignupRouter);
 router.use(seasonBetaIntroRouter);
 // Controle manual vem antes de qualquer endpoint de ingestão.
 router.use(seasonControlRouter);
+// A ingestão segura descarta eventos antigos pós-reset e remapeia o número enviado
+// pelo plugin para a Season ativa no banco, sem deixar um evento ruim travar a fila.
+router.use(seasonIngestionSafeRouter);
 router.use(seasonTransportRouter);
 router.use(seasonAuditRouter);
-// Leitura pública ajustada vem antes da leitura legada; ingestão continua bruta do plugin.
+// Leitura pública ajustada vem antes da leitura legada.
 router.use(seasonAdjustedReadRouter);
 router.use(seasonRouter);
 // O router Beta fica depois da ingestão para que o horário fixo antigo não impeça o início manual.
