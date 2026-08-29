@@ -25,23 +25,54 @@ export const panelModerationParityJs = String.raw`
 
     let state;
     try{state=await api('/api/admin/player-state/'+encodeURIComponent(steamId));}catch{return;}
-    if(!state?.banned)return;
 
+    const banBtn=document.getElementById('actBan');
+    if(!state?.banned){
+      if(banBtn && !document.getElementById('actPreventiveBan')){
+        const preventiveBtn=document.createElement('button');
+        preventiveBtn.id='actPreventiveBan';
+        preventiveBtn.type='button';
+        preventiveBtn.className='btn yellow';
+        preventiveBtn.style.cssText='background:#4a3510;border-color:#b7791f;color:#ffe7a3';
+        preventiveBtn.textContent='🛡️ Banimento preventivo';
+        banBtn.insertAdjacentElement('afterend',preventiveBtn);
+        preventiveBtn.onclick=async()=>{
+          const reason=(document.getElementById('actReason')?.value||'').trim();
+          if(!reason)return toast('Informe o motivo do banimento preventivo.',true);
+          if(!confirm('Aplicar BANIMENTO PREVENTIVO neste jogador?\n\nEle ficará bloqueado até abrir um ticket e passar por verificação.'))return;
+          preventiveBtn.disabled=true;preventiveBtn.textContent='Aplicando preventivo...';
+          try{
+            await post('/api/admin/moderation/preventive-ban',{steamId,reason});
+            toast('Banimento preventivo aplicado. O jogador foi orientado a abrir ticket para verificação.');
+            document.getElementById('closeDrawer')?.click();
+          }catch(e){toast(e.message||'Erro ao aplicar banimento preventivo.',true);preventiveBtn.disabled=false;preventiveBtn.textContent='🛡️ Banimento preventivo';}
+        };
+      }
+      return;
+    }
+
+    const preventive=Boolean(state.preventiveBan || state.ban?.type==='preventive');
     const toolbar=drawer.querySelector('.toolbar');
     if(toolbar){
       const badge=document.createElement('span');
       badge.className='badge';
-      badge.style.cssText='background:rgba(239,68,68,.16);border-color:rgba(239,68,68,.45);color:#ff8a8a';
-      badge.textContent='🔨 Banido';
+      badge.style.cssText=preventive
+        ?'background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.45);color:#ffd27a'
+        :'background:rgba(239,68,68,.16);border-color:rgba(239,68,68,.45);color:#ff8a8a';
+      badge.textContent=preventive?'🛡️ Preventivo':'🔨 Banido';
       toolbar.appendChild(badge);
     }
 
     if(state.ban){
       const card=document.createElement('div');
       card.className='stateCard';
-      card.style.cssText='margin:14px 0;border-color:rgba(239,68,68,.38);background:linear-gradient(135deg,rgba(127,29,29,.18),rgba(30,12,34,.75))';
+      card.style.cssText=preventive
+        ?'margin:14px 0;border-color:rgba(245,158,11,.38);background:linear-gradient(135deg,rgba(120,72,10,.20),rgba(30,18,10,.75))'
+        :'margin:14px 0;border-color:rgba(239,68,68,.38);background:linear-gradient(135deg,rgba(127,29,29,.18),rgba(30,12,34,.75))';
       const duration=state.ban.duration==='perm'?'Permanente':(state.ban.duration||'Não informado');
-      card.innerHTML='<b style="color:#ff9a9a">Banimento ativo</b><small>Motivo: '+esc(state.ban.reason||'Não informado')+'</small><small>Duração: '+esc(duration)+(state.ban.adminName?' • Aplicado por '+esc(state.ban.adminName):'')+'</small>';
+      const title=preventive?'Banimento preventivo ativo':'Banimento ativo';
+      const next=preventive?'<small>Para liberação: o jogador deve abrir um ticket em discord.gg/guerrafria e passar por VERIFICAÇÃO.</small>':'';
+      card.innerHTML='<b style="color:'+(preventive?'#ffd27a':'#ff9a9a')+'">'+title+'</b><small>Motivo: '+esc(state.ban.reason||'Não informado')+'</small><small>Duração: '+esc(duration)+(state.ban.adminName?' • Aplicado por '+esc(state.ban.adminName):'')+'</small>'+next;
       const field=drawer.querySelector('.field');
       if(field)field.parentElement?.insertBefore(card,field);
     }
@@ -49,7 +80,6 @@ export const panelModerationParityJs = String.raw`
     const durationField=document.getElementById('banDuration')?.closest('.field');
     if(durationField)durationField.style.display='none';
 
-    const banBtn=document.getElementById('actBan');
     if(banBtn){
       banBtn.textContent='✅ Desbanir';
       banBtn.classList.remove('red');
@@ -61,8 +91,8 @@ export const panelModerationParityJs = String.raw`
         if(!confirm('Remover o banimento deste jogador?'))return;
         banBtn.disabled=true;banBtn.textContent='Desbanindo...';
         try{
-          const r=await post('/api/admin/moderation/unban',{steamId,reason});
-          toast(r.rcon===false?'Desbanimento registrado. O RCON não confirmou a execução.':'Jogador desbanido com sucesso.',r.rcon===false);
+          await post('/api/admin/moderation/unban',{steamId,reason});
+          toast(preventive?'Banimento preventivo removido com sucesso.':'Jogador desbanido com sucesso.');
           document.getElementById('closeDrawer')?.click();
         }catch(e){toast(e.message||'Erro ao desbanir.',true);banBtn.disabled=false;banBtn.textContent='✅ Desbanir';}
       };
