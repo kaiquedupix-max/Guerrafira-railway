@@ -23,8 +23,11 @@ router.get("/season/:number", async(req,res,next)=>{
   if(!/^\d+$/.test(String(req.params.number||"")))return next();
   try{
     const seasonNumber=Math.max(1,i(req.params.number,1));
-    const limit=Math.min(300,Math.max(10,i(req.query.limit,100)));
     const seasonResult:any=await db.execute(sql`SELECT season_number,season_id,status,started_at,ended_at,updated_at FROM seasons WHERE season_number=${seasonNumber} LIMIT 1`);
+
+    // A classificação pública inclui TODO jogador que tenha estado/pontuação na Season.
+    // Inscrição em season_registrations não é requisito para aparecer no ranking.
+    // Também não aplicamos LIMIT aqui: o front recebe a classificação completa.
     const rankingResult:any=await db.execute(sql`
       WITH admin_delta AS (
         SELECT steam_id, COALESCE(SUM(final_value),0) AS delta
@@ -36,11 +39,11 @@ router.get("/season/:number", async(req,res,next)=>{
              ROW_NUMBER() OVER (ORDER BY p.mmr+COALESCE(a.delta,0) DESC,p.kills DESC,p.updated_at ASC) AS position
       FROM season_players p LEFT JOIN admin_delta a ON a.steam_id=p.steam_id
       WHERE p.season_number=${seasonNumber}
-      ORDER BY effective_mmr DESC,p.kills DESC,p.updated_at ASC LIMIT ${limit}`);
+      ORDER BY effective_mmr DESC,p.kills DESC,p.updated_at ASC`);
     const rows=(rankingResult?.rows??[]) as any[];
     const ranking=rows.map((r,idx)=>publicPlayer(r,idx+1));
     res.setHeader("Cache-Control","public, max-age=5, stale-while-revalidate=10");
-    return void res.json({ok:true,season_number:seasonNumber,season:seasonResult?.rows?.[0]??null,methodology:{metric:"MMR",public_mmr:false,description:"As patentes usam o MMR interno da Season Beta, incluindo ajustes administrativos auditáveis. Nesta Beta, as patentes são distribuídas de 1000 a 1200 MMR. O MMR individual permanece oculto."},ranks:RANKS,general_count:ranking.filter((p:any)=>p.patente_maxima).length,ranking});
+    return void res.json({ok:true,season_number:seasonNumber,season:seasonResult?.rows?.[0]??null,ranking_scope:"all_scored_players",total_players:ranking.length,methodology:{metric:"MMR",public_mmr:false,description:"As patentes usam o MMR interno da Season Beta, incluindo ajustes administrativos auditáveis. Todo jogador com pontuação/estado na Season aparece na classificação, mesmo sem inscrição. Nesta Beta, as patentes são distribuídas de 1000 a 1200 MMR. O MMR individual permanece oculto."},ranks:RANKS,general_count:ranking.filter((p:any)=>p.patente_maxima).length,ranking});
   }catch(error){logger.error({error},"adjusted season ranking failed");return void res.status(500).json({error:"Falha ao carregar ranking da Season."})}
 });
 
