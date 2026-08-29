@@ -120,21 +120,50 @@ async function ensureTables() {
   `);
 }
 
-async function activeSeason() {
-  const result: any = await db.execute(sql`
-    SELECT season_number, season_id, starting_mmr
+type TargetSeason = {
+  seasonNumber: number;
+  seasonId: string;
+  startingMmr: number;
+  status: string;
+};
+
+async function resolveTargetSeason(incomingSeasonNumber: number, incomingSeasonId: string): Promise<TargetSeason | null> {
+  const byId: any = await db.execute(sql`
+    SELECT season_number, season_id, starting_mmr, status
     FROM seasons
-    WHERE status='active'
-    ORDER BY season_number ASC
+    WHERE season_id = ${incomingSeasonId}
+    ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, season_number DESC
     LIMIT 1
   `);
-  const row = result?.rows?.[0];
-  if (!row) return null;
-  return {
-    seasonNumber: Math.max(1, i(row.season_number, 1)),
-    seasonId: s(row.season_id, 64),
-    startingMmr: n(row.starting_mmr, 1000),
-  };
+  const idRow = byId?.rows?.[0];
+  if (idRow) {
+    return {
+      seasonNumber: Math.max(1, i(idRow.season_number, incomingSeasonNumber || 1)),
+      seasonId: s(idRow.season_id, 64),
+      startingMmr: n(idRow.starting_mmr, 1000),
+      status: s(idRow.status, 32),
+    };
+  }
+
+  if (incomingSeasonNumber > 0) {
+    const byNumber: any = await db.execute(sql`
+      SELECT season_number, season_id, starting_mmr, status
+      FROM seasons
+      WHERE season_number = ${incomingSeasonNumber}
+      LIMIT 1
+    `);
+    const numberRow = byNumber?.rows?.[0];
+    if (numberRow && s(numberRow.season_id, 64) === incomingSeasonId) {
+      return {
+        seasonNumber: Math.max(1, i(numberRow.season_number, incomingSeasonNumber)),
+        seasonId: s(numberRow.season_id, 64),
+        startingMmr: n(numberRow.starting_mmr, 1000),
+        status: s(numberRow.status, 32),
+      };
+    }
+  }
+
+  return null;
 }
 
 function cleanPlayer(raw: Record<string, unknown>) {
@@ -144,13 +173,34 @@ function cleanPlayer(raw: Record<string, unknown>) {
     steamId,
     playerName: s(raw.player_name || raw.playerName || steamId, 128),
     mmr: n(raw.mmr, 1000),
-    pvpRaidMmr: n(raw.pvp_raid_mmr), farmMmr: n(raw.farm_mmr), buildingMmr: n(raw.building_mmr), eventMmr: n(raw.event_mmr), otherMmr: n(raw.other_mmr),
-    kills: i(raw.kills), deaths: i(raw.deaths), headshots: i(raw.headshots), assists: i(raw.assists),
-    wood: i(raw.wood), stone: i(raw.stone), metalOre: i(raw.metal_ore), sulfurOre: i(raw.sulfur_ore), hqmOre: i(raw.hqm_ore),
-    buildWood: i(raw.build_wood), buildStone: i(raw.build_stone), buildMetal: i(raw.build_metal), buildArmored: i(raw.build_armored),
-    rocketsUsed: i(raw.rockets_used), c4Used: i(raw.c4_used), satchelsUsed: i(raw.satchels_used), raidStructuresDestroyed: i(raw.raid_structures_destroyed),
-    tcsDestroyed: i(raw.tcs_destroyed), raidsParticipated: i(raw.raids_participated), raidsDefended: i(raw.raids_defended),
-    bradleyParticipations: i(raw.bradley_participations), heliParticipations: i(raw.heli_participations), cratesHacked: i(raw.crates_hacked),
+    pvpRaidMmr: n(raw.pvp_raid_mmr),
+    farmMmr: n(raw.farm_mmr),
+    buildingMmr: n(raw.building_mmr),
+    eventMmr: n(raw.event_mmr),
+    otherMmr: n(raw.other_mmr),
+    kills: i(raw.kills),
+    deaths: i(raw.deaths),
+    headshots: i(raw.headshots),
+    assists: i(raw.assists),
+    wood: i(raw.wood),
+    stone: i(raw.stone),
+    metalOre: i(raw.metal_ore),
+    sulfurOre: i(raw.sulfur_ore),
+    hqmOre: i(raw.hqm_ore),
+    buildWood: i(raw.build_wood),
+    buildStone: i(raw.build_stone),
+    buildMetal: i(raw.build_metal),
+    buildArmored: i(raw.build_armored),
+    rocketsUsed: i(raw.rockets_used),
+    c4Used: i(raw.c4_used),
+    satchelsUsed: i(raw.satchels_used),
+    raidStructuresDestroyed: i(raw.raid_structures_destroyed),
+    tcsDestroyed: i(raw.tcs_destroyed),
+    raidsParticipated: i(raw.raids_participated),
+    raidsDefended: i(raw.raids_defended),
+    bradleyParticipations: i(raw.bradley_participations),
+    heliParticipations: i(raw.heli_participations),
+    cratesHacked: i(raw.crates_hacked),
   };
 }
 
@@ -177,17 +227,38 @@ async function upsertPlayer(seasonNumber: number, seasonId: string, raw: Record<
       ${p.bradleyParticipations}, ${p.heliParticipations}, ${p.cratesHacked}, now()
     )
     ON CONFLICT (season_number, steam_id) DO UPDATE SET
-      season_id=EXCLUDED.season_id, player_name=EXCLUDED.player_name, mmr=EXCLUDED.mmr,
-      pvp_raid_mmr=EXCLUDED.pvp_raid_mmr, farm_mmr=EXCLUDED.farm_mmr, building_mmr=EXCLUDED.building_mmr,
-      event_mmr=EXCLUDED.event_mmr, other_mmr=EXCLUDED.other_mmr,
-      kills=EXCLUDED.kills, deaths=EXCLUDED.deaths, headshots=EXCLUDED.headshots, assists=EXCLUDED.assists,
-      wood=EXCLUDED.wood, stone=EXCLUDED.stone, metal_ore=EXCLUDED.metal_ore, sulfur_ore=EXCLUDED.sulfur_ore, hqm_ore=EXCLUDED.hqm_ore,
-      build_wood=EXCLUDED.build_wood, build_stone=EXCLUDED.build_stone, build_metal=EXCLUDED.build_metal, build_armored=EXCLUDED.build_armored,
-      rockets_used=EXCLUDED.rockets_used, c4_used=EXCLUDED.c4_used, satchels_used=EXCLUDED.satchels_used,
-      raid_structures_destroyed=EXCLUDED.raid_structures_destroyed, tcs_destroyed=EXCLUDED.tcs_destroyed,
-      raids_participated=EXCLUDED.raids_participated, raids_defended=EXCLUDED.raids_defended,
-      bradley_participations=EXCLUDED.bradley_participations, heli_participations=EXCLUDED.heli_participations,
-      crates_hacked=EXCLUDED.crates_hacked, updated_at=now()
+      season_id = EXCLUDED.season_id,
+      player_name = EXCLUDED.player_name,
+      mmr = EXCLUDED.mmr,
+      pvp_raid_mmr = EXCLUDED.pvp_raid_mmr,
+      farm_mmr = EXCLUDED.farm_mmr,
+      building_mmr = EXCLUDED.building_mmr,
+      event_mmr = EXCLUDED.event_mmr,
+      other_mmr = EXCLUDED.other_mmr,
+      kills = EXCLUDED.kills,
+      deaths = EXCLUDED.deaths,
+      headshots = EXCLUDED.headshots,
+      assists = EXCLUDED.assists,
+      wood = EXCLUDED.wood,
+      stone = EXCLUDED.stone,
+      metal_ore = EXCLUDED.metal_ore,
+      sulfur_ore = EXCLUDED.sulfur_ore,
+      hqm_ore = EXCLUDED.hqm_ore,
+      build_wood = EXCLUDED.build_wood,
+      build_stone = EXCLUDED.build_stone,
+      build_metal = EXCLUDED.build_metal,
+      build_armored = EXCLUDED.build_armored,
+      rockets_used = EXCLUDED.rockets_used,
+      c4_used = EXCLUDED.c4_used,
+      satchels_used = EXCLUDED.satchels_used,
+      raid_structures_destroyed = EXCLUDED.raid_structures_destroyed,
+      tcs_destroyed = EXCLUDED.tcs_destroyed,
+      raids_participated = EXCLUDED.raids_participated,
+      raids_defended = EXCLUDED.raids_defended,
+      bradley_participations = EXCLUDED.bradley_participations,
+      heli_participations = EXCLUDED.heli_participations,
+      crates_hacked = EXCLUDED.crates_hacked,
+      updated_at = now()
   `);
   return p;
 }
@@ -201,10 +272,12 @@ router.post("/season/events", async (req, res) => {
 
   try {
     await ensureTables();
-    const canonical = await activeSeason();
-    if (!canonical) return void res.status(503).json({ error: "Nenhuma Season ativa no banco." });
-
-    let accepted = 0, duplicates = 0, rejected = 0, stale = 0, remapped = 0;
+    let accepted = 0;
+    let duplicates = 0;
+    let rejected = 0;
+    let stale = 0;
+    let remapped = 0;
+    const targetCache = new Map<string, TargetSeason | null>();
 
     for (const raw of events) {
       if (!raw || typeof raw !== "object") { rejected++; continue; }
@@ -219,13 +292,18 @@ router.post("/season/events", async (req, res) => {
         continue;
       }
 
-      // Após um reset, a fila do plugin pode conter eventos da Season antiga.
-      // Eles precisam ser descartados com HTTP 2xx para não envenenar a cabeça da fila.
-      if (incomingSeasonId !== canonical.seasonId) {
+      const cacheKey = `${incomingSeasonNumber}:${incomingSeasonId}`;
+      let target = targetCache.get(cacheKey);
+      if (target === undefined) {
+        target = await resolveTargetSeason(incomingSeasonNumber, incomingSeasonId);
+        targetCache.set(cacheKey, target);
+      }
+
+      if (!target) {
         stale++;
         continue;
       }
-      if (incomingSeasonNumber !== canonical.seasonNumber) remapped++;
+      if (incomingSeasonNumber !== target.seasonNumber) remapped++;
 
       try {
         const p = cleanPlayer(player);
@@ -235,31 +313,44 @@ router.post("/season/events", async (req, res) => {
             transaction_id, season_number, season_id, steam_id, player_name, category, event_type,
             base_value, multiplier, final_value, resulting_mmr, details, happened_at
           ) VALUES (
-            ${transactionId}, ${canonical.seasonNumber}, ${canonical.seasonId}, ${p.steamId}, ${p.playerName},
-            ${s(e.category,64)}, ${s(e.event_type,128)}, ${n(e.base_value)}, ${n(e.multiplier,1)},
-            ${n(e.final_value)}, ${p.mmr}, ${s(e.details,4000)}, to_timestamp(${timestampUnix})
-          ) ON CONFLICT DO NOTHING RETURNING transaction_id
+            ${transactionId}, ${target.seasonNumber}, ${target.seasonId}, ${p.steamId}, ${p.playerName},
+            ${s(e.category, 64)}, ${s(e.event_type, 128)}, ${n(e.base_value)}, ${n(e.multiplier, 1)},
+            ${n(e.final_value)}, ${p.mmr}, ${s(e.details, 4000)}, to_timestamp(${timestampUnix})
+          )
+          ON CONFLICT DO NOTHING
+          RETURNING transaction_id
         `);
-        const inserted = Array.isArray(receipt?.rows) ? receipt.rows.length > 0 : Number(receipt?.rowCount || 0) > 0;
-        if (!inserted) { duplicates++; continue; }
+
+        const inserted = Array.isArray(receipt?.rows)
+          ? receipt.rows.length > 0
+          : Number(receipt?.rowCount || 0) > 0;
+
+        if (!inserted) {
+          duplicates++;
+          continue;
+        }
 
         try {
-          await upsertPlayer(canonical.seasonNumber, canonical.seasonId, player);
+          await upsertPlayer(target.seasonNumber, target.seasonId, player);
           accepted++;
         } catch (error) {
-          await db.execute(sql`DELETE FROM season_transactions WHERE transaction_id=${transactionId}`).catch(() => {});
+          await db.execute(sql`DELETE FROM season_transactions WHERE transaction_id = ${transactionId}`).catch(() => {});
           throw error;
         }
       } catch (error) {
         if (rejectableDataError(error)) {
           rejected++;
-          logger.warn({ event: { transactionId, steamId: s(player.steam_id || player.steamId, 32) }, err: errorInfo(error) }, "season event rejected without blocking queue");
+          logger.warn({
+            event: { transactionId, steamId: s(player.steam_id || player.steamId, 32) },
+            err: errorInfo(error),
+          }, "season event rejected without blocking queue");
           continue;
         }
         throw error;
       }
     }
 
+    logger.info({ accepted, duplicates, rejected, stale, remapped, received: events.length }, "season batch ingested");
     res.setHeader("Cache-Control", "no-store");
     return void res.status(200).json({ ok: true, accepted, duplicates, rejected, stale, remapped });
   } catch (error) {
@@ -274,23 +365,27 @@ router.post("/season/snapshot", async (req, res) => {
 
   try {
     await ensureTables();
-    const canonical = await activeSeason();
-    if (!canonical) return void res.status(503).json({ error: "Nenhuma Season ativa no banco." });
-
+    const incomingSeasonNumber = i(req.body?.season_number);
     const incomingSeasonId = s(req.body?.season_id, 64);
-    const players = Array.isArray(req.body?.players) ? req.body.players.slice(0, 1000) : [];
-    if (!incomingSeasonId) return void res.status(400).json({ error: "Season inválida." });
+    const players = Array.isArray(req.body?.players) ? req.body.players.slice(0, 5000) : [];
 
-    if (incomingSeasonId !== canonical.seasonId) {
-      res.setHeader("Cache-Control", "no-store");
-      return void res.status(200).json({ ok: true, stale: true, saved: 0, received: players.length });
+    if (incomingSeasonNumber < 1 || !incomingSeasonId) {
+      return void res.status(400).json({ error: "Season inválida." });
     }
 
-    let saved = 0, rejected = 0;
+    const target = await resolveTargetSeason(incomingSeasonNumber, incomingSeasonId);
+    if (!target) {
+      res.setHeader("Cache-Control", "no-store");
+      return void res.status(200).json({ ok: true, stale: true, saved: 0, rejected: 0, received: players.length });
+    }
+
+    let saved = 0;
+    let rejected = 0;
+
     for (const raw of players) {
       if (!raw || typeof raw !== "object") { rejected++; continue; }
       try {
-        await upsertPlayer(canonical.seasonNumber, canonical.seasonId, raw as Record<string, unknown>);
+        await upsertPlayer(target.seasonNumber, target.seasonId, raw as Record<string, unknown>);
         saved++;
       } catch (error) {
         if (rejectableDataError(error)) {
@@ -301,8 +396,25 @@ router.post("/season/snapshot", async (req, res) => {
       }
     }
 
+    logger.info({
+      incomingSeasonNumber,
+      incomingSeasonId,
+      targetSeasonNumber: target.seasonNumber,
+      targetSeasonId: target.seasonId,
+      saved,
+      rejected,
+      received: players.length,
+    }, "season snapshot ingested");
+
     res.setHeader("Cache-Control", "no-store");
-    return void res.status(200).json({ ok: true, saved, rejected, received: players.length, canonical_season_number: canonical.seasonNumber });
+    return void res.status(200).json({
+      ok: true,
+      saved,
+      rejected,
+      received: players.length,
+      remapped: incomingSeasonNumber !== target.seasonNumber,
+      canonical_season_number: target.seasonNumber,
+    });
   } catch (error) {
     logger.error({ err: errorInfo(error) }, "season safe snapshot failed");
     return void res.status(500).json({ error: "Falha ao sincronizar snapshot da Season." });
