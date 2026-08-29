@@ -26,6 +26,7 @@ import { startLeaderboardChannel } from "./leaderboardChannel.js";
 import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raffle.js";
 import { openVipModal, submitVipModal } from "./vipSteamLink.js";
 import * as banirCommand from "./commands/banir.js";
+import * as banpreventivoCommand from "./commands/banpreventivo.js";
 import * as kickarCommand from "./commands/kickar.js";
 import * as verificarCommand from "./commands/verificar.js";
 import * as desbanirCommand from "./commands/desbanir.js";
@@ -59,6 +60,7 @@ interface BotCommand {
 
 const commands = new Collection<string, BotCommand>();
 commands.set(banirCommand.data.name, banirCommand);
+commands.set(banpreventivoCommand.data.name, banpreventivoCommand);
 commands.set(kickarCommand.data.name, kickarCommand);
 commands.set(verificarCommand.data.name, verificarCommand);
 commands.set(desbanirCommand.data.name, desbanirCommand);
@@ -231,7 +233,7 @@ async function handleConnectButton(interaction: Parameters<typeof handleTicketCr
 async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID; const guildId = process.env.DISCORD_GUILD_ID;
   if (!clientId) { logger.warn("DISCORD_CLIENT_ID not set"); return; }
-  const commandData = [banirCommand, kickarCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand, steamCommand, wipeCommand, testeftpCommand, enviarjsonCommand, wipedatasCommand].map(c => c.data.toJSON());
+  const commandData = [banirCommand, banpreventivoCommand, kickarCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand, steamCommand, wipeCommand, testeftpCommand, enviarjsonCommand, wipedatasCommand].map(c => c.data.toJSON());
   try {
     if (guildId) { const guild = await client.guilds.fetch(guildId); await guild.commands.set(commandData); logger.info({ guildId }, "Slash commands registered"); }
     else { await client.application?.commands.set(commandData); logger.info("Slash commands registered globally"); }
