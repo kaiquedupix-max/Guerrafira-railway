@@ -6,18 +6,18 @@ export const panelFinanceLabelsJs = String.raw`
   const setLabel=(id,text)=>{const el=byId(id),card=el&&el.closest('.financeMetric'),label=card&&card.querySelector('small');if(label)label.textContent=text};
 
   function applyLabels(){
-    setLabel('finBalance','VIPs ativos agora');
-    setLabel('finGross','Total vendido');
-    setLabel('finNet','Receita em VIPs ativos');
+    setLabel('finBalance','Faturamento total do servidor');
+    setLabel('finGross','Faturamento do período');
+    setLabel('finNet','Receita de VIPs');
     setLabel('finExpenses','Ticket médio');
-    setLabel('finDeductions','VIPs vendidos');
+    setLabel('finDeductions','VIPs vendidos no período');
     setLabel('finFlow','Total do período');
     const subtitle=document.querySelector('#finance .financeHero .subtitle');
-    if(subtitle)subtitle.textContent='Cálculo interno pelos VIPs ativos — sem consulta à API do Mercado Pago';
+    if(subtitle)subtitle.textContent='Histórico completo de vendas de VIP — ativos e expirados';
     const badge=document.querySelector('#finance .section .badge.green');
     if(badge&&badge.textContent.includes('Mercado Pago'))badge.textContent='Banco de dados ao vivo';
     const hint=document.querySelector('#finance .sectionHead .financeHint');
-    if(hint&&hint.textContent.includes('Compras feitas'))hint.textContent='Cada linha representa um VIP ativo vendido dentro do período selecionado.';
+    if(hint)hint.textContent='Cada linha representa uma venda de VIP registrada no dia em que aconteceu, mesmo que o VIP já tenha expirado.';
   }
 
   applyLabels();
@@ -33,13 +33,13 @@ export const panelFinanceLabelsJs = String.raw`
         setTimeout(function(){
           applyLabels();
           const s=data.summary||{},a=data.account||{};
-          if(byId('finBalance'))byId('finBalance').textContent=String(Number(a.activeVips||s.activeVips||0));
+          if(byId('finBalance'))byId('finBalance').textContent=money(a.balance||s.lifetimeRevenue);
           if(byId('finGross'))byId('finGross').textContent=money(s.grossRevenue);
           if(byId('finNet'))byId('finNet').textContent=money(s.netRevenue);
           if(byId('finExpenses'))byId('finExpenses').textContent=money(s.avgTicket);
           if(byId('finDeductions'))byId('finDeductions').textContent=String(Number(s.approved||0));
           if(byId('finFlow'))byId('finFlow').textContent=money(s.cashFlow);
-          if(byId('finSummary'))byId('finSummary').textContent=Number(s.approved||0)+' VIPs vendidos • ticket médio '+money(s.avgTicket);
+          if(byId('finSummary'))byId('finSummary').textContent=Number(s.approved||0)+' VIPs vendidos no período • '+Number(s.activeVips||0)+' ativos agora • total histórico '+money(s.lifetimeRevenue);
         },0);
       }
     }catch{}
