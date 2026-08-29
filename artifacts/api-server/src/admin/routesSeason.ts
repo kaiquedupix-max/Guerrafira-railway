@@ -17,24 +17,47 @@ async function ensureRegistrationTable() {
   await db.execute(sql`ALTER TABLE season_registrations ADD COLUMN IF NOT EXISTS steam_id TEXT`);
 }
 
+// Keep admin rank thresholds identical to the public Season ranking.
 function rankName(mmrValue: unknown) {
   const mmr = Number(mmrValue ?? 1000);
-  if (mmr >= 1700) return "General de Guerra";
-  if (mmr >= 1450) return "Coronel";
-  if (mmr >= 1250) return "Capitão";
-  if (mmr >= 1100) return "Soldado";
+  if (mmr >= 1200) return "General de Guerra";
+  if (mmr >= 1150) return "Coronel";
+  if (mmr >= 1100) return "Capitão";
+  if (mmr >= 1050) return "Soldado";
   return "Recruta";
 }
+
 const validSteam=(v:unknown)=>/^7656119\d{10}$/.test(String(v||""));
+
+// The Beta is publicly exposed as Season 1, while the Rust plugin may have
+// advanced its internal season_number. Resolve the same freshest active source
+// used by the public ranking so the admin panel never shows a fake "0 com dados".
+async function resolveSeasonDataSource(requestedSeasonNumber:number):Promise<number>{
+  const result:any=await db.execute(sql`
+    SELECT p.season_number,COUNT(*)::int player_count,MAX(p.updated_at) last_update,MAX(s.status) status
+    FROM season_players p
+    LEFT JOIN seasons s ON s.season_number=p.season_number
+    GROUP BY p.season_number
+    ORDER BY CASE WHEN MAX(s.status)='active' THEN 0 ELSE 1 END,
+             MAX(p.updated_at) DESC NULLS LAST,
+             p.season_number DESC
+  `);
+  const rows=Array.isArray(result?.rows)?result.rows:[];
+  const usable=rows.filter((r:any)=>Number(r.player_count||0)>0);
+  const active=usable.find((r:any)=>String(r.status||'')==='active');
+  const requested=usable.find((r:any)=>Number(r.season_number)===requestedSeasonNumber);
+  return Number(active?.season_number??requested?.season_number??requestedSeasonNumber);
+}
 
 router.get("/registrations", async (req, res) => {
   try {
     await ensureRegistrationTable();
     const season = Math.max(1, Math.trunc(Number(req.query.season) || 1));
+    const sourceSeason = await resolveSeasonDataSource(season);
     const result: any = await db.execute(sql`
       WITH admin_delta AS (
         SELECT steam_id,COALESCE(SUM(final_value),0) delta FROM season_transactions
-        WHERE season_number=${season} AND category='admin' GROUP BY steam_id
+        WHERE season_number=${sourceSeason} AND category='admin' GROUP BY steam_id
       )
       SELECT r.season_number,r.discord_id,r.discord_name,r.mode,r.status,r.accepted_rules_at,r.created_at,
         NULLIF(TRIM(r.steam_id),'') registration_steam_id,
@@ -46,7 +69,7 @@ router.get("/registrations", async (req, res) => {
         p.bradley_participations,p.heli_participations,p.crates_hacked,p.updated_at
       FROM season_registrations r
       LEFT JOIN booster_links b ON b.discord_user_id=r.discord_id
-      LEFT JOIN season_players p ON p.season_number=r.season_number AND p.steam_id=COALESCE(NULLIF(TRIM(r.steam_id),''),NULLIF(TRIM(b.steam_id),''))
+      LEFT JOIN season_players p ON p.season_number=${sourceSeason} AND p.steam_id=COALESCE(NULLIF(TRIM(r.steam_id),''),NULLIF(TRIM(b.steam_id),''))
       LEFT JOIN admin_delta a ON a.steam_id=COALESCE(NULLIF(TRIM(r.steam_id),''),NULLIF(TRIM(b.steam_id),''))
       WHERE r.season_number=${season} AND r.status='active'
       ORDER BY mmr DESC NULLS LAST,r.created_at ASC`);
@@ -60,7 +83,7 @@ router.get("/registrations", async (req, res) => {
     });
     const ranked=registrations.filter((x:any)=>x.hasSeasonData);
     res.setHeader("Cache-Control","no-store");
-    return void res.json({ok:true,beta:season===1,season,roleId:process.env.SEASON_BETA_ROLE_ID||null,summary:{total:registrations.length,linkedSteam:registrations.filter((x:any)=>x.steamId).length,confirmedSteam:registrations.filter((x:any)=>x.steamConfirmed).length,withSeasonData:ranked.length,leader:ranked[0]||null},registrations});
+    return void res.json({ok:true,beta:season===1,season,dataSourceSeason:sourceSeason,fallbackSource:sourceSeason!==season,roleId:process.env.SEASON_BETA_ROLE_ID||null,summary:{total:registrations.length,linkedSteam:registrations.filter((x:any)=>x.steamId).length,confirmedSteam:registrations.filter((x:any)=>x.steamConfirmed).length,withSeasonData:ranked.length,leader:ranked[0]||null},registrations});
   } catch (error) {
     req.log?.error?.({ error }, "admin season registrations failed");
     return void res.status(500).json({ error: "Falha ao carregar inscritos da Season." });
@@ -72,15 +95,16 @@ router.get("/player/:steamId/history", async(req,res)=>{
   const season=Math.max(1,Math.trunc(Number(req.query.season)||1));
   if(!validSteam(steamId))return void res.status(400).json({error:"SteamID inválido."});
   try{
+    const sourceSeason=await resolveSeasonDataSource(season);
     const player:any=await db.execute(sql`
-      SELECT p.*,COALESCE((SELECT SUM(final_value) FROM season_transactions t WHERE t.season_number=${season} AND t.steam_id=${steamId} AND t.category='admin'),0) admin_delta
-      FROM season_players p WHERE p.season_number=${season} AND p.steam_id=${steamId} LIMIT 1`);
+      SELECT p.*,COALESCE((SELECT SUM(final_value) FROM season_transactions t WHERE t.season_number=${sourceSeason} AND t.steam_id=${steamId} AND t.category='admin'),0) admin_delta
+      FROM season_players p WHERE p.season_number=${sourceSeason} AND p.steam_id=${steamId} LIMIT 1`);
     const row=player?.rows?.[0]||null;
     const tx:any=await db.execute(sql`
       SELECT transaction_id,category,event_type,base_value,multiplier,final_value,resulting_mmr,details,happened_at,received_at
-      FROM season_transactions WHERE season_number=${season} AND steam_id=${steamId}
+      FROM season_transactions WHERE season_number=${sourceSeason} AND steam_id=${steamId}
       ORDER BY happened_at DESC,received_at DESC LIMIT 300`);
-    return void res.json({ok:true,player:row?{steamId,playerName:row.player_name,rawMmr:Number(row.mmr||0),adminDelta:Number(row.admin_delta||0),mmr:Number(row.mmr||0)+Number(row.admin_delta||0),rank:rankName(Number(row.mmr||0)+Number(row.admin_delta||0))}:null,transactions:tx?.rows??[]});
+    return void res.json({ok:true,season,dataSourceSeason:sourceSeason,player:row?{steamId,playerName:row.player_name,rawMmr:Number(row.mmr||0),adminDelta:Number(row.admin_delta||0),mmr:Number(row.mmr||0)+Number(row.admin_delta||0),rank:rankName(Number(row.mmr||0)+Number(row.admin_delta||0))}:null,transactions:tx?.rows??[]});
   }catch(error){req.log?.error?.({error},"season history failed");return void res.status(500).json({error:"Falha ao carregar histórico de MMR."})}
 });
 
@@ -91,15 +115,16 @@ router.post("/player/:steamId/adjust",async(req,res)=>{
   if(!Number.isFinite(delta)||delta===0||Math.abs(delta)>5000)return void res.status(400).json({error:"Informe um ajuste entre -5000 e +5000 MMR."});
   if(reason.length<3)return void res.status(400).json({error:"Informe o motivo do ajuste."});
   try{
-    const p:any=await db.execute(sql`SELECT player_name,mmr,season_id FROM season_players WHERE season_number=${season} AND steam_id=${steamId} LIMIT 1`);
+    const sourceSeason=await resolveSeasonDataSource(season);
+    const p:any=await db.execute(sql`SELECT player_name,mmr,season_id FROM season_players WHERE season_number=${sourceSeason} AND steam_id=${steamId} LIMIT 1`);
     const row=p?.rows?.[0];if(!row)return void res.status(404).json({error:"Jogador ainda não possui atividade registrada nesta Season."});
-    const d:any=await db.execute(sql`SELECT COALESCE(SUM(final_value),0) delta FROM season_transactions WHERE season_number=${season} AND steam_id=${steamId} AND category='admin'`);
+    const d:any=await db.execute(sql`SELECT COALESCE(SUM(final_value),0) delta FROM season_transactions WHERE season_number=${sourceSeason} AND steam_id=${steamId} AND category='admin'`);
     const before=Number(row.mmr||0)+Number(d?.rows?.[0]?.delta||0);const after=before+delta;
     const admin=getAdminSessionV3(req);const adminName=admin?.username||"Administrador";
     const id=`admin-${randomUUID()}`;
     await db.execute(sql`INSERT INTO season_transactions(transaction_id,season_number,season_id,steam_id,player_name,category,event_type,base_value,multiplier,final_value,resulting_mmr,details,happened_at)
-      VALUES(${id},${season},${String(row.season_id||`season-${season}`)},${steamId},${String(row.player_name||steamId)},'admin','admin_adjustment',${delta},1,${delta},${after},${`Ajuste manual por ${adminName}: ${reason}`},now())`);
-    return void res.json({ok:true,steamId,delta,before,after,admin:adminName,reason});
+      VALUES(${id},${sourceSeason},${String(row.season_id||`season-${sourceSeason}`)},${steamId},${String(row.player_name||steamId)},'admin','admin_adjustment',${delta},1,${delta},${after},${`Ajuste manual por ${adminName}: ${reason}`},now())`);
+    return void res.json({ok:true,season,dataSourceSeason:sourceSeason,steamId,delta,before,after,admin:adminName,reason});
   }catch(error){req.log?.error?.({error},"season admin adjustment failed");return void res.status(500).json({error:"Falha ao aplicar ajuste de MMR."})}
 });
 
@@ -109,19 +134,20 @@ router.post("/player/:steamId/reverse",async(req,res)=>{
   if(!validSteam(steamId)||!transactionId)return void res.status(400).json({error:"Dados inválidos."});
   if(reason.length<3)return void res.status(400).json({error:"Informe o motivo do estorno."});
   try{
-    const original:any=await db.execute(sql`SELECT transaction_id,season_id,player_name,final_value,event_type FROM season_transactions WHERE transaction_id=${transactionId} AND season_number=${season} AND steam_id=${steamId} LIMIT 1`);
+    const sourceSeason=await resolveSeasonDataSource(season);
+    const original:any=await db.execute(sql`SELECT transaction_id,season_id,player_name,final_value,event_type FROM season_transactions WHERE transaction_id=${transactionId} AND season_number=${sourceSeason} AND steam_id=${steamId} LIMIT 1`);
     const tx=original?.rows?.[0];if(!tx)return void res.status(404).json({error:"Lançamento não encontrado."});
     const value=Number(tx.final_value||0);if(!value)return void res.status(409).json({error:"Este lançamento não possui MMR para estornar."});
     const marker=`reversal_of=${transactionId}`;
-    const exists:any=await db.execute(sql`SELECT transaction_id FROM season_transactions WHERE season_number=${season} AND steam_id=${steamId} AND category='admin' AND details LIKE ${`%${marker}%`} LIMIT 1`);
+    const exists:any=await db.execute(sql`SELECT transaction_id FROM season_transactions WHERE season_number=${sourceSeason} AND steam_id=${steamId} AND category='admin' AND details LIKE ${`%${marker}%`} LIMIT 1`);
     if(exists?.rows?.[0])return void res.status(409).json({error:"Este lançamento já foi estornado."});
-    const p:any=await db.execute(sql`SELECT mmr FROM season_players WHERE season_number=${season} AND steam_id=${steamId} LIMIT 1`);
-    const d:any=await db.execute(sql`SELECT COALESCE(SUM(final_value),0) delta FROM season_transactions WHERE season_number=${season} AND steam_id=${steamId} AND category='admin'`);
+    const p:any=await db.execute(sql`SELECT mmr FROM season_players WHERE season_number=${sourceSeason} AND steam_id=${steamId} LIMIT 1`);
+    const d:any=await db.execute(sql`SELECT COALESCE(SUM(final_value),0) delta FROM season_transactions WHERE season_number=${sourceSeason} AND steam_id=${steamId} AND category='admin'`);
     const before=Number(p?.rows?.[0]?.mmr||0)+Number(d?.rows?.[0]?.delta||0);const delta=-value;const after=before+delta;
     const admin=getAdminSessionV3(req);const adminName=admin?.username||"Administrador";const id=`admin-${randomUUID()}`;
     await db.execute(sql`INSERT INTO season_transactions(transaction_id,season_number,season_id,steam_id,player_name,category,event_type,base_value,multiplier,final_value,resulting_mmr,details,happened_at)
-      VALUES(${id},${season},${String(tx.season_id||`season-${season}`)},${steamId},${String(tx.player_name||steamId)},'admin','admin_reversal',${delta},1,${delta},${after},${`${marker}; por ${adminName}; motivo: ${reason}; evento_original=${String(tx.event_type||"")}`},now())`);
-    return void res.json({ok:true,delta,before,after,reversed:transactionId});
+      VALUES(${id},${sourceSeason},${String(tx.season_id||`season-${sourceSeason}`)},${steamId},${String(tx.player_name||steamId)},'admin','admin_reversal',${delta},1,${delta},${after},${`${marker}; por ${adminName}; motivo: ${reason}; evento_original=${String(tx.event_type||"")}`},now())`);
+    return void res.json({ok:true,season,dataSourceSeason:sourceSeason,delta,before,after,reversed:transactionId});
   }catch(error){req.log?.error?.({error},"season reverse failed");return void res.status(500).json({error:"Falha ao estornar pontuação."})}
 });
 
