@@ -5,266 +5,188 @@ import { requireAdmin } from "./guard.js";
 
 const router = Router();
 router.use(requireAdmin);
+
 function clean(v: unknown, max = 120): string { return String(v ?? "").trim().slice(0, max); }
 function money(v: unknown): number { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0; }
+function round(v: unknown): number { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; }
 function validStatus(v: unknown): string { const s = clean(v, 30).toLowerCase(); return ["approved","pending","refunded","cancelled","rejected"].includes(s) ? s : "approved"; }
 
-const methodLabels: Record<string, string> = {
-  account_money: "Saldo Mercado Pago", pix: "PIX", credit_card: "Cartão de crédito",
-  debit_card: "Cartão de débito", ticket: "Boleto", bank_transfer: "Transferência bancária",
-};
-
-async function mpJson(url: string, accessToken: string): Promise<any> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" }, signal: controller.signal });
-    const text = await response.text();
-    let data: any = {}; try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
-    if (!response.ok) throw Object.assign(new Error(`Mercado Pago respondeu ${response.status}.`), { status: response.status, detail: text.slice(0, 300) });
-    return data;
-  } finally { clearTimeout(timeout); }
-}
-
-async function mpRequest(url: string, accessToken: string, init: RequestInit = {}): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 18_000);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json, text/csv", "Content-Type": "application/json", ...(init.headers || {}) },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, 500);
-      throw Object.assign(new Error(`Mercado Pago respondeu ${response.status}.`), { status: response.status, detail });
-    }
-    return response;
-  } finally { clearTimeout(timeout); }
-}
-
-type ReportCache = { key: string; expiresAt: number; taskId?: string; fileName?: string; rows?: any[]; status: "processing" | "ready" | "unavailable"; detail?: string };
-let reportCache: ReportCache | null = null;
-
-function parseCsvLine(line: string, separator: string): string[] {
-  const result: string[] = []; let value = ""; let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === '"') { if (quoted && line[i + 1] === '"') { value += '"'; i++; } else quoted = !quoted; }
-    else if (char === separator && !quoted) { result.push(value.trim()); value = ""; }
-    else value += char;
-  }
-  result.push(value.trim()); return result;
-}
-
-function parseSettlementCsv(csv: string): any[] {
-  const lines = csv.replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
-  if (!lines.length) return [];
-  const separator = (lines[0].match(/;/g)?.length || 0) > (lines[0].match(/,/g)?.length || 0) ? ";" : ",";
-  const headers = parseCsvLine(lines[0], separator).map(h => h.trim().toUpperCase());
-  return lines.slice(1).map(line => {
-    const values = parseCsvLine(line, separator); const row: any = {};
-    headers.forEach((header, index) => { row[header] = values[index] ?? ""; }); return row;
-  });
-}
-
-function reportNumber(value: unknown): number {
-  const raw = String(value ?? "").trim();
-  if (!raw) return 0;
-  const normalized = raw.includes(",") && !raw.includes(".") ? raw.replace(",", ".") : raw.replace(/,/g, "");
-  const number = Number(normalized); return Number.isFinite(number) ? Math.abs(number) : 0;
-}
-
-function signedReportNumber(value: unknown): number {
-  const raw = String(value ?? "").trim();
-  if (!raw) return 0;
-  const normalized = raw.includes(",") && !raw.includes(".") ? raw.replace(",", ".") : raw.replace(/,/g, "");
-  const number = Number(normalized); return Number.isFinite(number) ? number : 0;
-}
-
-function reportDate(value: unknown): string | null {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  if (/^\d{13}$/.test(raw)) return new Date(Number(raw)).toISOString();
-  if (/^\d{10}$/.test(raw)) return new Date(Number(raw) * 1000).toISOString();
-  const parsed = new Date(raw); return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
-
-async function getSettlementReport(accessToken: string, begin: Date, end: Date): Promise<ReportCache> {
-  const key = `${begin.toISOString().slice(0, 10)}:${end.toISOString().slice(0, 10)}`;
-  if (reportCache?.key === key && reportCache.status === "ready" && reportCache.rows) return reportCache;
-  if (reportCache?.key === key && reportCache.status === "unavailable" && reportCache.expiresAt > Date.now()) return reportCache;
-  if (reportCache?.key === key && reportCache.status === "processing" && reportCache.taskId) {
-    try {
-      const task = await (await mpRequest(`https://api.mercadopago.com/v1/account/settlement_report/task/${reportCache.taskId}`, accessToken)).json() as any;
-      if (String(task?.status).toLowerCase() === "processed") {
-        reportCache.fileName = task?.file_name ? String(task.file_name) : undefined;
-        if (!reportCache.fileName) {
-          const search = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report/search", accessToken)).json() as any;
-          const reports = Array.isArray(search?.results) ? search.results : [];
-          const match = reports.find((item: any) => String(item?.id) === String(task?.report_id) || String(item?.id) === String(task?.id));
-          if (match?.file_name) reportCache.fileName = String(match.file_name);
-        }
-        if (reportCache.fileName) reportCache.status = "ready";
-      } else return reportCache;
-    } catch (error: any) {
-      reportCache.detail = error?.detail || error?.message; return reportCache;
-    }
-  }
-  try {
-    if (!reportCache || reportCache.key !== key || reportCache.status === "unavailable") {
-      const search = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report/search", accessToken)).json() as any;
-      const reports = Array.isArray(search?.results) ? search.results : Array.isArray(search) ? search : [];
-      const processed = reports.find((item: any) => String(item?.status).toLowerCase() === "processed" && item?.file_name && String(item?.begin_date || "").slice(0, 10) <= begin.toISOString().slice(0, 10) && String(item?.end_date || "").slice(0, 10) >= new Date(end.getTime() - 86400000).toISOString().slice(0, 10));
-      reportCache = { key, status: processed ? "ready" : "processing", fileName: processed?.file_name ? String(processed.file_name) : undefined, expiresAt: Date.now() + (processed ? 10 * 60_000 : 30_000) };
-      if (!processed) {
-        const generated = await (await mpRequest("https://api.mercadopago.com/v1/account/settlement_report", accessToken, { method: "POST", body: JSON.stringify({ begin_date: begin.toISOString(), end_date: end.toISOString() }) })).json() as any;
-        reportCache.taskId = String(generated?.task_id || generated?.id || "");
-        if (!reportCache.taskId) throw new Error("O Mercado Pago não retornou o identificador do extrato.");
-        return reportCache;
-      }
-    }
-    if (reportCache.fileName) {
-      const response = await mpRequest(`https://api.mercadopago.com/v1/account/settlement_report/${encodeURIComponent(reportCache.fileName)}`, accessToken, { headers: { Accept: "text/csv" } });
-      reportCache.rows = parseSettlementCsv(await response.text()); reportCache.status = "ready"; reportCache.expiresAt = Date.now() + 10 * 60_000;
-    }
-    return reportCache;
-  } catch (error: any) {
-    reportCache = { key, status: "unavailable", detail: error?.detail || error?.message || "Extrato indisponível", expiresAt: Date.now() + 60_000 };
-    return reportCache;
-  }
-}
-
-function round(value: number): number { return Math.round((Number(value) || 0) * 100) / 100; }
-
-async function searchMpPayments(opts: { accessToken: string; accountId: string; begin: Date; end: Date; role: "collector" | "payer" }): Promise<any[]> {
-  const rows: any[] = [];
-  for (let page = 0; page < 40; page++) {
-    const qs = new URLSearchParams({
-      sort: "date_created", criteria: "desc", range: "date_created",
-      begin_date: opts.begin.toISOString(), end_date: opts.end.toISOString(),
-      limit: "50", offset: String(page * 50),
-      [`${opts.role}.id`]: opts.accountId,
-    });
-    const data = await mpJson(`https://api.mercadopago.com/v1/payments/search?${qs.toString()}`, opts.accessToken);
-    const pageRows = Array.isArray(data?.results) ? data.results : [];
-    rows.push(...pageRows);
-    if (pageRows.length < 50) break;
-  }
-  return rows;
-}
-
+/**
+ * Financeiro do painel.
+ *
+ * IMPORTANTE: esta rota NÃO consulta mais a API do Mercado Pago.
+ * A fonte de verdade é o próprio banco do Guerra Fria:
+ *   - payments: registra a venda e o valor pago;
+ *   - vip_subscriptions: confirma que o VIP correspondente continua ativo.
+ *
+ * Assim, somente pagamentos aprovados que ainda possuem um VIP ativo entram
+ * no cálculo. O filtro de dias é preservado e o gráfico é montado pela data
+ * em que cada VIP foi vendido.
+ */
 router.get("/finance/live", async (req, res) => {
-  const accessToken = (process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.MP_ACCESS_TOKEN || process.env.MERCADOPAGO_ACCESS_TOKEN || "").trim();
-  if (!accessToken) return void res.status(503).json({ error: "MERCADO_PAGO_ACCESS_TOKEN no está configurado en Railway." });
   const requested = Number(req.query.days ?? 30);
   const days = Number.isFinite(requested) ? Math.min(365, Math.max(1, Math.floor(requested))) : 30;
-  const end = new Date(); const begin = new Date(Date.now() - (days - 1) * 86400000);
-  // A busca de pagamentos disponibiliza até os últimos 12 meses. Usamos todo
-  // esse histórico para calcular o saldo, independentemente do filtro da tela.
-  const historyBegin = new Date(Date.now() - 364 * 86400000);
-  let account: any;
-  try { account = await mpJson("https://api.mercadopago.com/users/me", accessToken); }
-  catch (error: any) { return void res.status(502).json({ error: error?.message || "Não foi possível identificar a conta Mercado Pago.", detail: error?.detail }); }
-  const accountId = String(account?.id ?? "");
-  const settlement = await getSettlementReport(accessToken, historyBegin, end);
-  let receivedRows: any[] = [], paidRows: any[] = [];
+
   try {
-    [receivedRows, paidRows] = await Promise.all([
-      searchMpPayments({ accessToken, accountId, begin: historyBegin, end, role: "collector" }),
-      searchMpPayments({ accessToken, accountId, begin: historyBegin, end, role: "payer" }).catch(() => []),
-    ]);
+    const salesResult = await pool.query(`
+      SELECT
+        p.id,
+        p.mp_payment_id,
+        p.discord_user_id,
+        p.steam_id,
+        p.vip_tier,
+        p.amount,
+        p.method,
+        p.status,
+        p.created_at,
+        p.vip_granted_at
+      FROM payments p
+      WHERE p.status = 'approved'
+        AND p.created_at >= CURRENT_DATE - ($1::int - 1)
+        AND EXISTS (
+          SELECT 1
+          FROM vip_subscriptions v
+          WHERE v.expires_at > NOW()
+            AND LOWER(v.vip_tier) = LOWER(p.vip_tier)
+            AND (
+              v.discord_user_id = p.discord_user_id
+              OR (
+                p.steam_id IS NOT NULL
+                AND p.steam_id <> ''
+                AND v.steam_id = p.steam_id
+              )
+            )
+        )
+      ORDER BY p.created_at DESC
+      LIMIT 1000
+    `, [days]);
+
+    const activeResult = await pool.query(`
+      SELECT COUNT(*)::int AS active_vips
+      FROM vip_subscriptions
+      WHERE expires_at > NOW()
+    `);
+
+    const rows = salesResult.rows || [];
+    const total = round(rows.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0));
+    const avgTicket = rows.length ? round(total / rows.length) : 0;
+
+    const trendResult = await pool.query(`
+      WITH dates AS (
+        SELECT generate_series(
+          CURRENT_DATE - ($1::int - 1),
+          CURRENT_DATE,
+          interval '1 day'
+        )::date AS day
+      ), totals AS (
+        SELECT
+          p.created_at::date AS day,
+          COALESCE(SUM(p.amount::numeric), 0)::float AS revenue,
+          COUNT(*)::int AS sales
+        FROM payments p
+        WHERE p.status = 'approved'
+          AND p.created_at >= CURRENT_DATE - ($1::int - 1)
+          AND EXISTS (
+            SELECT 1
+            FROM vip_subscriptions v
+            WHERE v.expires_at > NOW()
+              AND LOWER(v.vip_tier) = LOWER(p.vip_tier)
+              AND (
+                v.discord_user_id = p.discord_user_id
+                OR (
+                  p.steam_id IS NOT NULL
+                  AND p.steam_id <> ''
+                  AND v.steam_id = p.steam_id
+                )
+              )
+          )
+        GROUP BY p.created_at::date
+      )
+      SELECT
+        to_char(d.day, 'YYYY-MM-DD') AS day,
+        COALESCE(t.revenue, 0)::float AS revenue,
+        COALESCE(t.sales, 0)::int AS sales
+      FROM dates d
+      LEFT JOIN totals t ON t.day = d.day
+      ORDER BY d.day
+    `, [days]);
+
+    const trend = trendResult.rows.map((row: any) => ({
+      day: row.day,
+      entries: round(row.revenue),
+      exits: 0,
+      net: round(row.revenue),
+      sales: Number(row.sales || 0),
+    }));
+
+    const payments = rows.map((row: any) => {
+      const amount = round(row.amount);
+      const tier = String(row.vip_tier || "VIP").toUpperCase();
+      return {
+        id: String(row.id),
+        paymentId: row.mp_payment_id ? String(row.mp_payment_id) : null,
+        status: "approved",
+        statusDetail: "vip_active",
+        direction: "in",
+        movement: "Venda de VIP",
+        amount,
+        signedAmount: amount,
+        grossAmount: amount,
+        netAmount: amount,
+        fees: 0,
+        refunded: 0,
+        currency: "BRL",
+        method: row.method ? String(row.method) : "Venda registrada",
+        methodId: row.method ? String(row.method) : "local",
+        type: "vip_sale",
+        operationType: "vip_sale",
+        description: `VIP ${tier}`,
+        externalReference: "",
+        dateCreated: row.created_at,
+        dateApproved: row.vip_granted_at || row.created_at,
+        discordUserId: row.discord_user_id ? String(row.discord_user_id) : "",
+        steamId: row.steam_id ? String(row.steam_id) : "",
+        vipTier: String(row.vip_tier || ""),
+      };
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      source: "local_active_vips",
+      days,
+      report: {
+        status: "ready",
+        complete: true,
+        detail: "Calculado localmente a partir dos VIPs ativos; nenhuma consulta ao Mercado Pago é realizada.",
+      },
+      account: {
+        id: "guerra-fria-vips",
+        nickname: "VIPs ativos",
+        balance: total,
+        balanceAvailable: true,
+        balanceType: "active_vip_sales",
+        activeVips: Number(activeResult.rows?.[0]?.active_vips || 0),
+      },
+      summary: {
+        grossRevenue: total,
+        netRevenue: total,
+        expenses: 0,
+        fees: 0,
+        refunded: 0,
+        cashFlow: total,
+        approved: rows.length,
+        outgoings: 0,
+        total: rows.length,
+        avgTicket,
+        activeVips: Number(activeResult.rows?.[0]?.active_vips || 0),
+      },
+      trend,
+      payments,
+    });
   } catch (error: any) {
-    return void res.status(502).json({ error: error?.message || "Falha ao consultar movimentações.", detail: error?.detail });
+    console.error("[finance] Falha ao calcular VIPs ativos:", error);
+    res.status(500).json({ error: "Não foi possível calcular o financeiro dos VIPs ativos." });
   }
-  const all = Array.from(new Map([...receivedRows, ...paidRows].map(row => [String(row.id), row])).values());
-  const payments = all.map(p => {
-    const collectorId = String(p.collector_id ?? p.collector?.id ?? "");
-    const payerId = String(p.payer?.id ?? "");
-    const incoming = Boolean(accountId && collectorId === accountId);
-    const outgoing = Boolean(accountId && payerId === accountId && collectorId !== accountId);
-    const amount = Number(p.transaction_amount ?? 0);
-    const refunded = Number(p.transaction_amount_refunded ?? 0);
-    const totalPaid = Number(p.transaction_details?.total_paid_amount ?? amount);
-    const feeDetails = Array.isArray(p.fee_details) ? p.fee_details : [];
-    const explicitFees = feeDetails.reduce((sum: number, fee: any) => sum + Math.abs(Number(fee?.amount ?? 0)), 0);
-    const apiNet = Number(p.transaction_details?.net_received_amount);
-    const fees = incoming ? round(explicitFees || (Number.isFinite(apiNet) && apiNet > 0 ? Math.max(0, amount - refunded - apiNet) : 0)) : 0;
-    const net = incoming ? round(Number.isFinite(apiNet) && apiNet > 0 ? apiNet - refunded : amount - refunded - fees) : 0;
-    const direction = outgoing ? "out" : incoming ? "in" : "other";
-    const methodId = String(p.payment_method_id ?? p.payment_type_id ?? "other");
-    const method = outgoing && methodId === "account_money" ? "Débito no saldo" : (methodLabels[methodId] || methodId.replaceAll("_", " "));
-    return {
-      id: String(p.id ?? ""), status: String(p.status ?? ""), statusDetail: String(p.status_detail ?? ""),
-      direction, movement: direction === "out" ? "Saída" : direction === "in" ? "Entrada" : "Movimentação",
-      amount: round(amount), signedAmount: round(direction === "out" ? -totalPaid : net), grossAmount: round(amount), netAmount: net,
-      fees, refunded: round(refunded), currency: String(p.currency_id ?? "BRL"), method, methodId,
-      type: String(p.payment_type_id ?? "—"), operationType: String(p.operation_type ?? ""),
-      description: String(p.description ?? p.external_reference ?? (direction === "out" ? "Compra" : "Recebimento Mercado Pago")),
-      externalReference: String(p.external_reference ?? ""), dateCreated: p.date_created ?? null, dateApproved: p.date_approved ?? null,
-      payer: p.payer?.email ? String(p.payer.email) : "", collectorId, payerId,
-    };
-  });
-  const reportPayments = settlement.status === "ready" && Array.isArray(settlement.rows) ? settlement.rows.map((row, index) => {
-    const settlementNet = signedReportNumber(row.SETTLEMENT_NET_AMOUNT ?? row.REAL_AMOUNT);
-    const credit = settlementNet > 0 ? settlementNet : reportNumber(row.NET_CREDIT_AMOUNT ?? row.CREDIT_AMOUNT);
-    const debit = settlementNet < 0 ? Math.abs(settlementNet) : reportNumber(row.NET_DEBIT_AMOUNT ?? row.DEBIT_AMOUNT);
-    const transactionAmount = reportNumber(row.TRANSACTION_AMOUNT ?? row.GROSS_AMOUNT);
-    const fees = reportNumber(row.FEE_AMOUNT) + reportNumber(row.MKP_FEE_AMOUNT ?? row.MP_FEE_AMOUNT) + reportNumber(row.FINANCING_FEE_AMOUNT) + reportNumber(row.SHIPPING_FEE_AMOUNT) + reportNumber(row.TAXES_AMOUNT);
-    const direction = debit > credit ? "out" : credit > 0 ? "in" : "other";
-    const signedAmount = round(credit - debit);
-    const transactionType = String(row.TRANSACTION_TYPE ?? row.RECORD_TYPE ?? "MOVEMENT");
-    const date = reportDate(row.TRANSACTION_DATE ?? row.DATE ?? row.RELEASE_DATE ?? row.SETTLEMENT_DATE);
-    const methodId = String(row.PAYMENT_METHOD ?? row.PAYMENT_TYPE ?? "other").toLowerCase();
-    return {
-      id: String(row.SOURCE_ID ?? row.TRANSACTION_ID ?? row.PAYMENT_ID ?? `report-${index}`), status: "approved", statusDetail: "settled",
-      direction, movement: direction === "out" ? "Saída" : direction === "in" ? "Entrada" : "Movimentação",
-      amount: round(transactionAmount || Math.abs(signedAmount)), signedAmount, grossAmount: round(transactionAmount || Math.abs(signedAmount)),
-      netAmount: direction === "in" ? credit : 0, fees: round(fees), refunded: transactionType.includes("REFUND") ? debit : 0,
-      currency: String(row.SETTLEMENT_CURRENCY ?? row.TRANSACTION_CURRENCY ?? row.CURRENCY ?? "BRL"), method: methodLabels[methodId] || methodId.replaceAll("_", " "), methodId,
-      type: transactionType, operationType: transactionType,
-      description: String(row.DESCRIPTION ?? row.REASON ?? transactionType.replaceAll("_", " ")), externalReference: String(row.EXTERNAL_REFERENCE ?? ""),
-      dateCreated: date, dateApproved: date, payer: "", collectorId: "", payerId: "",
-    };
-  }).filter(row => row.direction !== "other") : [];
-  const movements = reportPayments.length ? reportPayments : payments;
-  const historyApproved = movements.filter(p => p.status === "approved");
-  const historyEntries = historyApproved.filter(p => p.direction === "in");
-  const historyExits = historyApproved.filter(p => p.direction === "out");
-  const calculatedBalance = round(
-    historyEntries.reduce((sum, p) => sum + p.netAmount, 0) -
-    historyExits.reduce((sum, p) => sum + Math.abs(p.signedAmount), 0),
-  );
-  const periodStart = begin.getTime();
-  const periodPayments = movements.filter(p => {
-    const timestamp = new Date(p.dateApproved || p.dateCreated || 0).getTime();
-    return Number.isFinite(timestamp) && timestamp >= periodStart;
-  });
-  const approved = periodPayments.filter(p => p.status === "approved");
-  const entries = approved.filter(p => p.direction === "in");
-  const exits = approved.filter(p => p.direction === "out");
-  const grossRevenue = round(entries.reduce((s, p) => s + p.grossAmount, 0));
-  const fees = round(entries.reduce((s, p) => s + p.fees, 0));
-  const refunded = round(entries.reduce((s, p) => s + p.refunded, 0));
-  const netRevenue = round(entries.reduce((s, p) => s + p.netAmount, 0));
-  const expenses = round(exits.reduce((s, p) => s + Math.abs(p.signedAmount), 0));
-  const cashFlow = round(netRevenue - expenses);
-  const trendMap = new Map<string, { entries: number; exits: number; net: number }>();
-  for (let i = 0; i < days; i++) { const d = new Date(begin.getTime() + i * 86400000); trendMap.set(d.toISOString().slice(0,10), { entries: 0, exits: 0, net: 0 }); }
-  for (const p of approved) {
-    const key = String(p.dateApproved || p.dateCreated || "").slice(0, 10); const day = trendMap.get(key); if (!day) continue;
-    if (p.direction === "in") day.entries += p.netAmount;
-    if (p.direction === "out") day.exits += Math.abs(p.signedAmount);
-    day.net = day.entries - day.exits;
-  }
-  const trend = Array.from(trendMap.entries()).map(([day, values]) => ({ day, entries: round(values.entries), exits: round(values.exits), net: round(values.net) }));
-  res.json({
-    source: "mercado_pago", days,
-    report: { status: settlement.status, detail: settlement.status === "unavailable" ? settlement.detail : undefined, complete: reportPayments.length > 0, columns: settlement.rows?.[0] ? Object.keys(settlement.rows[0]) : [] },
-    account: { id: accountId, nickname: account?.nickname ?? null, balance: calculatedBalance, balanceAvailable: reportPayments.length > 0, balanceType: reportPayments.length ? "settlement_report" : "pending_report", historyDays: 365 },
-    summary: { grossRevenue, netRevenue, expenses, fees, refunded, cashFlow, approved: entries.length, outgoings: exits.length, total: periodPayments.length, avgTicket: entries.length ? round(grossRevenue / entries.length) : 0 },
-    trend, payments: periodPayments.filter(p => p.direction !== "other").slice(0, 500),
-  });
 });
 
 router.get("/finance", async (req, res) => {
@@ -278,7 +200,9 @@ router.get("/finance", async (req, res) => {
   const tiers=await pool.query(`SELECT COALESCE(vip_tier,'Não informado') AS vip_tier,COUNT(*)::int AS sales,COALESCE(SUM(amount::numeric),0)::float AS revenue FROM payments WHERE status='approved' AND created_at>=NOW()-($1::text||' days')::interval GROUP BY vip_tier ORDER BY revenue DESC`,[String(days)]);
   res.json({days,summary:summary.rows[0],trend:trend.rows,sales:sales.rows,tiers:tiers.rows});
 });
+
 router.post("/finance/manual", async (req,res)=>{const amount=money(req.body?.amount),vipTier=clean(req.body?.vipTier,40)||"manual",discordUserId=clean(req.body?.discordUserId,40)||null,steamId=clean(req.body?.steamId,40)||null,method=clean(req.body?.method,40)||"manual",status=validStatus(req.body?.status),createdAt=clean(req.body?.createdAt,40),paymentId=`MANUAL-${randomUUID()}`;const row=await pool.query(`INSERT INTO payments (mp_payment_id,discord_user_id,steam_id,vip_tier,amount,method,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE(NULLIF($8,'')::timestamptz,NOW())) RETURNING id,mp_payment_id,discord_user_id,steam_id,vip_tier,amount,method,status,created_at`,[paymentId,discordUserId,steamId,vipTier,amount,method,status,createdAt]);res.status(201).json({ok:true,sale:row.rows[0]})});
 router.patch("/finance/:id", async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id)||id<=0)return void res.status(400).json({error:"ID inválido"});const current=await pool.query(`SELECT * FROM payments WHERE id=$1 LIMIT 1`,[id]);if(!current.rowCount)return void res.status(404).json({error:"Venda não encontrada"});const old=current.rows[0];const amount=req.body?.amount===undefined?Number(old.amount):money(req.body.amount),vipTier=req.body?.vipTier===undefined?old.vip_tier:(clean(req.body.vipTier,40)||null),discordUserId=req.body?.discordUserId===undefined?old.discord_user_id:(clean(req.body.discordUserId,40)||null),steamId=req.body?.steamId===undefined?old.steam_id:(clean(req.body.steamId,40)||null),method=req.body?.method===undefined?old.method:clean(req.body.method,40),status=req.body?.status===undefined?old.status:validStatus(req.body.status);const row=await pool.query(`UPDATE payments SET amount=$2,vip_tier=$3,discord_user_id=$4,steam_id=$5,method=$6,status=$7 WHERE id=$1 RETURNING id,mp_payment_id,discord_user_id,steam_id,vip_tier,amount,method,status,created_at`,[id,amount,vipTier,discordUserId,steamId,method,status]);res.json({ok:true,sale:row.rows[0]})});
-router.delete("/finance/:id", async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id)||id<=0)return void res.status(400).json({error:"ID inválido"});const row=await pool.query(`SELECT mp_payment_id FROM payments WHERE id=$1 LIMIT 1`,[id]);if(!row.rowCount)return void res.status(404).json({error:"Lançamento não encontrado"});if(!String(row.rows[0].mp_payment_id??"").startsWith("MANUAL-"))return void res.status(409).json({error:"Pagamentos automáticos do Mercado Pago não podem ser apagados; altere o status."});await pool.query(`DELETE FROM payments WHERE id=$1`,[id]);res.json({ok:true})});
+router.delete("/finance/:id", async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id)||id<=0)return void res.status(400).json({error:"ID inválido"});const row=await pool.query(`SELECT mp_payment_id FROM payments WHERE id=$1 LIMIT 1`,[id]);if(!row.rowCount)return void res.status(404).json({error:"Lançamento não encontrado"});if(!String(row.rows[0].mp_payment_id??"").startsWith("MANUAL-"))return void res.status(409).json({error:"Pagamentos automáticos não podem ser apagados; altere o status."});await pool.query(`DELETE FROM payments WHERE id=$1`,[id]);res.json({ok:true})});
+
 export default router;
