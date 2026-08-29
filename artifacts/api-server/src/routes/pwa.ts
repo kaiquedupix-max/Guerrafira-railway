@@ -12,7 +12,7 @@ router.get("/pwa/manifest", (_req, res) => {
     name: "Guerra Fria Admin",
     short_name: "GF Admin",
     description: "Central de Controle administrativa do servidor Guerra Fria",
-    start_url: "/api/pwa/launch?v=5",
+    start_url: "/api/pwa/launch?v=6",
     scope: "/",
     display: "standalone",
     display_override: ["standalone", "fullscreen"],
@@ -51,7 +51,7 @@ router.get("/pwa/icon.svg", (_req, res) => {
 router.get("/pwa/sw.js", (_req, res) => {
   res.setHeader("Service-Worker-Allowed", "/");
   res.setHeader("Cache-Control", "no-store");
-  res.type("application/javascript").send(`const CACHE='gf-admin-shell-v5';self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/api/pwa/launch?v=5'])).catch(()=>{}))});self.addEventListener('activate',e=>e.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))])));self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;if(new URL(r.url).origin!==location.origin)return;e.respondWith(fetch(r).catch(()=>caches.match(r).then(x=>x||caches.match('/api/pwa/launch?v=5'))))});self.addEventListener('push',e=>{let d={};try{d=e.data?e.data.json():{}}catch{d={body:e.data?e.data.text():''}};e.waitUntil(self.registration.showNotification(d.title||'Guerra Fria Admin',{body:d.body||'Novo alerta administrativo.',icon:'/api/pwa/icon.svg',badge:'/api/pwa/icon.svg',tag:d.tag||'gf-admin-alert',renotify:true,data:{url:d.url||'/painel'},vibrate:[200,100,200]}))});self.addEventListener('notificationclick',e=>{e.notification.close();const target=e.notification.data?.url||'/painel';e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{const w=ws[0];if(w){w.navigate(target).catch(()=>{});return w.focus()}return clients.openWindow(target)}))});`);
+  res.type("application/javascript").send(`const CACHE='gf-admin-shell-v6';self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/api/pwa/launch?v=6'])).catch(()=>{}))});self.addEventListener('activate',e=>e.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))])));self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;if(new URL(r.url).origin!==location.origin)return;e.respondWith(fetch(r).catch(()=>caches.match(r).then(x=>x||caches.match('/api/pwa/launch?v=6'))))});self.addEventListener('push',e=>{let d={};try{d=e.data?e.data.json():{}}catch{d={body:e.data?e.data.text():''}};e.waitUntil(self.registration.showNotification(d.title||'Guerra Fria Admin',{body:d.body||'Novo alerta administrativo.',icon:'/api/pwa/icon.svg',badge:'/api/pwa/icon.svg',tag:d.tag||'gf-admin-alert',renotify:true,data:{url:d.url||'/painel'},vibrate:[200,100,200]}))});self.addEventListener('notificationclick',e=>{e.notification.close();const target=e.notification.data?.url||'/painel';e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{const w=ws[0];if(w){w.navigate(target).catch(()=>{});return w.focus()}return clients.openWindow(target)}))});`);
 });
 
 export default router;
