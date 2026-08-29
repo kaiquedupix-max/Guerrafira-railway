@@ -5,33 +5,28 @@ import {
   type ChatInputCommandInteraction,
   type AutocompleteInteraction,
 } from "discord.js";
-import { eq, and } from "drizzle-orm";
+import { desc, inArray } from "drizzle-orm";
 import { db, modLogsTable } from "@workspace/db";
-import { executeRconCommand } from "../utils/rcon.js";
-import { buildUnbanEmbed } from "../utils/embeds.js";
-import { logger } from "../../lib/logger.js";
 import { ActionError, unbanPlayer } from "../../core/systemActions.js";
 
 async function getBannedPlayers(query: string) {
-  const bans = await db.select().from(modLogsTable).where(eq(modLogsTable.action, "BAN"));
-  const unbans = await db.select({ steamId: modLogsTable.steamId }).from(modLogsTable).where(eq(modLogsTable.action, "SYSTEM_UNBAN"));
-  const manualUnbans = await db.select({ steamId: modLogsTable.steamId }).from(modLogsTable).where(eq(modLogsTable.action, "DESBANIR"));
-  const unbannedSet = new Set([...unbans.map(r => r.steamId), ...manualUnbans.map(r => r.steamId)]);
+  const history = await db.select().from(modLogsTable)
+    .where(inArray(modLogsTable.action, ["BAN", "PREVENTIVE_BAN", "SYSTEM_UNBAN", "DESBANIR"]))
+    .orderBy(desc(modLogsTable.createdAt));
 
-  const latestBanBySteamId = new Map<string, typeof bans[0]>();
-  for (const ban of bans) {
-    const existing = latestBanBySteamId.get(ban.steamId);
-    if (!existing || ban.createdAt > existing.createdAt) latestBanBySteamId.set(ban.steamId, ban);
-  }
+  const latestState = new Map<string, typeof history[0]>();
+  for (const row of history) if (!latestState.has(row.steamId)) latestState.set(row.steamId, row);
 
-  const currentBans = Array.from(latestBanBySteamId.values()).filter(b => !unbannedSet.has(b.steamId));
-  const filtered = query ? currentBans.filter(b => b.playerName.toLowerCase().includes(query.toLowerCase()) || b.steamId.includes(query)) : currentBans;
+  const currentBans = Array.from(latestState.values()).filter(row => row.action === "BAN" || row.action === "PREVENTIVE_BAN");
+  const filtered = query
+    ? currentBans.filter(row => row.playerName.toLowerCase().includes(query.toLowerCase()) || row.steamId.includes(query))
+    : currentBans;
   return filtered.slice(0, 25);
 }
 
 export const data = new SlashCommandBuilder()
   .setName("desbanir")
-  .setDescription("Remove o banimento de um jogador do servidor")
+  .setDescription("Remove banimento normal ou preventivo de um jogador")
   .addStringOption(opt => opt.setName("jogador").setDescription("Jogador banido a ser desbanido").setRequired(true).setAutocomplete(true))
   .addStringOption(opt => opt.setName("motivo").setDescription("Motivo do desbanimento").setRequired(true))
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers);
@@ -44,7 +39,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
     return;
   }
   await interaction.respond(banned.map(b => ({
-    name: `🔨 ${b.playerName} — ${b.steamId} (${b.banDuration === "perm" ? "Permanente" : b.banDuration ?? "?"})`,
+    name: `${b.action === "PREVENTIVE_BAN" ? "🛡️ PREVENTIVO" : "🔨 BAN"} • ${b.playerName} — ${b.steamId} (${b.banDuration === "perm" ? "Permanente" : b.banDuration ?? "?"})`.slice(0, 100),
     value: b.steamId,
   })));
 }

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
-import { ActionError, banPlayer, kickPlayer, unbanPlayer, verifyPlayer, type BanDuration } from "../core/systemActions.js";
+import { ActionError, banPlayer, kickPlayer, preventiveBanPlayer, unbanPlayer, verifyPlayer, type BanDuration } from "../core/systemActions.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -21,6 +21,16 @@ router.post("/ban", async (req, res) => {
     const duration = clean(req.body?.duration, 8) as BanDuration;
     if (!["3d","7d","30d","perm"].includes(duration)) throw new ActionError("Duração inválida.");
     const result = await banPlayer({ steamId: clean(req.body?.steamId, 17), duration, reason: clean(req.body?.reason), actor: await actor(res) });
+    res.json({ ok: true, ...result });
+  } catch (error) { fail(res, error); }
+});
+router.post("/preventive-ban", async (req, res) => {
+  try {
+    const result = await preventiveBanPlayer({
+      steamId: clean(req.body?.steamId, 17),
+      reason: clean(req.body?.reason),
+      actor: await actor(res),
+    });
     res.json({ ok: true, ...result });
   } catch (error) { fail(res, error); }
 });

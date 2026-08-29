@@ -29,11 +29,10 @@ router.get("/:steamId", async (req, res) => {
   const verified = latestVerification?.action === "VERIFICAR";
   const activeVip = vips.find(v => new Date(v.expiresAt).getTime() > now) ?? null;
 
-  // O estado do ban é decidido pela ação mais recente relacionada a banimento.
-  // Isso evita mostrar "banido" depois de um DESBANIR/SYSTEM_UNBAN posterior.
-  const latestBanState = history.find(x => x.action === "BAN" || x.action === "DESBANIR" || x.action === "SYSTEM_UNBAN");
-  const banned = latestBanState?.action === "BAN";
+  const latestBanState = history.find(x => x.action === "BAN" || x.action === "PREVENTIVE_BAN" || x.action === "DESBANIR" || x.action === "SYSTEM_UNBAN");
+  const banned = latestBanState?.action === "BAN" || latestBanState?.action === "PREVENTIVE_BAN";
   const latestBan = banned ? latestBanState : null;
+  const preventiveBan = latestBan?.action === "PREVENTIVE_BAN";
 
   res.json({
     booster: links[0] ? { active: links[0].active, discordUserId: links[0].discordUserId } : { active: false, discordUserId: null },
@@ -41,7 +40,9 @@ router.get("/:steamId", async (req, res) => {
     verified,
     warnings: activeWarnings.length,
     banned,
+    preventiveBan,
     ban: latestBan ? {
+      type: preventiveBan ? "preventive" : "normal",
       duration: latestBan.banDuration,
       expiresAt: latestBan.banExpiresAt,
       reason: latestBan.reason,
