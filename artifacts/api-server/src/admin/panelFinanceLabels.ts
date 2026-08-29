@@ -1,33 +1,48 @@
 export const panelFinanceLabelsJs = String.raw`
 (function(){
-  const balance = document.getElementById('finBalance');
-  const card = balance && balance.closest('.financeMetric');
-  const label = card && card.querySelector('small');
-  if (label) label.textContent = 'Saldo calculado (histórico)';
-  const subtitle = document.querySelector('#finance .financeHero .subtitle');
-  if (subtitle) subtitle.textContent = 'Entradas, saídas, taxas e saldo calculado do Mercado Pago';
+  'use strict';
+  const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+  const byId=id=>document.getElementById(id);
+  const setLabel=(id,text)=>{const el=byId(id),card=el&&el.closest('.financeMetric'),label=card&&card.querySelector('small');if(label)label.textContent=text};
 
-  // Segurança financeira da tabela: somente pagamentos aprovados podem
-  // aparecer como entrada/saída efetiva. Rejeitados, cancelados, pendentes,
-  // estornados etc. continuam visíveis para auditoria, mas com líquido zero.
-  function normalizeFinanceRows(){
-    const body = document.getElementById('financeRows');
-    if (!body) return;
-    body.querySelectorAll('tr').forEach(function(row){
-      const cells = row.querySelectorAll('td');
-      if (cells.length < 8) return;
-      const status = String(cells[4].textContent || '').trim().toLowerCase();
-      if (status === 'approved') return;
-      const amount = cells[7];
-      amount.textContent = 'R$ 0,00';
-      amount.classList.remove('in','out');
-      amount.style.color = '#a89daf';
-    });
+  function applyLabels(){
+    setLabel('finBalance','VIPs ativos agora');
+    setLabel('finGross','Total vendido');
+    setLabel('finNet','Receita em VIPs ativos');
+    setLabel('finExpenses','Ticket médio');
+    setLabel('finDeductions','VIPs vendidos');
+    setLabel('finFlow','Total do período');
+    const subtitle=document.querySelector('#finance .financeHero .subtitle');
+    if(subtitle)subtitle.textContent='Cálculo interno pelos VIPs ativos — sem consulta à API do Mercado Pago';
+    const badge=document.querySelector('#finance .section .badge.green');
+    if(badge&&badge.textContent.includes('Mercado Pago'))badge.textContent='Banco de dados ao vivo';
+    const hint=document.querySelector('#finance .sectionHead .financeHint');
+    if(hint&&hint.textContent.includes('Compras feitas'))hint.textContent='Cada linha representa um VIP ativo vendido dentro do período selecionado.';
   }
 
-  const financeRows = document.getElementById('financeRows');
-  if (financeRows) {
-    new MutationObserver(normalizeFinanceRows).observe(financeRows, { childList: true, subtree: true });
-    normalizeFinanceRows();
-  }
+  applyLabels();
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',applyLabels);
+
+  const nativeFetch=window.fetch.bind(window);
+  window.fetch=async function(input,init){
+    const response=await nativeFetch(input,init);
+    try{
+      const url=typeof input==='string'?input:(input&&input.url)||'';
+      if(url.includes('/api/admin/finance/live')){
+        const data=await response.clone().json();
+        setTimeout(function(){
+          applyLabels();
+          const s=data.summary||{},a=data.account||{};
+          if(byId('finBalance'))byId('finBalance').textContent=String(Number(a.activeVips||s.activeVips||0));
+          if(byId('finGross'))byId('finGross').textContent=money(s.grossRevenue);
+          if(byId('finNet'))byId('finNet').textContent=money(s.netRevenue);
+          if(byId('finExpenses'))byId('finExpenses').textContent=money(s.avgTicket);
+          if(byId('finDeductions'))byId('finDeductions').textContent=String(Number(s.approved||0));
+          if(byId('finFlow'))byId('finFlow').textContent=money(s.cashFlow);
+          if(byId('finSummary'))byId('finSummary').textContent=Number(s.approved||0)+' VIPs vendidos • ticket médio '+money(s.avgTicket);
+        },0);
+      }
+    }catch{}
+    return response;
+  };
 })();`;
