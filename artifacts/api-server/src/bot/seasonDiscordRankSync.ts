@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 const OFFICIAL_KEY = 101;
 const STARTING_MMR = 1000;
 const MARECHAL_XP = 1800;
+const SEASON_REGISTERED_ROLE_ID = "1543718255972057188";
 const PREFIX_RE = /^\[(?:SLD|TEN|MAJ|MJR|MAR|GFR)\]\s*/i;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -101,11 +102,20 @@ async function syncOnce(client: Client): Promise<void> {
     if (!guildId) return;
     const guild = await client.guilds.fetch(guildId);
     const rows = await enrolledPlayers();
-    let changed = 0, adminsIgnored = 0, unmanaged = 0;
+    let changed = 0, rolesAdded = 0, adminsIgnored = 0, unmanaged = 0;
 
     for (const row of rows) {
       const member = await guild.members.fetch(row.discord_id).catch(() => null);
       if (!member || member.user.bot) continue;
+
+      if (!member.roles.cache.has(SEASON_REGISTERED_ROLE_ID)) {
+        await member.roles.add(SEASON_REGISTERED_ROLE_ID, "Inscrito na Guerra Fria Season 1").then(() => {
+          rolesAdded++;
+        }).catch((error) => {
+          logger.warn({ error, discordId: member.id, roleId: SEASON_REGISTERED_ROLE_ID }, "Could not assign Season registered role");
+        });
+      }
+
       if (member.permissions.has(PermissionFlagsBits.Administrator)) {
         adminsIgnored++;
         continue;
@@ -124,8 +134,8 @@ async function syncOnce(client: Client): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
 
-    if (changed || adminsIgnored || unmanaged) {
-      logger.info({ enrolled: rows.length, changed, adminsIgnored, unmanaged }, "Season Discord nickname sync completed");
+    if (changed || rolesAdded || adminsIgnored || unmanaged) {
+      logger.info({ enrolled: rows.length, changed, rolesAdded, adminsIgnored, unmanaged }, "Season Discord sync completed");
     }
   } catch (error) {
     logger.error({ error }, "Season Discord nickname sync failed");
