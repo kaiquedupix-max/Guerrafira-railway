@@ -20,6 +20,7 @@ import seasonBetaIntroRouter from "./seasonBetaIntro.js";
 import seasonBetaRouter, { startSeasonBetaController } from "./seasonBeta.js";
 import seasonControlRouter from "./seasonControl.js";
 import seasonOfficialRegistrationRouter from "./seasonOfficialRegistration.js";
+import rankAssetsRouter from "./rankAssets.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
@@ -27,6 +28,7 @@ startSeasonBetaController();
 
 const router: IRouter = Router();
 router.use(healthRouter);
+router.use(rankAssetsRouter);
 router.use(leaderboardRouter);
 router.use(leaderboardWebhookRouter);
 router.use(seasonSteamRegistrationRepairRouter);
