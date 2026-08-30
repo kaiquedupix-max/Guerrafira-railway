@@ -1,27 +1,30 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
-import {
-  SEASON_END_AT,
-  SEASON_OFFICIAL_KEY,
-  SEASON_START_AT,
-  ensureSeasonEmailInfrastructure,
-  getOfficialSeasonRegistrations,
-  seasonEmailMode,
-  sendSeasonEmail,
-  type SeasonWinner,
-} from "./seasonEmailService.js";
+import { SEASON_END_AT, SEASON_START_AT, ensureSeasonEmailInfrastructure, seasonEmailMode } from "./seasonEmailService.js";
+import { PROD_SEASON_KEY, sendProductionSeasonEmail, type ProdRegistration, type ProdWinner } from "./seasonProductionEmails.js";
 
 let lifecycleStarted = false;
 let lifecycleRunning = false;
 
-async function officialCount() {
-  const r: any = await db.execute(sql`SELECT COUNT(*)::int total FROM season_official_registrations WHERE season_key=${SEASON_OFFICIAL_KEY} AND status='active'`);
+async function ensureColumns(){
+  await db.execute(sql`ALTER TABLE season_official_registrations ADD COLUMN IF NOT EXISTS entry_type TEXT NOT NULL DEFAULT 'paid'`);
+}
+
+async function paidCount() {
+  await ensureColumns();
+  const r: any = await db.execute(sql`SELECT COUNT(*)::int total FROM season_official_registrations WHERE season_key=${PROD_SEASON_KEY} AND status='active' AND entry_type='paid'`);
   return Number(r?.rows?.[0]?.total || 0);
 }
 
-export async function getSeasonFinalWinners(): Promise<SeasonWinner[]> {
-  const total = await officialCount();
+async function registrations():Promise<ProdRegistration[]> {
+  await ensureColumns();
+  const r:any=await db.execute(sql`SELECT discord_id,discord_name,steam_id,COALESCE(full_name,discord_name) full_name,contact_email,entry_type FROM season_official_registrations WHERE season_key=${PROD_SEASON_KEY} AND status='active' AND contact_email IS NOT NULL AND TRIM(contact_email)<>'' ORDER BY created_at ASC`);
+  return Array.isArray(r?.rows)?r.rows:[];
+}
+
+export async function getSeasonFinalWinners(): Promise<ProdWinner[]> {
+  const total = await paidCount();
   const pool = Math.max(300, total * 20);
   const source: any = await db.execute(sql`SELECT season_number FROM season_players GROUP BY season_number ORDER BY MAX(updated_at) DESC NULLS LAST,season_number DESC LIMIT 1`);
   const seasonNumber = Number(source?.rows?.[0]?.season_number || 1);
@@ -37,7 +40,7 @@ export async function getSeasonFinalWinners(): Promise<SeasonWinner[]> {
     FROM season_official_registrations o
     LEFT JOIN season_players p ON p.season_number=${seasonNumber} AND p.steam_id=o.steam_id
     LEFT JOIN admin_delta a ON a.steam_id=o.steam_id
-    WHERE o.season_key=${SEASON_OFFICIAL_KEY} AND o.status='active'
+    WHERE o.season_key=${PROD_SEASON_KEY} AND o.status='active' AND o.entry_type='paid'
     ORDER BY (COALESCE(p.mmr,1000)+COALESCE(a.delta,0)) DESC,COALESCE(p.kills,0) DESC,o.paid_at ASC NULLS LAST
     LIMIT 3
   `);
@@ -45,9 +48,6 @@ export async function getSeasonFinalWinners(): Promise<SeasonWinner[]> {
   return rows.map((x: any, i: number) => ({
     position: i + 1,
     name: String(x.player_name || x.discord_name || "Jogador"),
-    discordName: String(x.discord_name || ""),
-    steamId: String(x.steam_id || ""),
-    xp: Number(x.xp || 0),
     prize: i === 0 ? `R$ ${(pool * .50).toFixed(2).replace('.', ',')}` : i === 1 ? `R$ ${(pool * .30).toFixed(2).replace('.', ',')}` : "VIP Ouro • 30 dias",
   }));
 }
@@ -64,14 +64,14 @@ async function markDone(key: string, details: string) {
 export async function dispatchSeasonLifecycleEmail(template: "start" | "end", adminName = "Sistema automático", force = false) {
   await ensureSeasonEmailInfrastructure();
   const mode = seasonEmailMode();
-  const marker = `season1-${template}-${mode}`;
+  const marker = `season1-${template}-${mode}-dual-entry`;
   if (!force && await markerDone(marker)) return { ok: true, skipped: true, sent: 0, simulated: 0, failed: 0 };
-  const registrations = await getOfficialSeasonRegistrations();
+  const rows = await registrations();
   const winners = template === "end" ? await getSeasonFinalWinners() : [];
   let sent = 0, simulated = 0, skipped = 0, failed = 0;
-  for (const row of registrations) {
+  for (const row of rows) {
     try {
-      const result = await sendSeasonEmail({ row, template, winners, adminName, force });
+      const result = await sendProductionSeasonEmail({ row, template, winners, adminName, force });
       if (result.status === "sent") sent++;
       else if (result.status === "simulated") simulated++;
       else skipped++;
@@ -80,8 +80,8 @@ export async function dispatchSeasonLifecycleEmail(template: "start" | "end", ad
       logger.error({ error, discordId: row.discord_id, template }, "Season lifecycle email failed");
     }
   }
-  if (!failed) await markDone(marker, `${template}: ${sent} enviados, ${simulated} simulados, ${skipped} já processados; total ${registrations.length}`);
-  return { ok: failed === 0, sent, simulated, skipped, failed, total: registrations.length, winners };
+  if (!failed) await markDone(marker, `${template}: ${sent} enviados, ${simulated} simulados, ${skipped} já processados; total ${rows.length}`);
+  return { ok: failed === 0, sent, simulated, skipped, failed, total: rows.length, winners };
 }
 
 export async function runSeasonEmailLifecycleNow() {
@@ -110,5 +110,5 @@ export function startSeasonEmailLifecycle() {
   };
   schedule(SEASON_START_AT);
   schedule(SEASON_END_AT);
-  logger.info({ mode: seasonEmailMode() }, "Season email lifecycle initialized");
+  logger.info({ mode: seasonEmailMode() }, "Season dual-entry email lifecycle initialized");
 }
