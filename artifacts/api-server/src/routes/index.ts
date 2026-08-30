@@ -8,6 +8,7 @@ import storeRouter from "./store.js";
 import revenueView from "../admin/revenueView.js";
 import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
 import { startCardPaymentReconciler } from "./paymentReconciler.js";
+import { startSeasonPaymentReconciler } from "./seasonPaymentReconciler.js";
 import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonTransportRouter from "./seasonTransport.js";
 import seasonRouter from "./season.js";
@@ -28,6 +29,7 @@ import { startSeasonGameRankSync } from "../bot/seasonGameRankSync.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
+startSeasonPaymentReconciler();
 startSeasonBetaController();
 startSeasonEmailLifecycle();
 startSeasonGameRankSync();
