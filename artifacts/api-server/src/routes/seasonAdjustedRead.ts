@@ -2,13 +2,14 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
+import { rankIconData } from "./seasonRankIcons.js";
 const router: IRouter=Router(); const START=1000;
 const RANKS=[
-  {name:"Soldado",short:"SLD",level:1,xp:0,image:"/ranks/soldado.svg"},
-  {name:"Tenente",short:"TEN",level:2,xp:600,image:"/ranks/tenente.svg"},
-  {name:"Major",short:"MJR",level:3,xp:1200,image:"/ranks/major.svg"},
-  {name:"Marechal",short:"MAR",level:4,xp:1800,image:"/ranks/marechal.svg"},
-  {name:"General Frio",short:"GFR",level:5,xp:null,image:"/ranks/general-frio.svg",top1_only:true,requires_marechal:true}
+  {name:"Soldado",short:"SLD",level:1,xp:0,image:rankIconData("soldado")},
+  {name:"Tenente",short:"TEN",level:2,xp:600,image:rankIconData("tenente")},
+  {name:"Major",short:"MJR",level:3,xp:1200,image:rankIconData("major")},
+  {name:"Marechal",short:"MAR",level:4,xp:1800,image:rankIconData("marechal")},
+  {name:"General Frio",short:"GFR",level:5,xp:null,image:rankIconData("general"),top1_only:true,requires_marechal:true}
 ];
 const XP_RANKS=RANKS.slice(0,4);
 const MARECHAL_XP=1800;
