@@ -105,21 +105,35 @@ async function trackedPlayers() {
   return Array.isArray(result?.rows) ? result.rows : [];
 }
 
-async function cmd(command: string): Promise<boolean> {
+async function cmd(command: string): Promise<string | null> {
   const reply = await executeRconCommand(command);
-  if (reply === null) {
-    logger.warn({ command: command.replace(/7656119\d{10}/g, "STEAMID") }, "Season Rust group command failed");
-    return false;
-  }
-  return true;
+  if (reply === null) logger.warn({ command: command.replace(/7656119\d{10}/g, "STEAMID") }, "Season Rust group command failed");
+  return reply;
 }
 
 async function removeGroup(steamId: string, group: string) {
-  return cmd(`chat user remove ${steamId} ${group}`);
+  return (await cmd(`chat user remove ${steamId} ${group}`)) !== null;
 }
 
 async function addGroup(steamId: string, group: string) {
-  return cmd(`chat user add ${steamId} ${group}`);
+  return (await cmd(`chat user add ${steamId} ${group}`)) !== null;
+}
+
+function adminWords(){
+  const extra=String(process.env.SEASON_RUST_ADMIN_GROUPS||"").split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
+  return new Set(["admin","administrator","owner","moderator","mod","staff",...extra]);
+}
+
+async function isServerAdmin(steamId:string):Promise<boolean>{
+  const reply=await cmd(`chat user info ${steamId}`);
+  if(reply===null) return false;
+  const text=String(reply).toLowerCase();
+  const words=adminWords();
+  for(const word of words){
+    const rx=new RegExp(`(^|[^a-z0-9_])${word.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-z0-9_]|$)`,`i`);
+    if(rx.test(text)) return true;
+  }
+  return false;
 }
 
 async function normalizeFirstTime(steamId: string, desired: SeasonGroup | null): Promise<boolean> {
@@ -144,17 +158,24 @@ export async function syncSeasonGameRanksOnce(): Promise<void> {
   running = true;
   try {
     const rows = await trackedPlayers();
-    let changed = 0;
-    let cleared = 0;
-    let failed = 0;
+    let changed = 0, cleared = 0, failed = 0, adminsIgnored = 0;
 
     for (const row of rows) {
       const steamId = String(row.steam_id || "").trim();
       if (!validSteam(steamId)) continue;
+      const previous = GROUPS.includes(String(row.current_group || "") as SeasonGroup) ? String(row.current_group) as SeasonGroup : null;
+      const serverAdmin=await isServerAdmin(steamId);
+      if(serverAdmin){
+        adminsIgnored++;
+        if(previous || Boolean(row.state_active)){
+          const ok=await normalizeFirstTime(steamId,null);
+          if(!ok){failed++;continue;}
+          await saveState(steamId,null,false);
+          cleared++;
+        }
+        continue;
+      }
       const active = String(row.status || "").toLowerCase() === "active";
-      const previous = GROUPS.includes(String(row.current_group || "") as SeasonGroup)
-        ? String(row.current_group) as SeasonGroup
-        : null;
       const hasState = row.state_active !== null && row.state_active !== undefined;
       const desired = active ? groupFor(Boolean(row.has_activity), row.effective_mmr, row.position) : null;
 
@@ -184,8 +205,8 @@ export async function syncSeasonGameRanksOnce(): Promise<void> {
       changed++;
     }
 
-    if (changed || cleared || failed) {
-      logger.info({ tracked: rows.length, changed, cleared, failed }, "Season Rust group sync completed");
+    if (changed || cleared || failed || adminsIgnored) {
+      logger.info({ tracked: rows.length, changed, cleared, failed, adminsIgnored }, "Season Rust group sync completed");
     }
   } catch (error) {
     logger.error({ error }, "Season Rust group sync failed");
