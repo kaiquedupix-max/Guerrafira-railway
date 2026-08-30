@@ -21,10 +21,12 @@ import seasonBetaRouter, { startSeasonBetaController } from "./seasonBeta.js";
 import seasonControlRouter from "./seasonControl.js";
 import seasonOfficialRegistrationRouter from "./seasonOfficialRegistration.js";
 import rankAssetsRouter from "./rankAssets.js";
+import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
 startSeasonBetaController();
+startSeasonEmailLifecycle();
 
 const router: IRouter = Router();
 router.use(healthRouter);
