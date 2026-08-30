@@ -22,11 +22,13 @@ import seasonControlRouter from "./seasonControl.js";
 import seasonOfficialRegistrationRouter from "./seasonOfficialRegistration.js";
 import rankAssetsRouter from "./rankAssets.js";
 import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
+import { startSeasonGameRankSync } from "../bot/seasonGameRankSync.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
 startSeasonBetaController();
 startSeasonEmailLifecycle();
+startSeasonGameRankSync();
 
 const router: IRouter = Router();
 router.use(healthRouter);
