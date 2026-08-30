@@ -1,0 +1,14 @@
+// Visual language adapted from open-licensed military rank badge references (SVG Repo, CC0).
+// These insignias are redrawn for Guerra Fria and embedded as data URIs so iOS/Safari does not depend on static SVG routing.
+const svg=(body:string)=>`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 360" role="img" aria-hidden="true"><defs><filter id="ds"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-opacity=".55"/></filter></defs><g filter="url(#ds)">${body}</g></svg>`;
+
+const ICONS:Record<string,string>={
+  soldado:svg(`<path d="M160 14 282 65l-18 174-104 101L56 239 38 65Z" fill="#121820" stroke="#97a6b5" stroke-width="8"/><path d="M82 112h156l-18 37H100Z" fill="#c8d0d8"/><path d="M103 169h114l-15 31h-84Z" fill="#8d9aa7"/><circle cx="160" cy="252" r="35" fill="#0b1016" stroke="#d8e0e7" stroke-width="7"/><path d="m160 224 9 19 21 3-15 15 4 21-19-10-19 10 4-21-15-15 21-3Z" fill="#e8edf2"/>`),
+  tenente:svg(`<path d="M160 14 282 65l-18 174-104 101L56 239 38 65Z" fill="#18202a" stroke="#c8d2dc" stroke-width="8"/><path d="M79 99h162l-19 39H98Z" fill="#f0f4f8"/><path d="M91 153h138l-18 35H109Z" fill="#cbd5df"/><path d="M109 203h102l-15 31h-72Z" fill="#9ba9b7"/><path d="M160 244v54" stroke="#f5f7fa" stroke-width="8" stroke-linecap="round"/><path d="m160 238 16 31 35 5-25 24 6 35-32-17-32 17 6-35-25-24 35-5Z" fill="#f5f7fa" transform="scale(.62) translate(98 150)"/>`),
+  major:svg(`<path d="M160 14 282 65l-18 174-104 101L56 239 38 65Z" fill="#21160b" stroke="#e6a63e" stroke-width="8"/><path d="m160 72 23 47 52 8-38 37 9 52-46-24-46 24 9-52-38-37 52-8Z" fill="#ffe0a0" stroke="#e39b26" stroke-width="6"/><path d="M91 239h138l-18 36H109Z" fill="#e7a73d"/><path d="M111 285h98l-14 29h-70Z" fill="#b96f14"/>`),
+  marechal:svg(`<path d="M160 14 282 65l-18 174-104 101L56 239 38 65Z" fill="#250d0d" stroke="#ffb0a8" stroke-width="8"/><path d="m160 67 27 54 59 9-43 42 10 59-53-28-53 28 10-59-43-42 59-9Z" fill="#ffd0ca" stroke="#ef4b43" stroke-width="7"/><path d="M78 246h164l-19 38H97Z" fill="#ef4b43"/><path d="M104 293h112l-15 31h-82Z" fill="#b51f1a"/><path d="M133 106h54" stroke="#fff3f2" stroke-width="7" stroke-linecap="round"/>`),
+  general:svg(`<path d="M160 10 288 64l-20 178-108 104L52 242 32 64Z" fill="#061a2d" stroke="#dff6ff" stroke-width="9"/><path d="M160 53v164M90 94l140 82M230 94 90 176" stroke="#8ee8ff" stroke-width="10" stroke-linecap="round"/><path d="m160 50 20 40 44 7-32 31 8 45-40-21-40 21 8-45-32-31 44-7Z" fill="#f7fdff" stroke="#58d5ff" stroke-width="6"/><path d="M74 242h172l-19 39H93Z" fill="#66d9ff"/><path d="M104 290h112l-15 31h-82Z" fill="#d9f7ff"/><circle cx="160" cy="132" r="74" fill="none" stroke="#2ecbff" stroke-width="4" opacity=".55"/>`)
+};
+
+export function rankIconSvg(name:string):string{return ICONS[name]||ICONS.soldado;}
+export function rankIconData(name:string):string{return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(rankIconSvg(name))}`;}
