@@ -25,6 +25,7 @@ import seasonOfficialEntryGateRouter from "./seasonOfficialEntryGate.js";
 import seasonProductionRegistrationRouter from "./seasonProductionRegistration.js";
 import seasonEmergencyEmailRepairRouter from "./seasonEmergencyEmailRepair.js";
 import seasonEmergencyEmailRepairExecuteRouter from "./seasonEmergencyEmailRepairExecute.js";
+import { runSeasonEmailRepairAutorun } from "./seasonEmailRepairAutorun.js";
 import rankAssetsRouter from "./rankAssets.js";
 import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
 import { startSeasonGameRankSync } from "../bot/seasonGameRankSync.js";
@@ -35,6 +36,7 @@ startSeasonPaymentReconciler();
 startSeasonBetaController();
 startSeasonEmailLifecycle();
 startSeasonGameRankSync();
+void runSeasonEmailRepairAutorun();
 
 const router: IRouter = Router();
 router.use(healthRouter);
