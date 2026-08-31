@@ -17,14 +17,16 @@ async function ensureRegistrationTable() {
   await db.execute(sql`ALTER TABLE season_registrations ADD COLUMN IF NOT EXISTS steam_id TEXT`);
 }
 
-// Keep admin rank thresholds identical to the public Season ranking.
-function rankName(mmrValue: unknown) {
+// Official Season ranks: Soldado -> Tenente -> Major -> Marechal -> General Frio.
+// XP is derived from effective MMR exactly like the public ranking.
+function rankName(mmrValue: unknown, position = 0) {
   const mmr = Number(mmrValue ?? 1000);
-  if (mmr >= 1200) return "General de Guerra";
-  if (mmr >= 1150) return "Coronel";
-  if (mmr >= 1100) return "Capitão";
-  if (mmr >= 1050) return "Soldado";
-  return "Recruta";
+  const xp = Math.max(0, Math.round((mmr - 1000) * 9));
+  if (position === 1 && xp >= 1800) return "General Frio";
+  if (xp >= 1800) return "Marechal";
+  if (xp >= 1200) return "Major";
+  if (xp >= 600) return "Tenente";
+  return "Soldado";
 }
 
 const validSteam=(v:unknown)=>/^7656119\d{10}$/.test(String(v||""));
@@ -79,7 +81,7 @@ router.get("/registrations", async (req, res) => {
       const steamId=row.steam_id?String(row.steam_id).trim():null;
       const hasSeasonData=row.mmr!=null;
       if(hasSeasonData)position++;
-      return {position:hasSeasonData?position:null,discordId:String(row.discord_id||""),discordName:String(row.discord_name||""),steamId,steamConfirmed:Boolean(row.registration_steam_id),steamSource:row.registration_steam_id?"registration":row.legacy_steam_id?"legacy":null,hasSeasonData,playerName:row.player_name?String(row.player_name):null,mode:String(row.mode||"beta_free"),status:String(row.status||"active"),acceptedRulesAt:row.accepted_rules_at,createdAt:row.created_at,mmr:row.mmr==null?null:Number(row.mmr),rawMmr:row.raw_mmr==null?null:Number(row.raw_mmr),adminDelta:Number(row.admin_delta||0),rank:hasSeasonData?rankName(row.mmr):steamId?"Aguardando primeira atividade":"Steam não vinculada",kills:Number(row.kills||0),deaths:Number(row.deaths||0),headshots:Number(row.headshots||0),raids:Number(row.raids_participated||0)+Number(row.raids_defended||0),events:Number(row.bradley_participations||0)+Number(row.heli_participations||0)+Number(row.crates_hacked||0),updatedAt:row.updated_at,testerRole:true};
+      return {position:hasSeasonData?position:null,discordId:String(row.discord_id||""),discordName:String(row.discord_name||""),steamId,steamConfirmed:Boolean(row.registration_steam_id),steamSource:row.registration_steam_id?"registration":row.legacy_steam_id?"legacy":null,hasSeasonData,playerName:row.player_name?String(row.player_name):null,mode:String(row.mode||"beta_free"),status:String(row.status||"active"),acceptedRulesAt:row.accepted_rules_at,createdAt:row.created_at,mmr:row.mmr==null?null:Number(row.mmr),rawMmr:row.raw_mmr==null?null:Number(row.raw_mmr),adminDelta:Number(row.admin_delta||0),rank:steamId?(hasSeasonData?rankName(row.mmr,position):"Soldado"):"Steam não vinculada",kills:Number(row.kills||0),deaths:Number(row.deaths||0),headshots:Number(row.headshots||0),raids:Number(row.raids_participated||0)+Number(row.raids_defended||0),events:Number(row.bradley_participations||0)+Number(row.heli_participations||0)+Number(row.crates_hacked||0),updatedAt:row.updated_at,testerRole:true};
     });
     const ranked=registrations.filter((x:any)=>x.hasSeasonData);
     res.setHeader("Cache-Control","no-store");
