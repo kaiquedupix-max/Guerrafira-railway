@@ -1,12 +1,11 @@
 /**
  * Guerra Fria slot manager.
  *
- * Railway variables remain the defaults:
- *   SERVER_MIN_SLOTS (default 100)
- *   SERVER_MAX_SLOTS (default 250)
- *
- * Runtime settings are persisted in PostgreSQL so the admin panel can switch
- * between automatic and manual modes without a deploy.
+ * Automatic policy:
+ *   - Never expands just because the server is full.
+ *   - Every 10 players waiting in queue authorizes +5 slots.
+ *   - The same queue pressure cannot be counted repeatedly on every tick.
+ *   - Runtime min/max limits configured by the admin panel are always respected.
  */
 import { ActivityType, type Client } from "discord.js";
 import { pool } from "@workspace/db";
@@ -15,9 +14,9 @@ import { logger } from "../lib/logger.js";
 
 const DEFAULT_MIN_SLOTS = Math.max(1, parseInt(process.env.SERVER_MIN_SLOTS ?? "100", 10) || 100);
 const DEFAULT_MAX_SLOTS = Math.max(DEFAULT_MIN_SLOTS, parseInt(process.env.SERVER_MAX_SLOTS ?? "250", 10) || 250);
-const STEP = 10;
+const QUEUE_THRESHOLD = 10;
+const SLOT_INCREMENT = 5;
 const INTERVAL = 15_000;
-const SHRINK_HOLD_MS = 60_000;
 const HARD_MAX = 1000;
 
 export type SlotControlMode = "automatic" | "manual";
@@ -32,8 +31,12 @@ export interface SlotControlSettings {
 }
 
 let currentSlots: number | null = null;
-let lastExpansionAt = 0;
 let tableReady = false;
+
+// Number of +5 expansions already consumed during the current queue episode.
+// It resets only after the queue drops below 10, preventing the same 10 queued
+// players from triggering another expansion every 15 seconds.
+let consumedQueueSteps = 0;
 
 async function ensureSettingsTable(): Promise<void> {
   if (tableReady) return;
@@ -57,11 +60,6 @@ async function ensureSettingsTable(): Promise<void> {
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(n)));
-}
-
-function capacityForPopulation(players: number, minSlots: number, maxSlots: number): number {
-  const roundedDemand = Math.ceil(Math.max(0, players) / STEP) * STEP;
-  return clamp(Math.max(minSlots, roundedDemand), minSlots, maxSlots);
 }
 
 export async function getSlotControlSettings(): Promise<SlotControlSettings> {
@@ -140,15 +138,20 @@ export async function updateSlotControlSettings(input: {
 
   let applied = true;
   if (mode === "manual") {
+    consumedQueueSteps = 0;
     applied = await setSlots(manualSlots);
   } else if (info) {
     const real = info.maxPlayers || currentSlots || minSlots;
     currentSlots = real;
-    const pressure = info.queued > 0 || players >= real;
-    const target = pressure
-      ? clamp(real + STEP, minSlots, maxSlots)
-      : capacityForPopulation(players, minSlots, maxSlots);
-    if (target !== real) applied = await setSlots(target);
+
+    // Changing panel settings must not fabricate queue pressure. In automatic
+    // mode we only enforce hard min/max boundaries here; queue-based expansion
+    // is handled exclusively by the periodic manager tick.
+    if (real < minSlots) {
+      applied = await setSlots(minSlots);
+    } else if (real > maxSlots && maxSlots >= players) {
+      applied = await setSlots(maxSlots);
+    }
   }
 
   return { settings: await getSlotControlSettings(), applied, serverPlayers: players };
@@ -172,11 +175,12 @@ export function startSlotManager(client: Client): void {
     const settings = await getSlotControlSettings();
     const { players, queued } = info;
 
-    // Always trust the real server value when available. This keeps the bot and
-    // panel synchronized even if someone changed maxplayers outside the panel.
+    // Trust the real server value so the bot/panel stay synchronized with any
+    // manual maxplayers change made outside this manager.
     currentSlots = info.maxPlayers || currentSlots || settings.minSlots;
 
     if (settings.mode === "manual") {
+      consumedQueueSteps = 0;
       const target = Math.max(settings.manualSlots, players);
       if (currentSlots !== target) await setSlots(target);
       updatePresence(client, players, currentSlots ?? target);
@@ -187,19 +191,43 @@ export function startSlotManager(client: Client): void {
     const maxSlots = settings.maxSlots;
 
     if (currentSlots < minSlots) {
-      await setSlots(Math.max(minSlots, players));
+      await setSlots(minSlots);
     } else if (currentSlots > maxSlots && maxSlots >= players) {
       await setSlots(maxSlots);
-    } else if ((queued > 0 || players >= currentSlots) && currentSlots < maxSlots) {
-      const target = clamp(currentSlots + STEP, minSlots, maxSlots);
-      if (await setSlots(target)) {
-        lastExpansionAt = Date.now();
-        logger.info({ players, queued, to: target }, "Real queue/full capacity detected — slots expanded");
-      }
-    } else if (queued === 0 && Date.now() - lastExpansionAt >= SHRINK_HOLD_MS) {
-      const target = capacityForPopulation(players, minSlots, maxSlots);
-      if (target < currentSlots && await setSlots(target)) {
-        logger.info({ players, from: currentSlots, to: target }, "No queue — slots adjusted to population");
+    }
+
+    // A queue episode ends once fewer than 10 players remain waiting. The next
+    // time it reaches 10, a fresh +5 expansion becomes available.
+    if (queued < QUEUE_THRESHOLD) {
+      consumedQueueSteps = 0;
+    } else if ((currentSlots ?? minSlots) < maxSlots) {
+      const queueStepsNow = Math.floor(queued / QUEUE_THRESHOLD);
+      const newQueueSteps = Math.max(0, queueStepsNow - consumedQueueSteps);
+
+      if (newQueueSteps > 0) {
+        const before = currentSlots ?? minSlots;
+        const requestedIncrease = newQueueSteps * SLOT_INCREMENT;
+        const target = clamp(before + requestedIncrease, minSlots, maxSlots);
+        const actualIncrease = target - before;
+
+        if (actualIncrease > 0 && await setSlots(target)) {
+          // Count only the increments actually granted. This is important when
+          // the configured maximum is reached mid-step.
+          consumedQueueSteps += Math.ceil(actualIncrease / SLOT_INCREMENT);
+          logger.info(
+            {
+              players,
+              queued,
+              queueThreshold: QUEUE_THRESHOLD,
+              slotIncrement: SLOT_INCREMENT,
+              queueStepsNow,
+              consumedQueueSteps,
+              from: before,
+              to: target,
+            },
+            "Queue threshold reached — slots expanded",
+          );
+        }
       }
     }
 
@@ -208,5 +236,14 @@ export function startSlotManager(client: Client): void {
 
   setTimeout(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), 10_000);
   setInterval(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), INTERVAL);
-  logger.info({ defaultMin: DEFAULT_MIN_SLOTS, defaultMax: DEFAULT_MAX_SLOTS, step: STEP, intervalMs: INTERVAL, shrinkHoldMs: SHRINK_HOLD_MS }, "Slot manager started with panel control");
+  logger.info(
+    {
+      defaultMin: DEFAULT_MIN_SLOTS,
+      defaultMax: DEFAULT_MAX_SLOTS,
+      queueThreshold: QUEUE_THRESHOLD,
+      slotIncrement: SLOT_INCREMENT,
+      intervalMs: INTERVAL,
+    },
+    "Slot manager started with queue-threshold control",
+  );
 }
