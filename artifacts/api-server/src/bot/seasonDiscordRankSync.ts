@@ -1,4 +1,4 @@
-import { PermissionFlagsBits, type Client, type GuildMember } from "discord.js";
+import { type Client, type GuildMember } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
@@ -8,9 +8,20 @@ const STARTING_MMR = 1000;
 const MARECHAL_XP = 1800;
 const SEASON_REGISTERED_ROLE_ID = "1543718255972057188";
 const PREFIX_RE = /^\[(?:SLD|TEN|MAJ|MJR|MAR|GFR)\]\s*/i;
+
+const RANK_ROLE_IDS = {
+  SLD: "1544028734632231014",
+  TEN: "1544029353132695674",
+  MAJ: "1544029683270684775",
+  MAR: "1544029869015433278",
+  GFR: "1544030006194208858",
+} as const;
+
+const ALL_RANK_ROLE_IDS = Object.values(RANK_ROLE_IDS);
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
+type RankCode = keyof typeof RANK_ROLE_IDS;
 type Enrolled = {
   discord_id: string;
   steam_id: string;
@@ -23,7 +34,7 @@ function xpFromMmr(value: unknown): number {
   return Math.max(0, Math.round(((Number.isFinite(mmr) ? mmr : STARTING_MMR) - STARTING_MMR) * 9));
 }
 
-function rankCode(effectiveMmr: unknown, position: unknown): string {
+function rankCode(effectiveMmr: unknown, position: unknown): RankCode {
   const xp = xpFromMmr(effectiveMmr);
   const pos = Math.trunc(Number(position) || 0);
   if (pos === 1 && xp >= MARECHAL_XP) return "GFR";
@@ -33,15 +44,10 @@ function rankCode(effectiveMmr: unknown, position: unknown): string {
   return "SLD";
 }
 
-function cleanBaseName(member: GuildMember): string {
-  const current = member.nickname || member.user.globalName || member.user.username || "PLAYER";
-  return current.replace(PREFIX_RE, "").trim() || member.user.username || "PLAYER";
-}
-
-function targetNickname(member: GuildMember, code: string): string {
-  const prefix = `[${code}]`;
-  const maxBase = Math.max(1, 32 - prefix.length - 1);
-  return `${prefix} ${cleanBaseName(member).toUpperCase().slice(0, maxBase)}`;
+function nicknameWithoutSeasonTag(member: GuildMember): string | null {
+  if (!member.nickname || !PREFIX_RE.test(member.nickname)) return null;
+  const cleaned = member.nickname.replace(PREFIX_RE, "").trim();
+  return cleaned ? cleaned.slice(0, 32) : null;
 }
 
 async function enrolledPlayers(): Promise<Enrolled[]> {
@@ -94,6 +100,23 @@ async function enrolledPlayers(): Promise<Enrolled[]> {
   return (result?.rows || []) as Enrolled[];
 }
 
+async function syncRankRole(member: GuildMember, code: RankCode): Promise<boolean> {
+  const targetRoleId = RANK_ROLE_IDS[code];
+  const currentRankRoleIds = ALL_RANK_ROLE_IDS.filter(roleId => member.roles.cache.has(roleId));
+  const toRemove = currentRankRoleIds.filter(roleId => roleId !== targetRoleId);
+  let changed = false;
+
+  if (toRemove.length) {
+    await member.roles.remove(toRemove, `Atualização de patente da Guerra Fria Season 1 • ${code}`);
+    changed = true;
+  }
+  if (!member.roles.cache.has(targetRoleId)) {
+    await member.roles.add(targetRoleId, `Patente Guerra Fria Season 1 • ${code}`);
+    changed = true;
+  }
+  return changed;
+}
+
 async function syncOnce(client: Client): Promise<void> {
   if (running) return;
   running = true;
@@ -102,7 +125,7 @@ async function syncOnce(client: Client): Promise<void> {
     if (!guildId) return;
     const guild = await client.guilds.fetch(guildId);
     const rows = await enrolledPlayers();
-    let changed = 0, rolesAdded = 0, adminsIgnored = 0, unmanaged = 0;
+    let rankRolesChanged = 0, registeredRolesAdded = 0, tagsRemoved = 0, unmanaged = 0, failures = 0;
 
     for (const row of rows) {
       const member = await guild.members.fetch(row.discord_id).catch(() => null);
@@ -110,35 +133,43 @@ async function syncOnce(client: Client): Promise<void> {
 
       if (!member.roles.cache.has(SEASON_REGISTERED_ROLE_ID)) {
         await member.roles.add(SEASON_REGISTERED_ROLE_ID, "Inscrito na Guerra Fria Season 1").then(() => {
-          rolesAdded++;
+          registeredRolesAdded++;
         }).catch((error) => {
+          failures++;
           logger.warn({ error, discordId: member.id, roleId: SEASON_REGISTERED_ROLE_ID }, "Could not assign Season registered role");
         });
       }
 
-      if (member.permissions.has(PermissionFlagsBits.Administrator)) {
-        adminsIgnored++;
-        continue;
-      }
-      if (!member.manageable) {
-        unmanaged++;
-        continue;
-      }
       const code = rankCode(row.effective_mmr, row.position);
-      const desired = targetNickname(member, code);
-      if (member.nickname === desired) continue;
-      await member.setNickname(desired, `Patente Guerra Fria Season 1 • ${code}`).catch((error) => {
-        logger.warn({ error, discordId: member.id, code }, "Could not update Season Discord nickname");
+      await syncRankRole(member, code).then(changed => {
+        if (changed) rankRolesChanged++;
+      }).catch((error) => {
+        failures++;
+        logger.warn({ error, discordId: member.id, code, targetRoleId: RANK_ROLE_IDS[code] }, "Could not sync Season Discord rank role");
       });
-      changed++;
+
+      const cleanedNickname = nicknameWithoutSeasonTag(member);
+      if (cleanedNickname !== null) {
+        if (!member.manageable) {
+          unmanaged++;
+        } else {
+          await member.setNickname(cleanedNickname, "Remoção da tag antiga de patente da Guerra Fria Season 1").then(() => {
+            tagsRemoved++;
+          }).catch((error) => {
+            failures++;
+            logger.warn({ error, discordId: member.id }, "Could not remove old Season Discord nickname tag");
+          });
+        }
+      }
+
       await new Promise(resolve => setTimeout(resolve, 250));
     }
 
-    if (changed || rolesAdded || adminsIgnored || unmanaged) {
-      logger.info({ enrolled: rows.length, changed, rolesAdded, adminsIgnored, unmanaged }, "Season Discord sync completed");
+    if (rankRolesChanged || registeredRolesAdded || tagsRemoved || unmanaged || failures) {
+      logger.info({ enrolled: rows.length, rankRolesChanged, registeredRolesAdded, tagsRemoved, unmanaged, failures }, "Season Discord role sync completed");
     }
   } catch (error) {
-    logger.error({ error }, "Season Discord nickname sync failed");
+    logger.error({ error }, "Season Discord role sync failed");
   } finally {
     running = false;
   }
