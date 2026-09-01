@@ -1,14 +1,32 @@
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
+import { discordClient } from "../bot/client.js";
 import { ActionError, banPlayer, kickPlayer, preventiveBanPlayer, unbanPlayer, verifyPlayer, type BanDuration } from "../core/systemActions.js";
 
 const router = Router();
 router.use(requireAdmin);
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
+const ANONYMOUS_MODERATOR_ROLE_ID = "1538735197611360347";
+const ANONYMOUS_MODERATOR_LABEL = "Moderador do servidor";
+
+async function hasAnonymousModeratorRole(userId: string): Promise<boolean> {
+  const client = discordClient();
+  const guildId = process.env.DISCORD_GUILD_ID;
+  if (!client || !guildId) return false;
+
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  const member = guild ? await guild.members.fetch(userId).catch(() => null) : null;
+  return member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID) ?? false;
+}
 
 async function actor(res: any) {
   const admin = res.locals.admin as { userId: string; username: string };
+  const anonymous = await hasAnonymousModeratorRole(admin.userId);
+  if (anonymous) {
+    return { id: admin.userId, name: ANONYMOUS_MODERATOR_LABEL, source: "system" as const };
+  }
+
   return { id: admin.userId, name: await getGuerraFriaDisplayName(admin.userId, admin.username), source: "web" as const };
 }
 const fail = (res: any, error: unknown) => {
