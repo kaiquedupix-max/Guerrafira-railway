@@ -21,25 +21,11 @@ if (process.env.PTERODACTYL_URL) process.env.ELGAE_PANEL_URL = process.env.PTERO
 if (process.env.PTERODACTYL_SERVER_ID) process.env.ELGAE_SERVER_ID = process.env.PTERODACTYL_SERVER_ID;
 if (process.env.PTERODACTYL_API_KEY) process.env.ELGAE_API_KEY = process.env.PTERODACTYL_API_KEY;
 
-const SEASON_1_START_AT = Date.parse("2026-08-28T00:00:00-03:00");
-
-function isSeasonAdmin(req: express.Request): boolean {
-  return Boolean(getCommunitySession(req)?.isAdmin || getAdminSessionV3(req));
-}
-
-function isSeasonPublic(seasonNumber: number): boolean {
-  return seasonNumber !== 1 || Date.now() >= SEASON_1_START_AT;
-}
-
-function renderSeasonComingSoon(): string {
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#08060d"><title>Em breve • Guerra Fria</title><style>*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#08060d;color:#fff;font-family:Inter,system-ui,-apple-system,sans-serif}body{min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 30%,#28163a 0,#120b19 34%,#08060d 72%)}h1{margin:0;font-size:clamp(42px,12vw,92px);letter-spacing:-.055em;font-weight:1000;text-align:center}</style></head><body><h1>Em breve</h1></body></html>`;
-}
-
 function enhanceSeasonGuide(html: string, seasonNumber: number): string {
   const n = Math.max(1, Math.trunc(Number(seasonNumber) || 1));
   const card = (name:string, level:number, type:string, special="") => `<div class="rankcard ${type} ${special}"><div class="rankbadge"><span class="shield"></span><span class="chev c1"></span>${level>1?'<span class="chev c2"></span>':''}${level>2?'<span class="chev c3"></span>':''}<span class="rankstar">${type==='war'?'★★★★★':type==='marshal'?'★':type==='colonel'?'✦':type==='lieutenant'?'◆':type==='sergeant'?'▲':type==='soldier'?'▬':'•'}</span></div><b>${name}</b><small>MMR necessário</small><em>EM DEFINIÇÃO</em></div>`;
-  const rankSection = `<section class="section ranksSection" id="patentes"><h2>🎖️ Patentes da Season</h2><div class="body"><p>Além da posição geral no ranking, cada jogador terá uma <strong>patente baseada no MMR atual</strong>. Ao alcançar a faixa necessária, a promoção acontece automaticamente.</p><div class="notice"><strong>As faixas de MMR ainda estão em definição.</strong> Nenhuma pontuação mínima exibida antes do anúncio oficial deve ser considerada definitiva.</div><div class="rankgrid">${card('Recruta',1,'recruit')}${card('Soldado I',1,'soldier')}${card('Soldado II',2,'soldier')}${card('Soldado III',3,'soldier')}${card('Sargento I',1,'sergeant')}${card('Sargento II',2,'sergeant')}${card('Sargento III',3,'sergeant')}${card('Tenente I',1,'lieutenant')}${card('Tenente II',2,'lieutenant')}${card('Tenente III',3,'lieutenant')}${card('Coronel I',1,'colonel')}${card('Coronel II',2,'colonel')}${card('Coronel III',3,'colonel')}${card('Marechal',1,'marshal','elite')}${card('General de Guerra',1,'war','warcard')}</div><div class="discordRank"><div class="discordLogo">◉</div><div><strong>CARGOS NO DISCORD</strong><p>Conforme sua patente sobe dentro da Season, você também recebe o <b>cargo correspondente no Discord</b>. Assim sua evolução fica visível dentro e fora do servidor.</p><small>As cores e permissões finais dos cargos serão definidas antes do lançamento.</small></div></div><div class="drawing"><div class="drawtitle">COMO A PROMOÇÃO FUNCIONA</div><div class="flow"><div class="node"><span class="ico">🎮</span><b>Você joga</b><small>ações válidas geram ou retiram MMR</small></div><div class="arrow">→</div><div class="node"><span class="ico">📈</span><b>MMR muda</b><small>ranking atualizado</small></div><div class="arrow">→</div><div class="node"><span class="ico">🎖️</span><b>Atingiu a faixa</b><small>promoção automática</small></div><div class="arrow">→</div><div class="node result"><span class="ico">🏆</span><b>Nova patente</b><small>site + Discord</small></div></div></div><p>A patente acompanha o <strong>MMR real</strong>. Ela não depende de VIP, tempo online ou número de kills isolado. O que importa é a pontuação calculada pelo sistema da Season.</p></div></section>`;
-  const faqExtra = `<details><summary>Como eu subo de patente?</summary><p>Acumulando MMR pelas ações válidas da Season. Quando seu MMR atingir a faixa exigida para a próxima patente, a promoção será automática.</p></details><details><summary>Qual MMR precisa para cada patente?</summary><p>As pontuações mínimas ainda estão sendo definidas e serão divulgadas antes do lançamento.</p></details><details><summary>Qual é a patente máxima?</summary><p>A patente máxima será <strong>General de Guerra</strong>, representada por cinco estrelas (★★★★★), acima de Marechal.</p></details><details><summary>Vou receber cargo no Discord?</summary><p>Sim. A ideia é que cada patente tenha seu cargo correspondente no Discord, atualizado conforme sua classificação na Season.</p></details><details><summary>Posso perder uma patente?</summary><p>O sistema acompanha o MMR atual. A regra definitiva de rebaixamento será publicada junto com as faixas oficiais.</p></details>`;
+  const rankSection = `<section class="section ranksSection" id="patentes"><h2>🎖️ Patentes da Season</h2><div class="body"><p>Além da posição geral no ranking, cada jogador terá uma <strong>patente baseada no MMR atual</strong>. Ao alcançar a faixa necessária, a promoção acontece automaticamente.</p><div class="notice"><strong>As faixas de MMR ainda estão em definição.</strong> Nenhuma pontuação mínima exibida antes do anúncio oficial deve ser considerada definitiva.</div><div class="rankgrid">${card('Recruta',1,'recruit')}${card('Soldado I',1,'soldier')}${card('Soldado II',2,'soldier')}${card('Soldado III',3,'soldier')}${card('Sargento I',1,'sergeant')}${card('Sargento II',2,'sergeant')}${card('Sargento III',3,'sergeant')}${card('Tenente I',1,'lieutenant')}${card('Tenente II',2,'lieutenant')}${card('Tenente III',3,'lieutenant')}${card('Coronel I',1,'colonel')}${card('Coronel II',2,'colonel')}${card('Coronel III',3,'colonel')}${card('Marechal',1,'marshal','elite')}${card('General de Guerra',1,'war','warcard')}</div><div class="discordRank"><div class="discordLogo">◉</div><div><strong>CARGOS NO DISCORD</strong><p>Conforme sua patente sobe dentro da Season, você também recebe o <b>cargo correspondente no Discord</b>. Assim sua evolução fica visível dentro e fora do servidor.</p><small>As cores e permissões finais dos cargos serão definidas pela administração.</small></div></div><div class="drawing"><div class="drawtitle">COMO A PROMOÇÃO FUNCIONA</div><div class="flow"><div class="node"><span class="ico">🎮</span><b>Você joga</b><small>ações válidas geram ou retiram MMR</small></div><div class="arrow">→</div><div class="node"><span class="ico">📈</span><b>MMR muda</b><small>ranking atualizado</small></div><div class="arrow">→</div><div class="node"><span class="ico">🎖️</span><b>Atingiu a faixa</b><small>promoção automática</small></div><div class="arrow">→</div><div class="node result"><span class="ico">🏆</span><b>Nova patente</b><small>site + Discord</small></div></div></div><p>A patente acompanha o <strong>MMR real</strong>. Ela não depende de VIP, tempo online ou número de kills isolado. O que importa é a pontuação calculada pelo sistema da Season.</p></div></section>`;
+  const faqExtra = `<details><summary>Como eu subo de patente?</summary><p>Acumulando MMR pelas ações válidas da Season. Quando seu MMR atingir a faixa exigida para a próxima patente, a promoção será automática.</p></details><details><summary>Qual MMR precisa para cada patente?</summary><p>As pontuações mínimas serão divulgadas e ajustadas pela administração conforme o balanceamento da Season.</p></details><details><summary>Qual é a patente máxima?</summary><p>A patente máxima será <strong>General de Guerra</strong>, representada por cinco estrelas (★★★★★), acima de Marechal.</p></details><details><summary>Vou receber cargo no Discord?</summary><p>Sim. Cada patente pode ter seu cargo correspondente no Discord, atualizado conforme sua classificação na Season.</p></details><details><summary>Posso perder uma patente?</summary><p>O sistema acompanha o MMR atual e a patente acompanha a classificação vigente.</p></details>`;
   html = html.replace("</style>",`.rankgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.rankcard{position:relative;min-height:188px;background:linear-gradient(165deg,#15171a,#08090b);border:1px solid #3a342d;border-radius:14px;padding:16px 10px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;text-align:center;overflow:hidden;box-shadow:inset 0 1px #fff1,0 16px 36px #0006}.rankcard:before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 20%,#ff5a1f12,transparent 45%);pointer-events:none}.rankcard b{font-size:13px;color:#fff;margin-top:10px;text-transform:uppercase;letter-spacing:.04em}.rankcard small{font-size:9px;color:#8e8e8e;margin-top:7px}.rankcard em{font-style:normal;font-size:10px;font-weight:950;color:#ff9a32;margin-top:2px}.rankbadge{position:relative;width:82px;height:92px;margin:auto;filter:drop-shadow(0 10px 13px #000a)}.shield{position:absolute;inset:0;background:linear-gradient(145deg,#47413a,#17191d 48%,#08090b);clip-path:polygon(50% 0,88% 18%,82% 72%,50% 100%,18% 72%,12% 18%);border-radius:10px}.rankcard.soldier .shield{background:linear-gradient(145deg,#5c5141,#201d18 52%,#0b0c0e)}.rankcard.sergeant .shield{background:linear-gradient(145deg,#6a5440,#2a211a 55%,#0b0c0e)}.rankcard.lieutenant .shield{background:linear-gradient(145deg,#63676d,#292d33 55%,#0b0c0e)}.rankcard.colonel .shield{background:linear-gradient(145deg,#7a2d25,#3a1612 55%,#0b0c0e)}.rankcard.marshal .shield{background:linear-gradient(145deg,#9a271d,#45120f 55%,#0b0c0e)}.rankcard.war .shield{background:linear-gradient(145deg,#f2b33d,#7f3d09 45%,#2c1607);box-shadow:0 0 35px #ff9b2f55}.chev{position:absolute;left:23px;width:36px;height:11px;border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid #d88b2f;z-index:2;transform:rotate(180deg)}.c1{top:52px}.c2{top:39px}.c3{top:26px}.rankstar{position:absolute;z-index:3;left:0;right:0;top:14px;text-align:center;color:#f6c45b;font-size:17px;font-weight:1000;text-shadow:0 0 12px #ffad3680}.rankcard.warcard{grid-column:span 2;border-color:#b86020;background:radial-gradient(circle at 50% 8%,#5b270f,#1c0d08 42%,#08090b 75%);box-shadow:0 0 0 1px #ff7b2530,0 20px 60px #000b,0 0 40px #ff6a1a22}.rankcard.warcard .rankbadge{width:110px;height:112px}.rankcard.warcard .rankstar{font-size:18px;letter-spacing:.08em;top:18px}.rankcard.warcard b{font-size:16px;color:#ffc04d}.discordRank{display:grid;grid-template-columns:70px 1fr;gap:16px;align-items:center;margin:20px 0;padding:18px;border-radius:15px;border:1px solid #4b392b;background:linear-gradient(135deg,#16120f,#0a0b0d);box-shadow:inset 0 1px #fff1}.discordLogo{width:58px;height:58px;border-radius:16px;display:grid;place-items:center;background:linear-gradient(145deg,#5865f2,#3741a8);font-size:28px;color:#fff;box-shadow:0 10px 28px #0007}.discordRank strong{color:#ff6a2b;font-size:17px}.discordRank p{margin:5px 0;color:#d3d3d3}.discordRank small{color:#8c8c8c}.ranksSection{border-color:#5a3521!important}@media(max-width:850px){.rankgrid{grid-template-columns:repeat(3,1fr)}.rankcard.warcard{grid-column:span 3}}@media(max-width:620px){.rankgrid{grid-template-columns:repeat(2,1fr);gap:9px}.rankcard{min-height:170px}.rankcard.warcard{grid-column:span 2}.discordRank{grid-template-columns:1fr;text-align:center}.discordLogo{margin:auto}}</style>`);
   html = html.replace('<a href="#faq">FAQ</a>', '<a href="#patentes">Patentes</a><a href="#faq">FAQ</a>');
   html = html.replace('<section class="section faq" id="faq">', rankSection + '<section class="section faq" id="faq">');
@@ -48,31 +34,75 @@ function enhanceSeasonGuide(html: string, seasonNumber: number): string {
   return html;
 }
 
-function enhanceBetaSeasonPage(html: string, seasonNumber: number): string {
-  if (seasonNumber !== 1) return html;
-  html = html.replace("</style>", `.betaLaunch{margin:18px 0 20px;border:1px solid #ef444477;background:radial-gradient(circle at 92% 12%,#ef444422,transparent 35%),linear-gradient(135deg,#2b0e10,#101216);border-radius:20px;padding:20px;box-shadow:0 22px 60px #0006}.betaLaunchTop{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.betaTag{display:inline-flex;border:1px solid #ef444466;background:#ef444417;color:#fca5a5;border-radius:999px;padding:7px 10px;font-size:9px;font-weight:1000;letter-spacing:.14em}.betaLaunch h2{font-size:clamp(23px,5vw,36px);margin:10px 0 6px;letter-spacing:-.035em}.betaLaunch p{color:#c4c8cf;line-height:1.6;font-size:12px;max-width:760px}.betaBtns{display:flex;gap:9px;flex-wrap:wrap;margin-top:15px}.betaBtns a{text-decoration:none;border-radius:11px;padding:12px 15px;font-size:11px;font-weight:1000;border:1px solid #41464f;background:#15181d;color:white}.betaBtns a.primary{border-color:#ef4444;background:linear-gradient(135deg,#ef4444,#b91c1c)}.betaDates{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.betaDate{border:1px solid #3b3032;background:#120e11;border-radius:12px;padding:11px}.betaDate b{display:block;font-size:11px}.betaDate small{color:#989da6;font-size:9px}@media(max-width:620px){.betaDates{grid-template-columns:1fr}.betaBtns a{width:100%;text-align:center}}</style>`);
-  const block = `<section class="betaLaunch"><div class="betaLaunchTop"><div><span class="betaTag">🧪 SEASON BETA / TESTE</span><h2>Esta semana não vale premiação.</h2><p>De 28/08 até 04/09, o ranking serve exclusivamente para testar a plataforma, identificar bugs e balancear pontuação, pesos e patentes. Os resultados podem ser ajustados, recalculados ou zerados pela administração. A Season oficial começa em <strong>04/09/2026, após o wipe das 18:30</strong>.</p></div></div><div class="betaDates"><div class="betaDate"><b>🧪 Teste iniciado</b><small>28/08/2026 • 18:30</small></div><div class="betaDate"><b>🏆 Início oficial</b><small>04/09/2026 • 18:30</small></div></div><div class="betaBtns"><a href="/api/season/1/regras">📜 REGRAS DA SEASON</a><a class="primary" href="/api/season/1/inscricao">🧪 FAZER INSCRIÇÃO</a></div></section>`;
-  html = html.replace('<section class="explain">', block + '<section class="explain">');
-  html = html.replace('Guerra Fria • Season Premiada', 'Guerra Fria • Season Beta de Testes');
-  return html;
-}
-
 const app: Express = express();
 startStoragePolicy();
 app.use(pinoHttp({logger,serializers:{req(req){return{id:req.id,method:req.method,url:req.url?.split("?")[0]};},res(res){return{statusCode:res.statusCode};}}}));
-app.use(cors()); app.use(cookieParser()); app.use(express.json({limit:"18mb"})); app.use(express.urlencoded({extended:true}));
-app.use((req,res,next)=>{if(req.path.startsWith("/admin")||req.path.startsWith("/painel")||req.path.startsWith("/api/admin")){res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");res.setHeader("Pragma","no-cache");res.setHeader("Expires","0");}next();});
+app.use(cors());
+app.use(cookieParser());
+app.use(express.json({limit:"18mb"}));
+app.use(express.urlencoded({extended:true}));
+app.use((req,res,next)=>{
+  if(req.path.startsWith("/admin")||req.path.startsWith("/painel")||req.path.startsWith("/api/admin")){
+    res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma","no-cache");
+    res.setHeader("Expires","0");
+  }
+  next();
+});
+
 app.get("/",(req,res)=>res.status(200).type("html").send(renderHome(req)));
-app.get("/leaderboard",(req,res)=>{const session=getCommunitySession(req);return res.status(200).type("html").send(session?withSiteChrome(leaderboardHtml,"leaderboard",{isAdmin:session.isAdmin,username:session.username}):leaderboardHtml);});
+app.get("/leaderboard",(req,res)=>{
+  const session=getCommunitySession(req);
+  return res.status(200).type("html").send(session?withSiteChrome(leaderboardHtml,"leaderboard",{isAdmin:session.isAdmin,username:session.username}):leaderboardHtml);
+});
 
-app.get("/season:seasonNumber/guia",(req,res)=>{const n=Math.max(1,Math.trunc(Number(req.params.seasonNumber)||1));const community=getCommunitySession(req);const admin=getAdminSessionV3(req);let html=enhanceSeasonGuide(renderSeasonGuide(n),n);html=html.replace("</style>",`.top{top:68px}.hero{padding-top:64px}.hero:after{content:'SEASON BETA • TESTE ATÉ 04/09/2026 • OFICIAL ÀS 18:30';display:inline-flex;margin-top:18px;padding:8px 12px;border-radius:999px;border:1px solid #7b351e;background:#241008;color:#ffb06e;font-size:10px;font-weight:950;letter-spacing:.1em}.section{box-shadow:0 18px 50px #0004}.q,.box,.drawing{transition:transform .18s,border-color .18s}.q:hover,.box:hover,.drawing:hover{transform:translateY(-2px);border-color:#8a4224}@media(max-width:760px){.top{top:0}.hero{padding-top:38px}}</style>`);html=withSiteChrome(html,"season",{isAdmin:Boolean(community?.isAdmin||admin),username:community?.username||admin?.username||""});res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");return res.status(200).type("html").send(html);});
+app.get("/season:seasonNumber/guia",(req,res)=>{
+  const n=Math.max(1,Math.trunc(Number(req.params.seasonNumber)||1));
+  const community=getCommunitySession(req);
+  const admin=getAdminSessionV3(req);
+  let html=enhanceSeasonGuide(renderSeasonGuide(n),n);
+  html=withSiteChrome(html,"season",{isAdmin:Boolean(community?.isAdmin||admin),username:community?.username||admin?.username||""});
+  res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+  return res.status(200).type("html").send(html);
+});
 
-app.get("/season:seasonNumber",(req,res)=>{const n=Math.max(1,Math.trunc(Number(req.params.seasonNumber)||1));res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");if(!isSeasonPublic(n)&&!isSeasonAdmin(req))return res.status(200).type("html").send(renderSeasonComingSoon());let html=enhanceBetaSeasonPage(renderSeasonPage(n),n);const guide=`<section style="margin:22px 0;border:1px solid #7046a0;background:linear-gradient(135deg,#21122f,#0d0f13);border-radius:18px;padding:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;box-shadow:0 20px 60px #0005"><div><div style="font-size:11px;font-weight:950;letter-spacing:.15em;color:#d9bfff">📖 GUIA + FAQ</div><div style="font-size:22px;font-weight:950;margin-top:5px">Como funciona o MMR?</div><div style="font-size:12px;color:#b5bac3;max-width:680px;line-height:1.55;margin-top:5px">Armas, headshot, distância, pelados, mortes, farm, raid, construção, eventos, bots, animais, anti-farm e patentes explicados passo a passo. Durante o Beta, valores e faixas ainda podem mudar.</div></div><a href="/season${n}/guia" style="text-decoration:none;background:linear-gradient(135deg,#7c3aed,#5b21b6);border:1px solid #a78bfa;color:white;padding:12px 16px;border-radius:11px;font-size:12px;font-weight:950">ABRIR GUIA →</a></section>`;html=html.replace("</main>",guide+"</main>");const community=getCommunitySession(req);const admin=getAdminSessionV3(req);html=withSiteChrome(html,"season",{isAdmin:Boolean(community?.isAdmin||admin),username:community?.username||admin?.username||""});return res.status(200).type("html").send(html);});
+app.get("/season:seasonNumber",(req,res)=>{
+  const n=Math.max(1,Math.trunc(Number(req.params.seasonNumber)||1));
+  res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+  let html=renderSeasonPage(n);
+  const guide=`<section style="margin:22px 0;border:1px solid #7046a0;background:linear-gradient(135deg,#21122f,#0d0f13);border-radius:18px;padding:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;box-shadow:0 20px 60px #0005"><div><div style="font-size:11px;font-weight:950;letter-spacing:.15em;color:#d9bfff">📖 GUIA + FAQ</div><div style="font-size:22px;font-weight:950;margin-top:5px">Como funciona a pontuação?</div><div style="font-size:12px;color:#b5bac3;max-width:680px;line-height:1.55;margin-top:5px">Armas, headshot, distância, farm, raid, construção, eventos, anti-farm e patentes explicados passo a passo para a Season ${n}.</div></div><a href="/season${n}/guia" style="text-decoration:none;background:linear-gradient(135deg,#7c3aed,#5b21b6);border:1px solid #a78bfa;color:white;padding:12px 16px;border-radius:11px;font-size:12px;font-weight:950">ABRIR GUIA →</a></section>`;
+  html=html.replace("</main>",guide+"</main>");
+  const community=getCommunitySession(req);
+  const admin=getAdminSessionV3(req);
+  html=withSiteChrome(html,"season",{isAdmin:Boolean(community?.isAdmin||admin),username:community?.username||admin?.username||""});
+  return res.status(200).type("html").send(html);
+});
 
-app.get("/loja",(req,res)=>{const session=getCommunitySession(req);if(!session)return res.redirect("/api/admin/auth/login?target=store");return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username),"home",{isAdmin:session.isAdmin,username:session.username}));});
-const renderIntegrity=(req:express.Request,res:express.Response)=>{const session=getCommunitySession(req);const html=renderCommunityPage(req);return res.status(200).type("html").send(session?withSiteChrome(html,"integrity",{isAdmin:session.isAdmin,username:session.username}):html);};
-app.get("/integridade",renderIntegrity);app.get("/auditoria",renderIntegrity);app.get("/comunidade",(req,res)=>res.redirect(301,"/integridade"));
-const renderAdminPanel=(req:express.Request,res:express.Response)=>{let admin=getAdminSessionV3(req);if(!admin){const community=getCommunitySession(req);if(community?.isAdmin){issueAdminSessionV3(res,community.userId,community.username);return res.redirect("/painel");}return res.redirect("/api/admin/auth/login?target=admin");}return res.status(200).type("html").send(withSiteChrome(renderAdmin(req),"admin",{isAdmin:true,username:admin.username}));};
-app.get("/painel",renderAdminPanel);app.get("/admin",(req,res)=>res.redirect(302,"/painel"));
-app.get("/status",(_req,res)=>res.status(200).json({status:"ok",service:"guerra-fria"}));app.use("/api",router);app.use("/webhook",webhookRouter);
+app.get("/loja",(req,res)=>{
+  const session=getCommunitySession(req);
+  if(!session)return res.redirect("/api/admin/auth/login?target=store");
+  return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username),"home",{isAdmin:session.isAdmin,username:session.username}));
+});
+const renderIntegrity=(req:express.Request,res:express.Response)=>{
+  const session=getCommunitySession(req);
+  const html=renderCommunityPage(req);
+  return res.status(200).type("html").send(session?withSiteChrome(html,"integrity",{isAdmin:session.isAdmin,username:session.username}):html);
+};
+app.get("/integridade",renderIntegrity);
+app.get("/auditoria",renderIntegrity);
+app.get("/comunidade",(req,res)=>res.redirect(301,"/integridade"));
+const renderAdminPanel=(req:express.Request,res:express.Response)=>{
+  const admin=getAdminSessionV3(req);
+  if(!admin){
+    const community=getCommunitySession(req);
+    if(community?.isAdmin){issueAdminSessionV3(res,community.userId,community.username);return res.redirect("/painel");}
+    return res.redirect("/api/admin/auth/login?target=admin");
+  }
+  return res.status(200).type("html").send(withSiteChrome(renderAdmin(req),"admin",{isAdmin:true,username:admin.username}));
+};
+app.get("/painel",renderAdminPanel);
+app.get("/admin",(req,res)=>res.redirect(302,"/painel"));
+app.get("/status",(_req,res)=>res.status(200).json({status:"ok",service:"guerra-fria"}));
+app.use("/api",router);
+app.use("/webhook",webhookRouter);
 export default app;
