@@ -1,5 +1,7 @@
 export const panelOverviewJoiningJs = String.raw`
 (function(){
+  if(window.__gfOverviewJoiningInstalled) return;
+  window.__gfOverviewJoiningInstalled=true;
   const $=id=>document.getElementById(id);
   function ensure(){
     const overview=$('overview');
@@ -17,10 +19,13 @@ export const panelOverviewJoiningJs = String.raw`
     for(const v of vals){ const n=Number(v); if(Number.isFinite(n)&&n>=0) return n; }
     return null;
   }
+  let running=false;
   async function update(){
+    if(running || document.hidden) return;
     ensure();
     const el=$('ovJoining');
     if(!el) return;
+    running=true;
     try{
       const r=await fetch('/api/admin/overview',{cache:'no-store',credentials:'same-origin'});
       if(!r.ok) throw new Error(String(r.status));
@@ -33,13 +38,14 @@ export const panelOverviewJoiningJs = String.raw`
     }catch{
       el.textContent='—';
       const detail=$('ovJoiningDetail'); if(detail) detail.textContent='Falha ao consultar';
-    }
+    }finally{running=false}
   }
   const observer=new MutationObserver(()=>{ensure();});
   document.addEventListener('DOMContentLoaded',()=>{
     observer.observe(document.body,{childList:true,subtree:true});
-    ensure(); update(); setInterval(update,5000);
+    ensure(); update(); window.__gfOverviewJoiningTimer=setInterval(update,15000);
   });
   window.addEventListener('pageshow',update);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)update()});
 })();
 `;
