@@ -16,6 +16,8 @@ import { ActionError, banPlayer, type BanDuration } from "../../core/systemActio
 
 const APPEAL_LINK = "discord.gg/guerrafria";
 const STEAM_ID_RE = /^7656119\d{10}$/;
+const ANONYMOUS_MODERATOR_ROLE_ID = "1538735197611360347";
+const ANONYMOUS_MODERATOR_LABEL = "Moderador do servidor";
 
 function calcExpiry(duration: string): Date | null {
   const now = new Date();
@@ -35,6 +37,17 @@ function durationLabel(duration: string): string {
     case "perm": return "permanente";
     default:     return duration;
   }
+}
+
+async function moderationActor(interaction: ChatInputCommandInteraction) {
+  const member = interaction.guild
+    ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null)
+    : null;
+  const anonymous = member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID) ?? false;
+
+  return anonymous
+    ? { id: interaction.user.id, name: ANONYMOUS_MODERATOR_LABEL, source: "system" as const }
+    : { id: interaction.user.id, name: interaction.user.tag, source: "discord" as const };
 }
 
 export const data = new SlashCommandBuilder()
@@ -96,7 +109,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       steamId: interaction.options.getString("jogador", true).trim(),
       duration,
       reason: interaction.options.getString("motivo", true),
-      actor: { id: interaction.user.id, name: interaction.user.tag, source: "discord" },
+      actor: await moderationActor(interaction),
     });
     const expiry = result.expiresAt ? `\n📅 Expira: <t:${Math.floor(result.expiresAt.getTime()/1000)}:F>` : "\n📅 Banimento permanente";
     await interaction.editReply(`✅ **${result.playerName}** foi banido com confirmação do servidor.${expiry}`);
