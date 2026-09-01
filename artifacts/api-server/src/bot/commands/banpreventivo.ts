@@ -9,6 +9,19 @@ import { searchPlayers } from "../utils/players.js";
 import { ActionError, preventiveBanPlayer } from "../../core/systemActions.js";
 
 const STEAM_ID_RE = /^7656119\d{10}$/;
+const ANONYMOUS_MODERATOR_ROLE_ID = "1538735197611360347";
+const ANONYMOUS_MODERATOR_LABEL = "Moderador do servidor";
+
+async function moderationActor(interaction: ChatInputCommandInteraction) {
+  const member = interaction.guild
+    ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null)
+    : null;
+  const anonymous = member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID) ?? false;
+
+  return anonymous
+    ? { id: interaction.user.id, name: ANONYMOUS_MODERATOR_LABEL, source: "system" as const }
+    : { id: interaction.user.id, name: interaction.user.tag, source: "discord" as const };
+}
 
 export const data = new SlashCommandBuilder()
   .setName("banpreventivo")
@@ -51,7 +64,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const result = await preventiveBanPlayer({
       steamId: interaction.options.getString("jogador", true).trim(),
       reason: interaction.options.getString("motivo", true),
-      actor: { id: interaction.user.id, name: interaction.user.tag, source: "discord" },
+      actor: await moderationActor(interaction),
     });
     await interaction.editReply(
       `🛡️ **${result.playerName}** foi banido preventivamente.\n` +
