@@ -8,9 +8,14 @@ import { getSeasonControl, markSeasonReset, setSeasonScoringBlocked } from "../r
 
 const router = Router();
 router.use(requireAdmin);
-const BETA_KEY = "season-beta-2026-08-28";
 
 const adminName = (req: any) => getAdminSessionV3(req)?.username || "Administrador";
+
+async function logAction(admin: string, action: string, details: string) {
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS season_admin_actions (
+    id BIGSERIAL PRIMARY KEY,season_key INTEGER NOT NULL,admin_name TEXT NOT NULL,action TEXT NOT NULL,discord_id TEXT,details TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  await db.execute(sql`INSERT INTO season_admin_actions(season_key,admin_name,action,details) VALUES(1,${admin},${action},${details})`);
+}
 
 router.get("/control", async (_req, res) => {
   try {
@@ -25,8 +30,8 @@ router.get("/control", async (_req, res) => {
       lastResetAt: control.last_reset_at || null,
       lastResetBy: control.last_reset_by || null,
     });
-  } catch (error) {
-    return void res.status(500).json({ ok: false, error: "Falha ao carregar controle da Season." });
+  } catch {
+    return void res.status(500).json({ ok: false, error: "Falha ao carregar controle da Season 1." });
   }
 });
 
@@ -34,9 +39,10 @@ router.post("/control/block", async (req, res) => {
   try {
     const admin = adminName(req);
     await setSeasonScoringBlocked(1, true, admin);
-    return void res.json({ ok: true, scoringBlocked: true, message: "Pontuação bloqueada. Eventos e snapshots não serão gravados." });
-  } catch (error) {
-    return void res.status(500).json({ ok: false, error: "Falha ao bloquear pontuação." });
+    await logAction(admin, "scoring_blocked", "Pontuação da Season 1 bloqueada manualmente.");
+    return void res.json({ ok: true, scoringBlocked: true, message: "Pontuação da Season 1 bloqueada. Eventos e snapshots não serão gravados." });
+  } catch {
+    return void res.status(500).json({ ok: false, error: "Falha ao bloquear pontuação da Season 1." });
   }
 });
 
@@ -44,15 +50,10 @@ router.post("/control/start", async (req, res) => {
   try {
     const admin = adminName(req);
     await setSeasonScoringBlocked(1, false, admin);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS season_beta_control (control_key TEXT PRIMARY KEY, completed_at TIMESTAMPTZ NOT NULL DEFAULT now(), details TEXT)`);
-    await db.execute(sql`
-      INSERT INTO season_beta_control (control_key, completed_at, details)
-      VALUES (${BETA_KEY}, now(), ${`Início manual da pontuação por ${admin}.`})
-      ON CONFLICT (control_key) DO UPDATE SET completed_at=now(), details=EXCLUDED.details
-    `);
-    return void res.json({ ok: true, scoringBlocked: false, message: "Pontuação liberada imediatamente." });
-  } catch (error) {
-    return void res.status(500).json({ ok: false, error: "Falha ao iniciar pontuação." });
+    await logAction(admin, "scoring_started", "Pontuação da Season 1 liberada manualmente.");
+    return void res.json({ ok: true, scoringBlocked: false, message: "Pontuação da Season 1 liberada imediatamente." });
+  } catch {
+    return void res.status(500).json({ ok: false, error: "Falha ao iniciar pontuação da Season 1." });
   }
 });
 
@@ -61,9 +62,8 @@ router.post("/control/reset", async (req, res) => {
   if (confirm !== "ZERAR") return void res.status(400).json({ ok: false, error: "Confirmação inválida. Digite ZERAR." });
   const admin = adminName(req);
   try {
-    // Bloqueia primeiro para impedir gravações durante o reset.
     await setSeasonScoringBlocked(1, true, admin);
-    const seasonId = `beta-manual-${Date.now()}`;
+    const seasonId = `season-1-reset-${Date.now()}`;
     const rcon = await executeRconCommand(`season.forcenew ${seasonId}`);
     if (rcon == null) {
       return void res.status(503).json({ ok: false, scoringBlocked: true, error: "RCON não confirmou o reset do plugin. O banco NÃO foi zerado e a pontuação permaneceu bloqueada." });
@@ -79,16 +79,11 @@ router.post("/control/reset", async (req, res) => {
       `);
     });
     await markSeasonReset(1, admin);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS season_beta_control (control_key TEXT PRIMARY KEY, completed_at TIMESTAMPTZ NOT NULL DEFAULT now(), details TEXT)`);
-    await db.execute(sql`
-      INSERT INTO season_beta_control (control_key, completed_at, details)
-      VALUES (${BETA_KEY}, now(), ${`Reset manual concluído por ${admin}; ${seasonId}.`})
-      ON CONFLICT (control_key) DO UPDATE SET completed_at=now(), details=EXCLUDED.details
-    `);
-    return void res.json({ ok: true, scoringBlocked: true, seasonId, message: "Season zerada. Inscrições foram preservadas e a pontuação continua BLOQUEADA até clicar em INICIAR PONTUAÇÃO." });
+    await logAction(admin, "season_score_reset", `Pontuação e histórico de MMR da Season 1 zerados; inscrições oficiais preservadas; id ${seasonId}.`);
+    return void res.json({ ok: true, scoringBlocked: true, seasonId, message: "Pontuação da Season 1 zerada. As inscrições foram preservadas e a pontuação continua BLOQUEADA até clicar em INICIAR PONTUAÇÃO." });
   } catch (error) {
-    req.log?.error?.({ error }, "season manual reset failed");
-    return void res.status(500).json({ ok: false, scoringBlocked: true, error: "Falha ao zerar Season. A pontuação permaneceu bloqueada por segurança." });
+    req.log?.error?.({ error }, "season 1 manual reset failed");
+    return void res.status(500).json({ ok: false, scoringBlocked: true, error: "Falha ao zerar a Season 1. A pontuação permaneceu bloqueada por segurança." });
   }
 });
 
