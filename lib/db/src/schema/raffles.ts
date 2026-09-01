@@ -4,6 +4,8 @@ export const rafflesTable = pgTable("raffles", {
   id:               serial("id").primaryKey(),
   prizeTier:        varchar("prize_tier", { length: 16 }).notNull(),
   prizeDurationDays: integer("prize_duration_days").notNull(),
+  prizeText:        text("prize_text"),
+  vipOnly:          boolean("vip_only").notNull().default(false),
   messageId:        varchar("message_id", { length: 64 }),
   channelId:        varchar("channel_id", { length: 64 }),
   endsAt:           timestamp("ends_at").notNull(),
