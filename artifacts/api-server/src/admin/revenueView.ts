@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { pool } from "@workspace/db";
-import { requireAdmin } from "./guard.js";
+import { requireFinanceAccess } from "./financeGuard.js";
 
 const router = Router();
-router.use(requireAdmin);
+router.use(requireFinanceAccess);
 
 router.get("/revenue-view", async (req, res) => {
   const d = Number(req.query.days ?? 30);
