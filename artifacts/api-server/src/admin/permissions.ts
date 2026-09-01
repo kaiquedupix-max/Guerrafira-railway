@@ -1,6 +1,8 @@
 import { PermissionFlagsBits } from "discord.js";
 import { discordClient } from "../bot/client.js";
 
+export const CEO_ROLE_ID = process.env.CEO_ROLE_ID?.trim() || "1499084540356853913";
+
 export async function getGuerraFriaMember(userId: string) {
   const client = discordClient();
   const guildId = process.env.DISCORD_GUILD_ID;
@@ -42,4 +44,9 @@ export async function isGuerraFriaAdmin(userId: string): Promise<boolean> {
   const member = await getGuerraFriaMember(userId);
   if (!member) return false;
   return member.permissions.has(PermissionFlagsBits.Administrator) || Boolean(process.env.ADMIN_ROLE_ID && member.roles.cache.has(process.env.ADMIN_ROLE_ID));
+}
+
+export async function isGuerraFriaCEO(userId: string): Promise<boolean> {
+  const member = await getGuerraFriaMember(userId);
+  return Boolean(member?.roles.cache.has(CEO_ROLE_ID));
 }
