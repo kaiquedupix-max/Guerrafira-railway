@@ -161,7 +161,7 @@ async function announceVote(client: Client, endsAt: number): Promise<void> {
         `Acesse <#${VOTE_CHANNEL_ID}> e escolha o mapa do próximo wipe.\n` +
         `⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} valem **2 votos**.\n` +
         `⏳ Encerra <t:${Math.floor(endsAt / 1000)}:R>.`,
-      allowedMentions: { roles: [VIP_ROLE_ID, BOOSTER_ROLE_ID] },
+      allowedMentions: { parse: [] },
     }).catch(() => {});
   }
   await sendGameAnnouncement("GUERRA FRIA","Vote no mapa do proximo wipe no Discord: discord.gg/guerrafria","#7CFC00").catch(() => null);
@@ -177,7 +177,6 @@ function scheduleRuntime(client: Client, vote: MapVoteRuntime): void {
   vote.announcementTimer = setInterval(() => announceVote(client, vote.endsAt).catch(() => {}), ANNOUNCEMENT_INTERVAL);
   activeVotes.set(vote.messageId, vote);
 }
-
 async function loadVote(messageId: string, client?: Client): Promise<MapVoteRuntime | null> {
   const cached = activeVotes.get(messageId); if (cached) return cached;
   const rowsSaved = await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.messageId, messageId), eq(mapVotesTable.status, "active"))).limit(1);
