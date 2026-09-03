@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
+import { getSeasonControl } from "./seasonControl.js";
 
 const router: IRouter = Router();
 
@@ -83,6 +84,52 @@ async function ensureTables() {
       PRIMARY KEY (season_number, steam_id)
     )
   `);
+}
+
+type CanonicalSeason = {
+  seasonNumber: number;
+  seasonId: string;
+  startingMmr: number;
+  status: string;
+};
+
+async function resolveCanonicalSeason(incomingSeasonNumber: number, incomingSeasonId: string): Promise<CanonicalSeason | null> {
+  const byId: any = await db.execute(sql`
+    SELECT season_number, season_id, starting_mmr, status
+    FROM seasons
+    WHERE season_id=${incomingSeasonId}
+    ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, season_number DESC
+    LIMIT 1
+  `);
+  const idRow = byId?.rows?.[0];
+  if (idRow) {
+    return {
+      seasonNumber: Math.max(1, i(idRow.season_number, 1)),
+      seasonId: s(idRow.season_id, 64),
+      startingMmr: n(idRow.starting_mmr, 1000),
+      status: s(idRow.status, 32),
+    };
+  }
+
+  if (incomingSeasonNumber > 0) {
+    const byNumber: any = await db.execute(sql`
+      SELECT season_number, season_id, starting_mmr, status
+      FROM seasons
+      WHERE season_number=${incomingSeasonNumber}
+      LIMIT 1
+    `);
+    const row = byNumber?.rows?.[0];
+    if (row && s(row.season_id, 64) === incomingSeasonId) {
+      return {
+        seasonNumber: Math.max(1, i(row.season_number, 1)),
+        seasonId: s(row.season_id, 64),
+        startingMmr: n(row.starting_mmr, 1000),
+        status: s(row.status, 32),
+      };
+    }
+  }
+
+  return null;
 }
 
 function cleanPlayer(p: Record<string, unknown>) {
@@ -183,7 +230,7 @@ router.get("/season/bootstrap", async (req, res) => {
       res.setHeader("Cache-Control", "no-store");
       return void res.status(200).json({ ok: true, season: null, players: [] });
     }
-    const playersResult: any = await db.execute(sql`SELECT * FROM season_players WHERE season_number=${i(season.season_number)} ORDER BY mmr DESC`);
+    const playersResult: any = await db.execute(sql`SELECT * FROM season_players WHERE season_number=${i(season.season_number)} AND season_id=${s(season.season_id, 64)} ORDER BY mmr DESC`);
     res.setHeader("Cache-Control", "no-store");
     return void res.status(200).json({ ok: true, season, players: playersResult?.rows ?? [] });
   } catch (error) {
@@ -196,20 +243,34 @@ router.post("/season/snapshot-fast", async (req, res) => {
   if (!authorized(req.header("x-gf-season-secret"))) return void res.status(401).json({ error: "Assinatura inválida." });
   try {
     await ensureTables();
-    const seasonNumber = i(req.body?.season_number);
-    const seasonId = s(req.body?.season_id, 64);
-    const startingMmr = n(req.body?.starting_mmr, 1000);
-    const players = Array.isArray(req.body?.players) ? req.body.players.slice(0, 1000) : [];
-    if (seasonNumber < 1 || !seasonId) return void res.status(400).json({ error: "Season inválida." });
+    const control = await getSeasonControl(1);
+    if (Boolean(control.scoring_blocked)) {
+      res.setHeader("Cache-Control", "no-store");
+      return void res.status(202).json({ ok: true, blocked: true, saved: 0, message: "Pontuação bloqueada; snapshot ignorado." });
+    }
 
-    await db.execute(sql`
-      INSERT INTO seasons (season_number, season_id, starting_mmr, status, updated_at)
-      VALUES (${seasonNumber}, ${seasonId}, ${startingMmr}, 'active', now())
-      ON CONFLICT (season_number) DO UPDATE SET season_id=EXCLUDED.season_id, starting_mmr=EXCLUDED.starting_mmr, updated_at=now()
-    `);
-    const saved = await bulkUpsertPlayers(seasonNumber, seasonId, players);
+    const incomingSeasonNumber = i(req.body?.season_number);
+    const incomingSeasonId = s(req.body?.season_id, 64);
+    const players = Array.isArray(req.body?.players) ? req.body.players.slice(0, 1000) : [];
+    if (incomingSeasonNumber < 1 || !incomingSeasonId) return void res.status(400).json({ error: "Season inválida." });
+
+    const target = await resolveCanonicalSeason(incomingSeasonNumber, incomingSeasonId);
+    if (!target || target.status !== "active") {
+      logger.warn({ incomingSeasonNumber, incomingSeasonId, received: players.length }, "stale season fast snapshot ignored");
+      res.setHeader("Cache-Control", "no-store");
+      return void res.status(200).json({ ok: true, stale: true, saved: 0, received: players.length });
+    }
+
+    const saved = await bulkUpsertPlayers(target.seasonNumber, target.seasonId, players);
     res.setHeader("Cache-Control", "no-store");
-    return void res.status(200).json({ ok: true, saved, received: players.length });
+    return void res.status(200).json({
+      ok: true,
+      saved,
+      received: players.length,
+      remapped: incomingSeasonNumber !== target.seasonNumber,
+      canonical_season_number: target.seasonNumber,
+      canonical_season_id: target.seasonId,
+    });
   } catch (error) {
     logger.error({ error }, "season fast snapshot failed");
     return void res.status(500).json({ error: "Falha ao sincronizar snapshot rápido da Season." });
