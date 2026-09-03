@@ -13,6 +13,8 @@ import { forceFinishActiveMapVote } from "./criarmapa.js";
 
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
+const WIPE_HOUR_UTC = 21; // 18h em America/Sao_Paulo
+const WIPE_MINUTE_UTC = 25;
 
 type MapOption = {
   name?: string;
@@ -36,6 +38,57 @@ type VoteCountRow = {
   voters: number | string;
   votes: number | string;
 };
+
+type WipeScheduleRow = {
+  id: number;
+  wipe_at: Date | string | null;
+};
+
+function isOfficialWipeAt(value: Date | string | null): boolean {
+  if (!value) return false;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return false;
+  const day = date.getUTCDay();
+  return (day === 1 || day === 5) && date.getUTCHours() === WIPE_HOUR_UTC && date.getUTCMinutes() === WIPE_MINUTE_UTC;
+}
+
+function nextOfficialWipeAt(from = new Date()): Date {
+  const base = new Date(from);
+  for (let add = 0; add < 8; add++) {
+    const candidate = new Date(Date.UTC(
+      base.getUTCFullYear(),
+      base.getUTCMonth(),
+      base.getUTCDate() + add,
+      WIPE_HOUR_UTC,
+      WIPE_MINUTE_UTC,
+      0,
+      0,
+    ));
+    const day = candidate.getUTCDay();
+    if ((day === 1 || day === 5) && candidate.getTime() > from.getTime()) return candidate;
+  }
+  throw new Error("Não foi possível calcular o próximo wipe oficial.");
+}
+
+async function repairInvalidWipeSchedules(): Promise<void> {
+  const rows = await pool.query<WipeScheduleRow>(
+    `SELECT id, wipe_at
+       FROM map_votes
+      WHERE status IN ('active','selected')
+        AND applied_at IS NULL`,
+  );
+
+  const now = new Date();
+  for (const row of rows.rows) {
+    if (isOfficialWipeAt(row.wipe_at)) continue;
+    const corrected = nextOfficialWipeAt(now);
+    await pool.query(`UPDATE map_votes SET wipe_at=$1 WHERE id=$2`, [corrected, row.id]);
+    console.warn(`[votacao] wipe_at inválido corrigido automaticamente: votação ${row.id} -> ${corrected.toISOString()}`);
+  }
+}
+
+void repairInvalidWipeSchedules().catch(error => console.error("[votacao] Falha ao corrigir agenda de wipe:", error));
+setInterval(() => repairInvalidWipeSchedules().catch(error => console.error("[votacao] Falha ao revisar agenda de wipe:", error)), 60_000);
 
 export const data = new SlashCommandBuilder()
   .setName("votacao")
@@ -72,6 +125,8 @@ function discordTimestamp(value: Date | string | null, style: "F" | "R"): string
 }
 
 async function handleForcedFinish(interaction: ChatInputCommandInteraction): Promise<void> {
+  await repairInvalidWipeSchedules();
+
   const activeVote = await pool.query<ActiveVoteRow>(
     `SELECT id, message_id, channel_id, maps_json, ends_at, wipe_at
        FROM map_votes
@@ -119,7 +174,7 @@ async function handleForcedFinish(interaction: ChatInputCommandInteraction): Pro
       `${currentResult}\n\n` +
       "Escolha o que fazer com o **resultado atual**:\n\n" +
       "🚨 **Encerrar + wipe agora:** fecha a votação, define o vencedor atual e inicia o wipe imediatamente usando esse mapa.\n" +
-      "🛑 **Só encerrar votação:** fecha a votação e define o vencedor, mas mantém o wipe no horário que já estava programado.\n\n" +
+      "🛑 **Só encerrar votação:** fecha a votação e define o vencedor, mas mantém o wipe no próximo horário oficial de **segunda ou sexta às 18:25**.\n\n" +
       "A ação será registrada publicamente com o administrador responsável.",
     )
     .setFooter({ text: "A confirmação expira em 60 segundos" });
@@ -151,6 +206,13 @@ async function handleForcedFinish(interaction: ChatInputCommandInteraction): Pro
       wipeNow,
     );
 
+    if (!wipeNow) await repairInvalidWipeSchedules();
+    const refreshed = await pool.query<{ wipe_at: Date | string | null }>(
+      `SELECT wipe_at FROM map_votes WHERE id=$1 LIMIT 1`,
+      [result.voteId],
+    );
+    const finalWipeAt = refreshed.rows[0]?.wipe_at ? new Date(refreshed.rows[0].wipe_at).getTime() : result.wipeAt;
+
     await interaction.editReply({
       content:
         `✅ **Votação encerrada pelo administrador.**\n` +
@@ -158,7 +220,7 @@ async function handleForcedFinish(interaction: ChatInputCommandInteraction): Pro
         `🏆 Mapa vencedor: **${result.winnerName}**\n` +
         (wipeNow
           ? "🚨 O resultado foi aplicado e o **wipe foi iniciado imediatamente**."
-          : `🧊 O resultado foi aplicado e o wipe continua programado para <t:${Math.floor(result.wipeAt / 1000)}:F>.`),
+          : `🧊 O resultado foi aplicado e o wipe ficou programado para <t:${Math.floor(finalWipeAt / 1000)}:F> (**segunda ou sexta**).`),
       allowedMentions: { parse: [] },
       components: [],
     });
@@ -207,6 +269,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   }
 
   try {
+    await repairInvalidWipeSchedules();
+
     const activeVote = await pool.query<ActiveVoteRow>(
       `SELECT id, message_id, channel_id, maps_json, ends_at, wipe_at
          FROM map_votes
