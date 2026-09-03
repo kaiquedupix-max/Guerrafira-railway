@@ -60,14 +60,13 @@ router.post("/control/start", async (req, res) => {
 router.post("/control/reset", async (req, res) => {
   const confirm = String(req.body?.confirm || "").trim().toUpperCase();
   if (confirm !== "ZERAR") return void res.status(400).json({ ok: false, error: "Confirmação inválida. Digite ZERAR." });
+
   const admin = adminName(req);
+  const seasonId = `season-1-reset-${Date.now()}`;
+
   try {
+    // Primeiro fecha a entrada de qualquer evento/snapshot. O reset do banco não depende do RCON.
     await setSeasonScoringBlocked(1, true, admin);
-    const seasonId = `season-1-reset-${Date.now()}`;
-    const rcon = await executeRconCommand(`season.forcenew ${seasonId}`);
-    if (rcon == null) {
-      return void res.status(503).json({ ok: false, scoringBlocked: true, error: "RCON não confirmou o reset do plugin. O banco NÃO foi zerado e a pontuação permaneceu bloqueada." });
-    }
 
     await db.transaction(async tx => {
       await tx.execute(sql`DELETE FROM season_transactions WHERE season_number=1`);
@@ -75,15 +74,77 @@ router.post("/control/reset", async (req, res) => {
       await tx.execute(sql`
         INSERT INTO seasons (season_number, season_id, status, starting_mmr, started_at, ended_at, updated_at)
         VALUES (1, ${seasonId}, 'active', 1000, now(), NULL, now())
-        ON CONFLICT (season_number) DO UPDATE SET season_id=EXCLUDED.season_id,status='active',starting_mmr=1000,started_at=now(),ended_at=NULL,updated_at=now()
+        ON CONFLICT (season_number) DO UPDATE SET
+          season_id=EXCLUDED.season_id,
+          status='active',
+          starting_mmr=1000,
+          started_at=now(),
+          ended_at=NULL,
+          updated_at=now()
       `);
     });
-    await markSeasonReset(1, admin);
-    await logAction(admin, "season_score_reset", `Pontuação e histórico de MMR da Season 1 zerados; inscrições oficiais preservadas; id ${seasonId}.`);
-    return void res.json({ ok: true, scoringBlocked: true, seasonId, message: "Pontuação da Season 1 zerada. As inscrições foram preservadas e a pontuação continua BLOQUEADA até clicar em INICIAR PONTUAÇÃO." });
+
+    // Não responde sucesso sem confirmar que as duas fontes de pontuação realmente ficaram vazias.
+    const verification: any = await db.execute(sql`
+      SELECT
+        (SELECT COUNT(*)::int FROM season_players WHERE season_number=1) AS players,
+        (SELECT COUNT(*)::int FROM season_transactions WHERE season_number=1) AS transactions
+    `);
+    const playersRemaining = Number(verification?.rows?.[0]?.players ?? -1);
+    const transactionsRemaining = Number(verification?.rows?.[0]?.transactions ?? -1);
+    if (playersRemaining !== 0 || transactionsRemaining !== 0) {
+      throw new Error(`Verificação do reset falhou: ${playersRemaining} jogadores / ${transactionsRemaining} transações restantes.`);
+    }
+
+    // Auditoria não pode transformar um reset já concluído em falso erro para o painel.
+    await markSeasonReset(1, admin).catch(error => {
+      req.log?.warn?.({ error }, "season reset marker failed after successful database reset");
+    });
+    await logAction(
+      admin,
+      "season_score_reset",
+      `Pontuação e histórico de MMR da Season 1 zerados e verificados; inscrições oficiais preservadas; id ${seasonId}.`,
+    ).catch(error => {
+      req.log?.warn?.({ error }, "season reset audit log failed after successful database reset");
+    });
+
+    // O plugin também recebe o novo ID, mas uma falha de RCON não impede mais o banco de ser zerado.
+    // Como a pontuação continua bloqueada, snapshots/eventos antigos não conseguem restaurar os dados.
+    let pluginResetConfirmed = false;
+    let rconWarning: string | null = null;
+    try {
+      const rcon = await executeRconCommand(`season.forcenew ${seasonId}`);
+      pluginResetConfirmed = rcon != null;
+      if (!pluginResetConfirmed) rconWarning = "RCON não confirmou o reset do plugin.";
+    } catch (error) {
+      rconWarning = error instanceof Error ? error.message : "RCON não confirmou o reset do plugin.";
+      req.log?.warn?.({ error }, "season plugin reset failed after successful database reset");
+    }
+
+    const message = pluginResetConfirmed
+      ? "Season 1 zerada de verdade: pontuação e histórico estão em 0. Inscrições preservadas. A pontuação ficou BLOQUEADA até clicar em INICIAR PONTUAÇÃO."
+      : "Season 1 zerada no banco e verificada em 0. O RCON não confirmou o reset do plugin, então a pontuação ficou BLOQUEADA por segurança. Inscrições preservadas.";
+
+    res.setHeader("Cache-Control", "no-store");
+    return void res.json({
+      ok: true,
+      scoringBlocked: true,
+      seasonId,
+      pluginResetConfirmed,
+      rconWarning,
+      playersRemaining,
+      transactionsRemaining,
+      message,
+    });
   } catch (error) {
     req.log?.error?.({ error }, "season 1 manual reset failed");
-    return void res.status(500).json({ ok: false, scoringBlocked: true, error: "Falha ao zerar a Season 1. A pontuação permaneceu bloqueada por segurança." });
+    return void res.status(500).json({
+      ok: false,
+      scoringBlocked: true,
+      error: error instanceof Error
+        ? `Falha ao zerar a Season 1: ${error.message}`
+        : "Falha ao zerar a Season 1. A pontuação permaneceu bloqueada por segurança.",
+    });
   }
 });
 
