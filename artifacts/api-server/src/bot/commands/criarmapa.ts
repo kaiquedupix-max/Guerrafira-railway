@@ -18,6 +18,17 @@ interface MapVoteRuntime {
   timer?: ReturnType<typeof setTimeout>; announcementTimer?: ReturnType<typeof setInterval>;
 }
 
+export interface ForcedVoteResult {
+  voteId: number;
+  winnerIndex: number;
+  winnerName: string;
+  winner: MapOption;
+  counts: number[];
+  participants: number;
+  wipeNow: boolean;
+  wipeAt: number;
+}
+
 const activeVotes = new Map<string, MapVoteRuntime>();
 const VOTE_CHANNEL_ID = "1537001939504734238";
 const CHAT_CHANNEL_ID = "1499084541791436861";
@@ -304,33 +315,110 @@ export async function handleMapVote(interaction: ButtonInteraction): Promise<voi
   await interaction.reply({ content: `✅ Voto registrado em **${vote.maps[option].name}**.\n${badge} • seu voto vale **${bonus.weight} voto${bonus.weight > 1 ? "s" : ""}**.\nCada pessoa pode votar apenas uma vez.`, ephemeral: true });
 }
 
-async function finishVote(client: Client, messageId: string): Promise<void> {
-  const vote = await loadVote(messageId); if (!vote) return;
+type FinishVoteOptions = { forcedBy?: { id: string; name: string }; wipeNow?: boolean };
+
+async function finishVote(client: Client, messageId: string, options: FinishVoteOptions = {}): Promise<ForcedVoteResult | null> {
+  const vote = await loadVote(messageId); if (!vote) return null;
   const runtime = activeVotes.get(messageId);
   if (runtime?.timer) clearTimeout(runtime.timer);
   if (runtime?.announcementTimer) clearInterval(runtime.announcementTimer);
   activeVotes.delete(messageId);
+
   const ballots = await db.select().from(mapVoteBallotsTable).where(eq(mapVoteBallotsTable.mapVoteId, vote.id));
   const counts = vote.maps.map(() => 0);
   for (const ballot of ballots) if (counts[ballot.optionIndex] !== undefined) counts[ballot.optionIndex] += ballot.weight;
   const max = Math.max(...counts);
   const winners = counts.map((v, i) => v === max ? i : -1).filter(i => i >= 0);
   const winnerIndex = ballots.length ? winners[Math.floor(Math.random()*winners.length)] : 0;
-  await db.update(mapVotesTable).set({ status: "selected", winnerIndex }).where(eq(mapVotesTable.id, vote.id));
-  const channel = await client.channels.fetch(vote.channelId).catch(() => null) as TextChannel | null;
-  if (!channel?.isSendable()) return;
-  const msg = await channel.messages.fetch(messageId).catch(() => null);
-  if (msg) await msg.edit({ components: [] }).catch(() => {});
-  const result = ballots.length === 0 ? `Nenhum voto foi registrado; **${vote.maps[winnerIndex].name}** foi selecionado automaticamente.` : winners.length === 1 ? `🏆 **${vote.maps[winnerIndex].name}** venceu a votação!` : `🤝 Houve empate entre **${winners.map(i => vote.maps[i].name).join(" • ")}**; **${vote.maps[winnerIndex].name}** venceu o desempate automático.`;
-  const embed = new EmbedBuilder().setColor(0xe53935).setTitle("🏁 VOTAÇÃO ENCERRADA — RESULTADO")
-    .setDescription(`${result}\n\n⭐ Votos de ${VIP_MENTION} e ${BOOSTER_MENTION} foram contabilizados com peso **2**.`)
-    .addFields(...vote.maps.map((m, i) => ({ name: `🗺️ ${m.name}`, value: `**${counts[i]} voto(s)**`, inline: true })))
-    .setFooter({ text: `Guerra Fria • ${ballots.length} participante(s)` }).setTimestamp();
-  await channel.send({ embeds: [embed] });
+  const forcedWipeAt = options.wipeNow ? new Date() : null;
+  await db.update(mapVotesTable).set({
+    status: "selected",
+    winnerIndex,
+    ...(forcedWipeAt ? { wipeAt: forcedWipeAt } : {}),
+  }).where(eq(mapVotesTable.id, vote.id));
+
   const winner=vote.maps[winnerIndex];
+  const effectiveWipeAt = forcedWipeAt?.getTime() ?? vote.wipeAt;
+  const result = ballots.length === 0
+    ? `Nenhum voto foi registrado; **${winner.name}** foi selecionado automaticamente.`
+    : winners.length === 1
+      ? `🏆 **${winner.name}** venceu a votação!`
+      : `🤝 Houve empate entre **${winners.map(i => vote.maps[i].name).join(" • ")}**; **${winner.name}** venceu o desempate automático.`;
+
+  const forcedLine = options.forcedBy
+    ? `\n\n🛡️ **Votação encerrada manualmente pelo administrador:** <@${options.forcedBy.id}> (${options.forcedBy.name})`
+    : "";
+  const wipeLine = options.wipeNow
+    ? "\n🚨 **O wipe foi solicitado imediatamente usando o mapa vencedor.**"
+    : `\n🧊 O fluxo do wipe permanece programado para <t:${Math.floor(effectiveWipeAt/1000)}:F>.`;
+
+  const channel = await client.channels.fetch(vote.channelId).catch(() => null) as TextChannel | null;
+  if (channel?.isSendable()) {
+    const msg = await channel.messages.fetch(messageId).catch(() => null);
+    if (msg) await msg.edit({ components: [] }).catch(() => {});
+    const embed = new EmbedBuilder()
+      .setColor(options.forcedBy ? 0xf59e0b : 0xe53935)
+      .setTitle(options.forcedBy ? "🛑 VOTAÇÃO ENCERRADA PELO ADMINISTRADOR" : "🏁 VOTAÇÃO ENCERRADA — RESULTADO")
+      .setDescription(`${result}${forcedLine}${wipeLine}\n\n⭐ Votos de ${VIP_MENTION} e ${BOOSTER_MENTION} foram contabilizados com peso **2**.`)
+      .addFields(...vote.maps.map((m, i) => ({ name: `🗺️ ${m.name}`, value: `**${counts[i]} voto(s)**`, inline: true })))
+      .setFooter({ text: `Guerra Fria • ${ballots.length} participante(s)` }).setTimestamp();
+    await channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+  }
+
   const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
-  if(chat?.isSendable()) await chat.send(`🏆 **MAPA VENCEDOR:** ${winner.name}\n${winner.mode==="link"?"Fonte: `RustMaps .map`":`Seed: \`${winner.seed}\` • Size: \`${winner.size}\``}\n🧊 O fluxo do wipe será iniciado às <t:${Math.floor(vote.wipeAt/1000)}:t>.`).catch(()=>{});
-  await sendGameAnnouncement("GUERRA FRIA",`${winner.name} venceu. O wipe inicia as 18:25.`,"#7CFC00").catch(()=>null);
+  if(chat?.isSendable()) {
+    const adminText = options.forcedBy ? `\n🛡️ Encerrada manualmente por <@${options.forcedBy.id}> (${options.forcedBy.name}).` : "";
+    const wipeText = options.wipeNow
+      ? "\n🚨 O wipe está sendo iniciado agora com o resultado da votação."
+      : `\n🧊 O fluxo do wipe será iniciado às <t:${Math.floor(effectiveWipeAt/1000)}:t>.`;
+    await chat.send({
+      content:`🏆 **MAPA VENCEDOR:** ${winner.name}\n${winner.mode==="link"?"Fonte: `RustMaps .map`":`Seed: \`${winner.seed}\` • Size: \`${winner.size}\``}${adminText}${wipeText}`,
+      allowedMentions:{parse:[]},
+    }).catch(()=>{});
+  }
+
+  await sendGameAnnouncement(
+    "GUERRA FRIA",
+    options.wipeNow ? `${winner.name} venceu. Wipe iniciado pela administracao.` : `${winner.name} venceu. Wipe programado normalmente.`,
+    "#7CFC00",
+  ).catch(()=>null);
+
+  if (options.wipeNow) await processScheduledWipes(client);
+
+  return {
+    voteId: vote.id,
+    winnerIndex,
+    winnerName: winner.name,
+    winner,
+    counts,
+    participants: ballots.length,
+    wipeNow: Boolean(options.wipeNow),
+    wipeAt: effectiveWipeAt,
+  };
+}
+
+export async function forceFinishActiveMapVote(
+  client: Client,
+  admin: { id: string; name: string },
+  wipeNow: boolean,
+): Promise<ForcedVoteResult> {
+  if (wipeNow) {
+    if (process.env.WIPE_EXECUTION_ENABLED !== "true" || process.env.WIPE_AUTOMATION_ENABLED !== "true") {
+      throw new Error("O wipe automático está desativado nas configurações. A votação não foi encerrada.");
+    }
+    const lock = await getWipeLockState();
+    if (!lock.unlocked) throw new Error("O wipe está travado no painel. Destrave antes de forçar o wipe.");
+  }
+
+  const rows = await db.select().from(mapVotesTable).where(eq(mapVotesTable.status, "active")).limit(1);
+  const row = rows[0];
+  if (!row) throw new Error("Não existe votação de mapa ativa para encerrar.");
+
+  // Carrega a votação no runtime para que timers e lembretes sejam cancelados corretamente.
+  await loadVote(row.messageId, client);
+  const result = await finishVote(client, row.messageId, { forcedBy: admin, wipeNow });
+  if (!result) throw new Error("A votação deixou de estar ativa antes da confirmação.");
+  return result;
 }
 
 let wipeScheduler: ReturnType<typeof setInterval> | null = null;
