@@ -5,6 +5,8 @@
  *   - Never expands just because the server is full.
  *   - Every 10 players waiting in queue authorizes +5 slots.
  *   - The same queue pressure cannot be counted repeatedly on every tick.
+ *   - When the queue is empty and population falls, slots shrink automatically
+ *     in steps of 5, never below the configured minimum or online players.
  *   - Runtime min/max limits configured by the admin panel are always respected.
  */
 import { ActivityType, type Client } from "discord.js";
@@ -60,6 +62,10 @@ async function ensureSettingsTable(): Promise<void> {
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function roundUpToSlotStep(value: number): number {
+  return Math.ceil(Math.max(0, value) / SLOT_INCREMENT) * SLOT_INCREMENT;
 }
 
 export async function getSlotControlSettings(): Promise<SlotControlSettings> {
@@ -146,7 +152,7 @@ export async function updateSlotControlSettings(input: {
 
     // Changing panel settings must not fabricate queue pressure. In automatic
     // mode we only enforce hard min/max boundaries here; queue-based expansion
-    // is handled exclusively by the periodic manager tick.
+    // and population-based shrink are handled by the periodic manager tick.
     if (real < minSlots) {
       applied = await setSlots(minSlots);
     } else if (real > maxSlots && maxSlots >= players) {
@@ -200,7 +206,9 @@ export function startSlotManager(client: Client): void {
     // time it reaches 10, a fresh +5 expansion becomes available.
     if (queued < QUEUE_THRESHOLD) {
       consumedQueueSteps = 0;
-    } else if ((currentSlots ?? minSlots) < maxSlots) {
+    }
+
+    if (queued >= QUEUE_THRESHOLD && (currentSlots ?? minSlots) < maxSlots) {
       const queueStepsNow = Math.floor(queued / QUEUE_THRESHOLD);
       const newQueueSteps = Math.max(0, queueStepsNow - consumedQueueSteps);
 
@@ -229,6 +237,22 @@ export function startSlotManager(client: Client): void {
           );
         }
       }
+    } else if (queued === 0) {
+      // With no queue, bring maxplayers back down as population falls. We round
+      // online players up to the same 5-slot step used by expansion so the value
+      // remains stable, and we only reduce one 5-slot step per tick to avoid
+      // abrupt drops. Never go below the configured minimum or online players.
+      const before = currentSlots ?? minSlots;
+      const desired = clamp(Math.max(minSlots, roundUpToSlotStep(players)), minSlots, maxSlots);
+      if (before > desired) {
+        const target = Math.max(desired, before - SLOT_INCREMENT, players, minSlots);
+        if (target < before && await setSlots(target)) {
+          logger.info(
+            { players, queued, from: before, to: target, desired, slotIncrement: SLOT_INCREMENT },
+            "Population dropped — slots reduced",
+          );
+        }
+      }
     }
 
     updatePresence(client, players, currentSlots ?? info.maxPlayers ?? minSlots);
@@ -244,6 +268,6 @@ export function startSlotManager(client: Client): void {
       slotIncrement: SLOT_INCREMENT,
       intervalMs: INTERVAL,
     },
-    "Slot manager started with queue-threshold control",
+    "Slot manager started with queue-threshold control and automatic shrink",
   );
 }
