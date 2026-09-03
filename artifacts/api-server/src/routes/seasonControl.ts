@@ -50,7 +50,12 @@ export async function markSeasonReset(seasonNumber: number, admin: string) {
 
 const router: IRouter = Router();
 router.use(async (req, res, next) => {
-  if (req.path !== "/season/events" && req.path !== "/season/snapshot") return next();
+  const scoringWritePaths = new Set([
+    "/season/events",
+    "/season/snapshot",
+    "/season/snapshot-fast",
+  ]);
+  if (!scoringWritePaths.has(req.path)) return next();
   try {
     const control = await getSeasonControl(1);
     if (Boolean(control.scoring_blocked)) {
