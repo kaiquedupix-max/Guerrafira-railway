@@ -29,12 +29,14 @@ import { runSeasonEmailRepairAutorun } from "./seasonEmailRepairAutorun.js";
 import rankAssetsRouter from "./rankAssets.js";
 import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
 import { startSeasonGameRankSync } from "../bot/seasonGameRankSync.js";
+import { startSeasonHourlyBackup } from "./seasonBackup.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
 startSeasonPaymentReconciler();
 startSeasonEmailLifecycle();
 startSeasonGameRankSync();
+startSeasonHourlyBackup();
 void runSeasonEmailRepairAutorun();
 
 const router: IRouter = Router();
