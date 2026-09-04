@@ -6,7 +6,7 @@ import { getGuerraFriaDisplayName, isGuerraFriaAdmin } from "./permissions.js";
 import { issueAdminSessionV3, revokeAdminSessionV3 } from "./sessionBearer.js";
 import { issueCommunitySession, revokeCommunitySession } from "./communitySession.js";
 
-type Target = "admin" | "community" | "home" | "leaderboard" | "store" | "season";
+type Target = "admin" | "community" | "home" | "leaderboard" | "store" | "season" | "promo";
 type LoginState = { expires: number; target: Target; pwaDevice?: string };
 type PwaGrant = { token: string; expires: number };
 
@@ -42,7 +42,7 @@ export function adminLoginV3(req: Request, res: Response): void {
   const clientId = process.env.DISCORD_CLIENT_ID?.trim();
   if (!clientId) return void res.status(500).send("DISCORD_CLIENT_ID não configurado.");
   const raw = String(req.query.target || "");
-  const target: Target = raw === "community" ? "community" : raw === "home" ? "home" : raw === "leaderboard" ? "leaderboard" : raw === "store" ? "store" : raw === "season" ? "season" : "admin";
+  const target: Target = raw === "community" ? "community" : raw === "home" ? "home" : raw === "leaderboard" ? "leaderboard" : raw === "store" ? "store" : raw === "season" ? "season" : raw === "promo" ? "promo" : "admin";
   const state = randomUUID();
   const pwaDevice = validPwaDevice(req.query.device);
   states.set(state, { expires: Date.now() + 10 * 60 * 1000, target, pwaDevice });
@@ -81,6 +81,12 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
   if (stored.target === "leaderboard") return void res.redirect("/leaderboard");
   if (stored.target === "store") return void res.redirect("/loja");
   if (stored.target === "season") return void res.redirect("/api/season/1/inscricao-oficial");
+  if (stored.target === "promo") {
+    const rawReturn = String(req.cookies?.gf_promo_return ?? "");
+    const safeReturn = rawReturn.startsWith("/promo") && !rawReturn.startsWith("//") ? rawReturn : "/promo";
+    res.clearCookie("gf_promo_return", { path: "/" });
+    return void res.redirect(safeReturn);
+  }
   return void res.redirect("/");
 }
 
