@@ -45,7 +45,7 @@ router.get("/wipe/status",async(_req,res)=>{
       const leaders=counts.map((value,index)=>value===max&&max>0?index:-1).filter(index=>index>=0);
       const flowAt=row.wipeAt?.getTime()??null;
       const officialWipeAt=flowAt===null?null:flowAt+OFFICIAL_AFTER_FLOW_MS;
-      return{id:row.id,status:row.status,endsAt:row.endsAt,wipeAt:officialWipeAt===null?null:new Date(officialWipeAt),flowAt:flowAt===null?null:new Date(flowAt),officialWipeAt:officialWipeAt===null?null:new Date(officialWipeAt),winnerIndex:row.winnerIndex,leaderIndexes:leaders,counts,participants:voteBallots.length,appliedAt:row.appliedAt,failureReason:row.failureReason,messageId:row.messageId,channelId:row.channelId,maps:maps.map((m:any)=>({name:m.name,mode:m.mode||(m.mapUrl?"link":"seed"),seed:m.seed,size:m.size,mapUrl:m.mapUrl,image:m.image}))}
+      return{id:row.id,status:row.status,endsAt:row.endsAt,wipeAt:flowAt===null?null:new Date(flowAt),flowAt:flowAt===null?null:new Date(flowAt),officialWipeAt:officialWipeAt===null?null:new Date(officialWipeAt),winnerIndex:row.winnerIndex,leaderIndexes:leaders,counts,participants:voteBallots.length,appliedAt:row.appliedAt,failureReason:row.failureReason,messageId:row.messageId,channelId:row.channelId,maps:maps.map((m:any)=>({name:m.name,mode:m.mode||(m.mapUrl?"link":"seed"),seed:m.seed,size:m.size,mapUrl:m.mapUrl,image:m.image}))}
     })});
   }catch(error:any){res.status(500).json({error:error?.message||"Falha ao consultar votações."})}
 });
