@@ -39,26 +39,16 @@ async function ensureOfficialTable() {
 }
 
 async function resolveCurrentScoringSeason(): Promise<number | null> {
+  // O painel oficial nunca deve procurar pontuação em seasons beta/antigas.
+  // Só a Season 1 canônica pode alimentar esta tela.
   const result: any = await db.execute(sql`
-    SELECT p.season_number,
-           COUNT(*)::int AS player_count,
-           MAX(p.updated_at) AS last_update,
-           MAX(s.status) AS status
-      FROM season_players p
-      LEFT JOIN seasons s ON s.season_number = p.season_number
-     GROUP BY p.season_number
-     ORDER BY CASE WHEN MAX(s.status) = 'active' THEN 0 ELSE 1 END,
-              MAX(p.updated_at) DESC NULLS LAST,
-              p.season_number DESC
-     LIMIT 1
+    SELECT EXISTS(
+      SELECT 1 FROM season_players WHERE season_number=1 LIMIT 1
+    ) AS has_players
   `);
-  const value = result?.rows?.[0]?.season_number;
-  return value == null ? null : Number(value);
+  return Boolean(result?.rows?.[0]?.has_players) ? 1 : null;
 }
 
-// IMPORTANT: this endpoint intentionally shadows the legacy /season/registrations
-// handler. The administration panel must never mix beta/previous-season signups
-// from season_registrations with the current paid/official season.
 router.get("/registrations", async (req, res) => {
   try {
     await ensureOfficialTable();
@@ -79,7 +69,7 @@ router.get("/registrations", async (req, res) => {
           WITH admin_delta AS (
             SELECT steam_id,COALESCE(SUM(final_value),0) AS delta
               FROM season_transactions
-             WHERE season_number=${sourceSeason} AND category='admin'
+             WHERE season_number=1 AND category='admin'
              GROUP BY steam_id
           )
           SELECT r.season_key,r.discord_id,r.discord_name,r.steam_id,r.status,r.created_at,
@@ -93,7 +83,7 @@ router.get("/registrations", async (req, res) => {
                  COALESCE(p.crates_hacked,0) AS crates_hacked,p.updated_at
             FROM season_official_registrations r
             LEFT JOIN season_players p
-              ON p.season_number=${sourceSeason} AND p.steam_id=NULLIF(TRIM(r.steam_id),'')
+              ON p.season_number=1 AND p.steam_id=NULLIF(TRIM(r.steam_id),'')
             LEFT JOIN admin_delta a ON a.steam_id=NULLIF(TRIM(r.steam_id),'')
            WHERE r.season_key=${SEASON_OFFICIAL_KEY} AND r.status='active'
            ORDER BY mmr DESC NULLS LAST,r.paid_at ASC NULLS LAST,r.created_at ASC
@@ -142,7 +132,7 @@ router.get("/registrations", async (req, res) => {
       season: 1,
       seasonKey: SEASON_OFFICIAL_KEY,
       dataSourceSeason: sourceSeason,
-      fallbackSource: sourceSeason != null && sourceSeason !== 1,
+      fallbackSource: false,
       roleId: null,
       summary: {
         total: registrations.length,
