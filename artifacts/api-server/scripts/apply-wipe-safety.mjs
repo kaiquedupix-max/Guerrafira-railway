@@ -11,63 +11,78 @@ function replaceOnce(from, to, label) {
 
 replaceOnce(
   'const WIPE_DELAY_MS = 25 * 60_000;',
-  'const WIPE_DELAY_MS = 25 * 60_000;\nconst ONE_DAY_MS = 24 * 60 * 60_000;\nconst AUTO_EXECUTION_GRACE_MS = 10 * 60_000;',
+  'const WIPE_DELAY_MS = 25 * 60_000;\nconst AUTO_EXECUTION_GRACE_MS = 10 * 60_000;',
   'constants',
 );
 
+// Regra oficial do Guerra Fria:
+// - a data informada é SEMPRE o próprio dia do wipe;
+// - somente segundas e sextas são aceitas;
+// - votação encerra 18:00 BRT (21:00 UTC);
+// - fluxo técnico começa 18:25 BRT;
+// - horário oficial divulgado continua 18:30 BRT.
 replaceOnce(
-`export function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeAt: number } {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year:"numeric", month:"2-digit", day:"2-digit" }).formatToParts(now).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
-  const base = new Date(Date.UTC(Number(parts.year), Number(parts.month)-1, Number(parts.day), 21, 0));
-  for (let add=0; add<8; add++) {
-    const candidate = new Date(base.getTime()+add*86_400_000); const day=candidate.getUTCDay();
-    if ((day===1||day===5) && candidate.getTime()>now.getTime()) return { voteEndsAt:candidate.getTime(), wipeAt:candidate.getTime()+WIPE_DELAY_MS };
-  }
-  throw new Error("Não foi possível calcular o próximo wipe.");
-}
-
-export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
+`export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
   if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date))throw new Error("Informe a data no formato AAAA-MM-DD.");
   const [year,month,day]=date.split("-").map(Number);const voteAt=Date.UTC(year,month-1,day,21,0,0);const check=new Date(voteAt);
   if(check.getUTCFullYear()!==year||check.getUTCMonth()!==month-1||check.getUTCDate()!==day)throw new Error("Data inválida.");
   if(voteAt<=Date.now()+5*60_000)throw new Error("Escolha uma data futura com pelo menos 5 minutos de antecedência.");
   return{voteEndsAt:voteAt,wipeAt:voteAt+WIPE_DELAY_MS};
 }`,
-`export function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeAt: number } {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year:"numeric", month:"2-digit", day:"2-digit" }).formatToParts(now).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
-  const today = Date.UTC(Number(parts.year), Number(parts.month)-1, Number(parts.day), 0, 0, 0);
-  for (let add=0; add<9; add++) {
-    const wipeDay = new Date(today + add*ONE_DAY_MS);
-    const dow = wipeDay.getUTCDay();
-    if (dow !== 1 && dow !== 5) continue;
-    const flowAt = Date.UTC(wipeDay.getUTCFullYear(), wipeDay.getUTCMonth(), wipeDay.getUTCDate(), 21, 25, 0);
-    if (flowAt <= now.getTime()) continue;
-    return { voteEndsAt: flowAt - ONE_DAY_MS - WIPE_DELAY_MS, wipeAt: flowAt };
-  }
-  throw new Error("Não foi possível calcular o próximo wipe.");
-}
-
-// A data informada é o dia em que a votação encerra às 18:00 BRT.
-// O wipe correspondente ocorre no dia seguinte: fluxo técnico 18:25 BRT e horário oficial 18:30 BRT.
-export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
+`export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
   if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date))throw new Error("Informe a data no formato AAAA-MM-DD.");
   const [year,month,day]=date.split("-").map(Number);
   const voteAt=Date.UTC(year,month-1,day,21,0,0);
   const check=new Date(voteAt);
   if(check.getUTCFullYear()!==year||check.getUTCMonth()!==month-1||check.getUTCDate()!==day)throw new Error("Data inválida.");
-  if(voteAt<=Date.now()+5*60_000)throw new Error("Escolha uma data futura com pelo menos 5 minutos de antecedência.");
-  return{voteEndsAt:voteAt,wipeAt:voteAt+ONE_DAY_MS+WIPE_DELAY_MS};
+  const dow=check.getUTCDay();
+  if(dow!==1&&dow!==5)throw new Error("O wipe só pode ser agendado para segunda ou sexta-feira.");
+  if(voteAt<=Date.now()+5*60_000)throw new Error("Escolha um wipe futuro com pelo menos 5 minutos de antecedência do encerramento da votação.");
+  return{voteEndsAt:voteAt,wipeAt:voteAt+WIPE_DELAY_MS};
 }`,
-  'schedule',
+  'same-day schedule validation',
 );
 
-src = src.replaceAll('saved.endsAt.getTime()+WIPE_DELAY_MS', 'saved.endsAt.getTime()+ONE_DAY_MS+WIPE_DELAY_MS');
+// O botão/ação "forçar fim da votação" NUNCA pode antecipar o wipe.
+// Mesmo que algum cliente antigo envie wipeNow=true, o backend converte para apenas encerrar a votação.
 replaceOnce(
-  'const correctedWipeAt=vote.endsAt+WIPE_DELAY_MS;',
-  'const correctedWipeAt=vote.endsAt+ONE_DAY_MS+WIPE_DELAY_MS;',
-  'restore schedule',
+`export async function forceFinishActiveMapVote(
+  client: Client,
+  admin: { id: string; name: string },
+  wipeNow: boolean,
+): Promise<ForcedVoteResult> {
+  if (wipeNow) {`,
+`export async function forceFinishActiveMapVote(
+  client: Client,
+  admin: { id: string; name: string },
+  wipeNow: boolean,
+): Promise<ForcedVoteResult> {
+  // Compatibilidade com painel antigo: "forçar fim" só fecha a votação.
+  // O wipe permanece no horário oficial da segunda/sexta correspondente.
+  wipeNow = false;
+  if (wipeNow) {`,
+  'force finish cannot wipe now',
 );
 
+// Corrige automaticamente qualquer votação pendente que tenha ficado com wipeAt deslocado
+// por versões antigas: canonical = encerramento 18:00 + 25 min, no MESMO dia.
+replaceOnce(
+`    const now=new Date();
+    const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));`,
+`    const now=new Date();
+    const pendingScheduleRows=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt)));
+    for(const pending of pendingScheduleRows){
+      const canonicalWipeAt=new Date(pending.endsAt.getTime()+WIPE_DELAY_MS);
+      if(!pending.wipeAt||pending.wipeAt.getTime()!==canonicalWipeAt.getTime()){
+        await db.update(mapVotesTable).set({wipeAt:canonicalWipeAt}).where(eq(mapVotesTable.id,pending.id));
+        pending.wipeAt=canonicalWipeAt;
+      }
+    }
+    const upcoming=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,now),lte(mapVotesTable.wipeAt,new Date(now.getTime()+15*60_000))));`,
+  'canonical pending schedule repair',
+);
+
+// Wipes atrasados não são executados horas/dias depois por acidente.
 replaceOnce(
   'const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),lte(mapVotesTable.wipeAt,new Date())));',
   'const due=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt),gt(mapVotesTable.wipeAt,new Date(now.getTime()-AUTO_EXECUTION_GRACE_MS)),lte(mapVotesTable.wipeAt,new Date())));',
@@ -75,4 +90,4 @@ replaceOnce(
 );
 
 fs.writeFileSync(file, src);
-console.log("Wipe safety patch applied: vote 18:00 BRT, flow next day 18:25 BRT, stale auto-wipes blocked.");
+console.log("Wipe safety patch applied: vote closes 18:00 BRT on wipe day; technical flow 18:25; force-finish never changes wipe time.");
