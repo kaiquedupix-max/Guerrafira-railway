@@ -11,6 +11,7 @@ import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
 import { renderHome } from "./admin/homePageEnhanced.js";
 import { renderStorePage } from "./admin/storePage.js";
+import { renderPromoPage } from "./admin/promoPage.js";
 import { withSiteChrome } from "./admin/siteChrome.js";
 import { getCommunitySession } from "./admin/communitySession.js";
 import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js";
@@ -83,6 +84,20 @@ app.get("/loja",(req,res)=>{
   if(!session)return res.redirect("/api/admin/auth/login?target=store");
   return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username),"home",{isAdmin:session.isAdmin,username:session.username}));
 });
+
+const renderPromo=(req:express.Request,res:express.Response)=>{
+  const session=getCommunitySession(req);
+  if(!session){
+    const target=req.originalUrl.startsWith("/promo")?req.originalUrl:"/promo";
+    res.cookie("gf_promo_return",target,{httpOnly:true,sameSite:"lax",secure:true,maxAge:10*60*1000,path:"/"});
+    return res.redirect("/api/admin/auth/login?target=promo");
+  }
+  res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+  return res.status(200).type("html").send(renderPromoPage(session.username));
+};
+app.get("/promo",renderPromo);
+app.get("/promo/resgatar",renderPromo);
+
 const renderIntegrity=(req:express.Request,res:express.Response)=>{
   const session=getCommunitySession(req);
   const html=renderCommunityPage(req);
