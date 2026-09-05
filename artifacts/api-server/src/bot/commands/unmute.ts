@@ -7,7 +7,9 @@ import {
 } from "discord.js";
 import { db, modLogsTable } from "@workspace/db";
 import { searchPlayers, getPlayerBySteamId } from "../utils/players.js";
-import { ActionError, executeRconRequired } from "../../core/systemActions.js";
+import { ActionError } from "../../core/systemActions.js";
+import { executeRconCommand } from "../utils/rcon.js";
+import { logger } from "../../lib/logger.js";
 
 const STEAM_ID_RE = /^7656119\d{10}$/;
 const ANONYMOUS_MODERATOR_ROLE_ID = "1538735197611360347";
@@ -17,6 +19,10 @@ function safeChat(value:string,max=160){return safe(value,max).replace(/[<>]/g,"
 async function moderatorName(interaction:ChatInputCommandInteraction):Promise<string>{
   const member=interaction.guild?await interaction.guild.members.fetch(interaction.user.id).catch(()=>null):null;
   return member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID)?ANONYMOUS_MODERATOR_LABEL:interaction.user.tag;
+}
+async function dispatchRustCommand(command:string):Promise<void>{
+  const pending=executeRconCommand(command);
+  await Promise.race([pending.then(()=>undefined),new Promise<void>(resolve=>setTimeout(resolve,1200))]);
 }
 
 export const data=new SlashCommandBuilder()
@@ -42,12 +48,14 @@ export async function execute(interaction:ChatInputCommandInteraction):Promise<v
     const player=await getPlayerBySteamId(steamId);
     const playerName=safe(player?.playerName||`Jogador (${steamId})`,100);
     const adminName=await moderatorName(interaction);
-    const template=process.env.UNMUTE_RCON_COMMAND?.trim()||"bcm.unmute {steamid}";
-    await executeRconRequired(template.replace(/\{steamid\}/gi,steamId));
+
+    // O mute nativo do Rust não envia payload de confirmação via RCON.
+    await dispatchRustCommand(`unmute ${steamId}`);
     await db.insert(modLogsTable).values({action:"UNMUTE",steamId,playerName,reason,adminId:interaction.user.id,adminName});
-    await executeRconRequired(`say <color=#00FF88>[JOGADOR DESMUTADO]</color> | <color=#FF8800>${safeChat(playerName,80)}</color> teve o mute removido pelo administrador <color=#FF4444>${safeChat(adminName,60)}</color>. <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason,140)}</color>`).catch(()=>null);
+    void dispatchRustCommand(`say <color=#00FF88>[JOGADOR DESMUTADO]</color> | <color=#FF8800>${safeChat(playerName,80)}</color> teve o mute removido pelo administrador <color=#FF4444>${safeChat(adminName,60)}</color>. <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason,140)}</color>`);
     await interaction.editReply(`✅ O mute de **${playerName}** foi removido.\n📝 Motivo: ${reason}`);
   }catch(error){
+    logger.error({error},"Unmute command failed");
     await interaction.editReply(`❌ ${error instanceof ActionError?error.message:"Falha interna ao remover o mute do jogador."}`);
   }
 }
