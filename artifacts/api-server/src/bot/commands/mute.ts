@@ -88,7 +88,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const player = await getPlayerBySteamId(steamId);
     const playerName = safe(player?.playerName || `Jogador (${steamId})`, 100);
 
-    const template = process.env.MUTE_RCON_COMMAND?.trim() || "bcm.mute {steamid} {duration} {reason}";
+    const template = process.env.MUTE_RCON_COMMAND?.trim() || 'bcm.mute {steamid} {duration} "{reason}"';
     const command = template
       .replace(/\{steamid\}/gi, steamId)
       .replace(/\{duration\}/gi, duration)
