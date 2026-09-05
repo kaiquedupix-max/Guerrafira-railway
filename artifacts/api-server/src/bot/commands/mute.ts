@@ -99,6 +99,8 @@ export function startMuteExpiryChecker(): void {
   setInterval(() => void run(), 30_000).unref();
 }
 
+startMuteExpiryChecker();
+
 export const data = new SlashCommandBuilder()
   .setName("mute").setDescription("Muta um jogador do chat do servidor por um período")
   .addStringOption(opt => opt.setName("jogador").setDescription("Pesquise pelo nome ou informe o SteamID64").setRequired(true).setAutocomplete(true))
