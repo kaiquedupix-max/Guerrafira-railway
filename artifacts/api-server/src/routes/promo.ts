@@ -86,6 +86,32 @@ async function ensurePromo(): Promise<void> {
     paid_at TIMESTAMPTZ,updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(season_key,discord_id))`);
   await db.execute(sql`ALTER TABLE season_official_registrations ADD COLUMN IF NOT EXISTS entry_type TEXT NOT NULL DEFAULT 'paid'`);
   await db.execute(sql`ALTER TABLE season_official_registrations ADD COLUMN IF NOT EXISTS accepted_terms_at TIMESTAMPTZ`);
+
+  // Repara automaticamente inscrições do Supercombo que versões anteriores
+  // gravavam como APPROVED / R$ 0,00, apesar de o benefício já ter sido entregue.
+  await db.execute(sql`
+    UPDATE season_official_registrations AS r
+       SET status='active',
+           entry_type='paid',
+           amount=20,
+           paid_at=COALESCE(r.paid_at,p.created_at,now()),
+           mp_payment_id=COALESCE(r.mp_payment_id,p.mp_payment_id),
+           mp_preference_id=COALESCE(r.mp_preference_id,p.mp_preference_id),
+           updated_at=now()
+      FROM season_start_promo_orders AS p
+     WHERE r.season_key=${SEASON_KEY}
+       AND p.status='approved'
+       AND (
+         (p.buyer_fulfilled_at IS NOT NULL AND r.discord_id=p.buyer_discord_id)
+         OR
+         (p.gift_redeemed_at IS NOT NULL AND p.gift_discord_id IS NOT NULL AND r.discord_id=p.gift_discord_id)
+       )
+       AND (
+         r.status IS DISTINCT FROM 'active'
+         OR r.entry_type IS DISTINCT FROM 'paid'
+         OR r.amount IS DISTINCT FROM 20
+       )
+  `);
   ensured = true;
 }
 
@@ -113,13 +139,14 @@ async function seasonEnroll(opts: { discordId:string; discordName:string; steamI
       season_key,discord_id,discord_name,steam_id,status,amount,mp_payment_id,mp_preference_id,
       full_name,contact_email,entry_type,accepted_terms_at,paid_at,updated_at
     ) VALUES(
-      ${SEASON_KEY},${opts.discordId},${opts.discordName},${opts.steamId},'approved',0,
+      ${SEASON_KEY},${opts.discordId},${opts.discordName},${opts.steamId},'active',20,
       ${opts.paymentId ?? null},${opts.preferenceId ?? null},${opts.discordName},${opts.email ?? null},'paid',now(),now(),now()
     )
     ON CONFLICT(season_key,discord_id) DO UPDATE SET
       discord_name=EXCLUDED.discord_name,
       steam_id=EXCLUDED.steam_id,
-      status='approved',
+      status='active',
+      amount=20,
       mp_payment_id=COALESCE(season_official_registrations.mp_payment_id,EXCLUDED.mp_payment_id),
       mp_preference_id=COALESCE(season_official_registrations.mp_preference_id,EXCLUDED.mp_preference_id),
       contact_email=COALESCE(season_official_registrations.contact_email,EXCLUDED.contact_email),
