@@ -44,6 +44,7 @@ async function log(embed: EmbedBuilder) {
 }
 
 const actorLabel = (actor: ActionActor) => actor.source === "web" ? `<@${actor.id}> • Painel Web` : actor.source === "system" ? actor.name : `<@${actor.id}>`;
+const gameActor = (actor: ActionActor) => safeChat(actor.name, 60);
 
 async function sendGameModerationNotice(command: string, steamId: string, type: string): Promise<boolean> {
   return executeRconRequired(command).then(() => true).catch(error => {
@@ -65,54 +66,32 @@ export async function banPlayer(input: { steamId: string; duration: BanDuration;
     { name: "Jogador", value: name, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Duração", value: input.duration, inline: true }, { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
   ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp());
-
   const gameNotified = await sendGameModerationNotice(
-    `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido pelo administrador <color=#FF4444>${safeChat(input.actor.name, 60)}</color>. <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
-    input.steamId,
-    "BAN",
-  );
+    `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
+    input.steamId, "BAN");
   return { playerName: name, expiresAt, gameNotified };
 }
 
 export async function preventiveBanPlayer(input: { steamId: string; reason: string; actor: ActionActor; playerName?: string }) {
   const current = await activeBan(input.steamId);
   if (current) throw new ActionError("Este jogador já possui um banimento ativo.", 409);
-
   const row = await player(input.steamId);
   const name = safe(input.playerName || row?.playerName || `Jogador offline (${input.steamId})`, 100);
   const reason = safe(input.reason);
   if (!reason) throw new ActionError("Motivo obrigatório.");
-
   const connectionMessage = `[BANIMENTO PREVENTIVO] Motivo: ${reason} | Para liberacao: entre em discord.gg/guerrafria e abra um ticket para VERIFICACAO.`;
   await executeRconRequired(`banid ${input.steamId} "${name}" "${connectionMessage}"`);
-  await db.insert(modLogsTable).values({
-    action: "PREVENTIVE_BAN",
-    steamId: input.steamId,
-    playerName: name,
-    reason,
-    adminId: input.actor.id,
-    adminName: input.actor.name,
-    banDuration: "perm",
-    banExpiresAt: null,
-  });
-
+  await db.insert(modLogsTable).values({ action: "PREVENTIVE_BAN", steamId: input.steamId, playerName: name, reason, adminId: input.actor.id, adminName: input.actor.name, banDuration: "perm", banExpiresAt: null });
   await log(new EmbedBuilder().setColor(0xf59e0b).setTitle("🛡️ Banimento preventivo aplicado").setDescription(
     "O jogador foi bloqueado preventivamente e deverá passar por **verificação administrativa** antes de retornar ao servidor."
   ).addFields(
-    { name: "Jogador", value: name, inline: true },
-    { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
-    { name: "Status", value: "Preventivo • até revisão", inline: true },
-    { name: "Motivo", value: reason },
-    { name: "Próximo passo", value: "Entrar em **discord.gg/guerrafria** e abrir um ticket para **VERIFICAÇÃO**." },
-    { name: "Responsável", value: actorLabel(input.actor) },
+    { name: "Jogador", value: name, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
+    { name: "Status", value: "Preventivo • até revisão", inline: true }, { name: "Motivo", value: reason },
+    { name: "Próximo passo", value: "Entrar em **discord.gg/guerrafria** e abrir um ticket para **VERIFICAÇÃO**." }, { name: "Responsável", value: actorLabel(input.actor) }
   ).setFooter({ text: "Guerra Fria • Moderação Preventiva" }).setTimestamp());
-
   const gameNotified = await sendGameModerationNotice(
-    `say <color=#FFB000>[BANIMENTO PREVENTIVO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido preventivamente pelo administrador <color=#FF4444>${safeChat(input.actor.name, 60)}</color>. <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 130)}</color> | <color=#00FF88>Para ser desbanido, deve entrar em discord.gg/guerrafria e abrir um ticket para VERIFICAÇÃO.</color>`,
-    input.steamId,
-    "PREVENTIVE_BAN",
-  );
-
+    `say <color=#FFB000>[BANIMENTO PREVENTIVO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido preventivamente. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 130)}</color> | <color=#00FF88>Para ser desbanido, entre em discord.gg/guerrafria e abra um ticket para VERIFICAÇÃO.</color>`,
+    input.steamId, "PREVENTIVE_BAN");
   return { playerName: name, expiresAt: null, gameNotified, preventive: true };
 }
 
@@ -122,7 +101,14 @@ export async function kickPlayer(input: { steamId: string; reason: string; actor
   const reason = safe(input.reason); if (!reason) throw new ActionError("Motivo obrigatório.");
   await executeRconRequired(`kick "${safe(row.playerName, 100)}" "${reason} | Recurso: discord.gg/guerrafria"`);
   await db.insert(modLogsTable).values({ action: "KICK", steamId: row.steamId, playerName: row.playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
-  return { playerName: row.playerName };
+  await log(new EmbedBuilder().setColor(0xf59e0b).setTitle("👢 Jogador expulso").addFields(
+    { name: "Jogador", value: row.playerName, inline: true }, { name: "SteamID", value: `\`${row.steamId}\``, inline: true },
+    { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
+  ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp());
+  const gameNotified = await sendGameModerationNotice(
+    `say <color=#FFB000>[JOGADOR EXPULSO]</color> | <color=#FF8800>${safeChat(row.playerName, 80)}</color> foi expulso do servidor. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
+    row.steamId, "KICK");
+  return { playerName: row.playerName, gameNotified };
 }
 
 export async function activeBan(steamId: string) {
@@ -143,7 +129,10 @@ export async function unbanPlayer(input: { steamId: string; reason: string; acto
     { name: "Tipo anterior", value: ban.action === "PREVENTIVE_BAN" ? "Banimento preventivo" : "Banimento", inline: true },
     { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
   ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp());
-  return { playerName: ban.playerName, previousType: ban.action };
+  const gameNotified = await sendGameModerationNotice(
+    `say <color=#00FF88>[JOGADOR DESBANIDO]</color> | <color=#FF8800>${safeChat(ban.playerName, 80)}</color> foi desbanido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
+    input.steamId, "UNBAN");
+  return { playerName: ban.playerName, previousType: ban.action, gameNotified };
 }
 
 async function memberFor(discordUserId: string) {
@@ -174,14 +163,8 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
     { name: "Jogador", value: row.playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Discord", value: `<@${input.discordUserId}>`, inline: true }, { name: "Responsável", value: actorLabel(input.actor) }
   ).setFooter({ text: "Guerra Fria • Verificação" }).setTimestamp());
-
-  const safePlayerName = safe(row.playerName, 80);
-  const safeAdminName = safe(input.actor.name, 60);
-  const notification = `say <color=#00FF88>[VERIFICAÇÃO CONCLUÍDA]</color> | <color=#FF8800>${safePlayerName}</color> foi verificado pelo administrador <color=#FF4444>${safeAdminName}</color>. <color=#00FF88>O jogador foi considerado LIMPO.</color>`;
-  const gameNotified = await executeRconRequired(notification).then(() => true).catch(error => {
-    logger.error({ error, steamId: input.steamId }, "Verified player game notification failed");
-    return false;
-  });
+  const notification = `say <color=#00FF88>[VERIFICAÇÃO CONCLUÍDA]</color> | <color=#FF8800>${safeChat(row.playerName, 80)}</color> foi verificado e considerado <color=#00FF88>LIMPO</color>. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color>`;
+  const gameNotified = await sendGameModerationNotice(notification, input.steamId, "VERIFY");
   return { playerName: row.playerName, roleAssigned: Boolean(roleId), gameNotified };
 }
 
