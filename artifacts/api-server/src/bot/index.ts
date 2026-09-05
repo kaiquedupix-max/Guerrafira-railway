@@ -268,54 +268,55 @@ const recentChatMessages = new Map<string, number>();
 function isDuplicateChat(payload: RustChatPayload): boolean {
   const now = Date.now(); const key = `${payload.UserId}:${payload.Username.trim().toLowerCase()}:${payload.Message.trim().replace(/\s+/g, " ").toLowerCase()}`;
   const lastSeen = recentChatMessages.get(key); if (lastSeen && now - lastSeen < 2500) return true;
-  recentChatMessages.set(key, now);
-  if (recentChatMessages.size > 500) for (const [k, ts] of recentChatMessages) if (now - ts > 60000) recentChatMessages.delete(k);
+  recentChatMessages.set(key, now); if (recentChatMessages.size > 500) for (const [savedKey, timestamp] of recentChatMessages) if (now - timestamp > 15000) recentChatMessages.delete(savedKey);
   return false;
 }
 
 async function handleChatEvent(client: Client, raw: string): Promise<void> {
-  try {
-    const p = JSON.parse(raw) as RustChatPayload;
-    if (p.Channel !== 0 || !p.Message || isDuplicateChat(p)) return;
-    const channelId = process.env.DISCORD_CHAT_CHANNEL_ID; if (!channelId) return;
-    const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null; if (!channel?.isTextBased()) return;
-    const clean = p.Message.replace(/<[^>]*>/g, "").trim(); if (!clean) return;
-    await channel.send(`💬 **${p.Username}**: ${clean}`);
-  } catch {}
+  const chatChannelId = process.env.DISCORD_CHAT_CHANNEL_ID; if (!chatChannelId) return;
+  let payload: RustChatPayload; try { payload = JSON.parse(raw) as RustChatPayload; } catch { return; }
+  if (!payload.UserId || payload.UserId === "0" || !payload.Message?.trim() || isDuplicateChat(payload)) return;
+  const ch = await client.channels.fetch(chatChannelId).catch(() => null); if (ch?.isSendable()) await ch.send(`💬 **${payload.Username}**: ${payload.Message}`);
 }
 
-async function startRconSync(): Promise<void> {
-  setAllOffline().catch(() => {});
-  setInterval(async () => {
-    try { const players = await getOnlinePlayers(); const onlineIds = new Set(players.map(p => p.steamId)); await setAllOffline(); for (const p of players) await upsertPlayer({ ...p, isOnline: true }); }
-    catch (err) { logger.error({ err }, "RCON player sync failed"); }
-  }, 15_000).unref();
+function startRconSync(): void {
+  async function sync() { try { const players = await getOnlinePlayers(); await setAllOffline(); for (const p of players) await upsertPlayer(p); if (players.length > 0) logger.info({ count: players.length }, "RCON player sync complete"); } catch (err) { logger.error({ err }, "RCON sync error"); } }
+  sync().catch(() => {}); setInterval(() => sync().catch(() => {}), 30_000);
 }
 
 function startBanExpiryChecker(client: Client): void {
-  setInterval(async () => {
-    try {
-      const now = new Date();
-      const expired = await db.select().from(modLogsTable).where(and(eq(modLogsTable.action, "BAN"), isNotNull(modLogsTable.banExpiresAt), lte(modLogsTable.banExpiresAt, now))).limit(50);
-      for (const ban of expired) {
-        const [later] = await db.select().from(modLogsTable).where(and(eq(modLogsTable.steamId, ban.steamId), gt(modLogsTable.id, ban.id))).limit(1);
-        if (later) continue;
-        await executeRconCommand(`unban ${ban.steamId}`);
-        await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema Automático" });
-        const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID; if (logChannelId) { const ch = await client.channels.fetch(logChannelId).catch(() => null); if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed(ban.playerName, ban.steamId)] }); }
-      }
-    } catch (err) { logger.error({ err }, "Ban expiry checker failed"); }
-  }, 60_000).unref();
+  async function check() {
+    const now = new Date();
+    const expired = await db.select().from(modLogsTable).where(and(eq(modLogsTable.action, "BAN"), isNotNull(modLogsTable.banExpiresAt), lte(modLogsTable.banExpiresAt, now)));
+    if (!expired.length) return;
+    const unbanned = await db.select({ steamId: modLogsTable.steamId }).from(modLogsTable).where(and(eq(modLogsTable.action, "SYSTEM_UNBAN"), gt(modLogsTable.createdAt, new Date(now.getTime() - 35 * 86400000))));
+    const unbannedSet = new Set(unbanned.map(r => r.steamId));
+    for (const ban of expired) {
+      if (unbannedSet.has(ban.steamId)) continue;
+      await executeRconCommand(`unban ${ban.steamId}`);
+      await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema" });
+      const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
+      if (logChannelId) { const ch = await client.channels.fetch(logChannelId).catch(() => null) as TextChannel | null; if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed({ playerName: ban.playerName ?? "Desconhecido", steamId: ban.steamId, originalReason: ban.reason ?? "—", duration: "temporário" })] }); }
+    }
+  }
+  setInterval(() => check().catch(err => logger.error({ err }, "Ban expiry check error")), 60_000);
 }
 
 function startStatusUpdater(client: Client): void {
-  setInterval(async () => {
+  const channelId = process.env.DISCORD_STATUS_CHANNEL_ID; if (!channelId) return;
+  let statusMessageId: string | null = process.env.DISCORD_STATUS_MESSAGE_ID?.trim() || null;
+  async function findExisting(ch: TextChannel) {
+    if (statusMessageId) { const byId = await ch.messages.fetch(statusMessageId).catch(() => null); if (byId?.author.id === client.user?.id) return byId; }
+    const recent = await ch.messages.fetch({ limit: 100 }).catch(() => null);
+    return recent?.find(m => m.author.id === client.user?.id && (m.embeds[0]?.footer?.text?.includes("Status automático") || m.embeds[0]?.footer?.text?.includes("Atualizado automaticamente") || m.components.some(r => r.components.some(c => "customId" in c.data && c.data.customId === "status_connect")))) ?? null;
+  }
+  async function update() {
     try {
-      const channelId = process.env.DISCORD_STATUS_CHANNEL_ID; if (!channelId) return;
-      const ch = await client.channels.fetch(channelId).catch(() => null); if (!ch?.isTextBased()) return;
-      const info = await getServerInfo(); const embed = buildStatusEmbed(info); const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("status_connect").setLabel("Conectar ao Servidor").setEmoji("🎮").setStyle(ButtonStyle.Success))];
-      const msgs = await (ch as TextChannel).messages.fetch({ limit: 10 }); const existing = msgs.find(m => m.author.id === client.user?.id && m.embeds[0]?.title?.includes("Status"));
-      if (existing) await existing.edit({ embeds: [embed], components }); else await (ch as TextChannel).send({ embeds: [embed], components });
-    } catch (err) { logger.error({ err }, "Status updater failed"); }
-  }, 60_000).unref();
+      const info = await getServerInfo(); const ch = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null; if (!ch?.isSendable()) return;
+      const embed = buildStatusEmbed(info); const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("status_connect").setLabel("🎮 Conectar ao Servidor").setStyle(ButtonStyle.Success)); const existing = await findExisting(ch);
+      if (existing) { statusMessageId = existing.id; await existing.edit({ embeds: [embed], components: [row] }); }
+      else { const sent = await ch.send({ embeds: [embed], components: [row] }); statusMessageId = sent.id; logger.warn({ statusMessageId }, "No previous status message found; created one. Set DISCORD_STATUS_MESSAGE_ID to pin this message permanently."); }
+    } catch (err) { logger.error({ err }, "Status update error"); }
+  }
+  update().catch(() => {}); setInterval(() => update().catch(() => {}), 60_000);
 }
