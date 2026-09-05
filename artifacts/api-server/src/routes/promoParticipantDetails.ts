@@ -6,6 +6,7 @@ import { getCommunitySession } from "../admin/communitySession.js";
 const router: IRouter = Router();
 const SEASON_KEY = 101;
 let ensured = false;
+let syncStarted = false;
 
 function validEmail(value: unknown): string {
   const v = String(value ?? "").trim().toLowerCase();
@@ -22,6 +23,31 @@ function validPixKey(value: unknown): string {
   return v.length >= 3 && v.length <= 180 ? v : "";
 }
 
+async function syncDetailsToSeason(): Promise<void> {
+  await db.execute(sql`
+    UPDATE season_official_registrations AS r
+       SET contact_email=d.email,
+           prize_pix_type=d.pix_type,
+           prize_pix_key=d.pix_key,
+           updated_at=now()
+      FROM season_promo_participant_details AS d
+     WHERE r.season_key=d.season_key
+       AND r.discord_id=d.discord_id
+       AND r.season_key=${SEASON_KEY}
+       AND (
+         r.contact_email IS DISTINCT FROM d.email OR
+         r.prize_pix_type IS DISTINCT FROM d.pix_type OR
+         r.prize_pix_key IS DISTINCT FROM d.pix_key
+       )
+  `);
+}
+
+function startSync(): void {
+  if (syncStarted) return;
+  syncStarted = true;
+  setInterval(() => void syncDetailsToSeason().catch(() => {}), 5000).unref?.();
+}
+
 async function ensureDetails(): Promise<void> {
   if (ensured) return;
   await db.execute(sql`CREATE TABLE IF NOT EXISTS season_promo_participant_details(
@@ -36,6 +62,8 @@ async function ensureDetails(): Promise<void> {
     PRIMARY KEY(season_key, discord_id)
   )`);
   ensured = true;
+  startSync();
+  await syncDetailsToSeason();
 }
 
 router.post("/details", async (req, res) => {
@@ -63,12 +91,7 @@ router.post("/details", async (req, res) => {
       updated_at=now()
   `);
 
-  await db.execute(sql`
-    UPDATE season_official_registrations
-       SET contact_email=${email},prize_pix_type=${pixType},prize_pix_key=${pixKey},updated_at=now()
-     WHERE season_key=${SEASON_KEY} AND discord_id=${session.userId}
-  `);
-
+  await syncDetailsToSeason();
   return res.json({ ok: true });
 });
 
