@@ -83,6 +83,39 @@ function validRecoveredPayment(payment: any, row: any): boolean {
   return paymentTime >= registrationTime - 10 * 60_000;
 }
 
+async function repairPromoRegistrations(): Promise<number> {
+  try {
+    const result: any = await db.execute(sql`
+      UPDATE season_official_registrations AS r
+         SET status='active',
+             entry_type='paid',
+             amount=0,
+             paid_at=COALESCE(r.paid_at, p.created_at, now()),
+             mp_payment_id=COALESCE(r.mp_payment_id, p.mp_payment_id),
+             mp_preference_id=COALESCE(r.mp_preference_id, p.mp_preference_id),
+             updated_at=now()
+        FROM season_start_promo_orders AS p
+       WHERE r.season_key=${OFFICIAL_KEY}
+         AND p.status='approved'
+         AND (
+           (p.buyer_fulfilled_at IS NOT NULL AND r.discord_id=p.buyer_discord_id)
+           OR
+           (p.gift_redeemed_at IS NOT NULL AND p.gift_discord_id IS NOT NULL AND r.discord_id=p.gift_discord_id)
+         )
+         AND (r.status IS DISTINCT FROM 'active' OR r.entry_type IS DISTINCT FROM 'paid')
+       RETURNING r.discord_id
+    `);
+    const repaired = result?.rows?.length ?? 0;
+    if (repaired > 0) {
+      logger.info({ repaired }, "Supercombo Season registrations repaired to active paid status");
+    }
+    return repaired;
+  } catch (error) {
+    logger.error({ error }, "Supercombo Season registration repair failed");
+    return 0;
+  }
+}
+
 async function activate(discordId: string, payment: any, recovered = false): Promise<boolean> {
   const paymentId = String(payment.id ?? "");
   if (!paymentId) return false;
@@ -97,7 +130,7 @@ async function activate(discordId: string, payment: any, recovered = false): Pro
            updated_at=now()
      WHERE season_key=${OFFICIAL_KEY}
        AND discord_id=${discordId}
-       AND status <> 'active'
+       AND (status <> 'active' OR entry_type <> 'paid')
      RETURNING discord_id
   `);
 
@@ -116,6 +149,8 @@ async function reconcile(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    const promoRepaired = await repairPromoRegistrations();
+
     const result: any = await db.execute(sql`
       SELECT discord_id, contact_email, created_at, mp_payment_id, mp_preference_id
         FROM season_official_registrations
@@ -127,7 +162,10 @@ async function reconcile(): Promise<void> {
     `);
 
     const rows = result?.rows ?? [];
-    if (!rows.length) return;
+    if (!rows.length) {
+      if (promoRepaired > 0) logger.info({ promoRepaired }, "Season reconciliation completed with Supercombo repairs");
+      return;
+    }
 
     let recentApproved: any[] | null = null;
     let activated = 0;
@@ -156,7 +194,7 @@ async function reconcile(): Promise<void> {
       if (recovered && await activate(discordId, recovered, true)) activated++;
     }
 
-    logger.info({ pendingChecked: rows.length, activated, fallbackPayments: recentApproved?.length ?? 0 }, "Season payment reconciliation cycle completed");
+    logger.info({ pendingChecked: rows.length, activated, promoRepaired, fallbackPayments: recentApproved?.length ?? 0 }, "Season payment reconciliation cycle completed");
   } catch (error) {
     logger.error({ error }, "Season payment reconciliation failed");
   } finally {
