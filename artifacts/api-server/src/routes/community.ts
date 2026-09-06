@@ -2,7 +2,6 @@ import { Router } from "express";
 import { db, modLogsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { getCommunitySession } from "../admin/communitySession.js";
-import { getGuerraFriaDisplayName } from "../admin/permissions.js";
 import { getSteamProfileSummaries } from "../admin/steamProfiles.js";
 
 const router = Router();
@@ -24,23 +23,16 @@ router.get("/me", (_req, res) => {
 router.get("/records", async (_req, res) => {
   const rows = await db.select().from(modLogsTable).where(eq(modLogsTable.publicVisible, true)).orderBy(desc(modLogsTable.createdAt)).limit(2000);
   const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
-
-  const ids = [...new Set(filtered.map(x => String(x.adminId || "").trim()).filter(Boolean))];
-  const resolved = new Map<string, string>();
-  await Promise.all(ids.map(async id => {
-    const fallback = filtered.find(x => String(x.adminId || "") === id)?.adminName || "Administração";
-    resolved.set(id, await getGuerraFriaDisplayName(id, String(fallback).replace(/\s*\[WEB\]\s*$/i, "")));
-  }));
-
   const steamProfiles = await getSteamProfileSummaries(filtered.map(x => String(x.steamId || "")));
+
   const records = filtered.map(x => {
     const steam = steamProfiles.get(String(x.steamId || ""));
+    const { adminId: _adminId, adminName: _adminName, ...publicRecord } = x;
     return {
-      ...x,
+      ...publicRecord,
       steamProfileUrl: steam?.profileUrl ?? `https://steamcommunity.com/profiles/${x.steamId}`,
       steamAvatarUrl: steam?.avatarUrl ?? null,
       steamPersonaName: steam?.personaName ?? null,
-      adminName: resolved.get(String(x.adminId || "").trim()) || String(x.adminName || "Administração").replace(/\s*\[WEB\]\s*$/i, ""),
     };
   });
 
