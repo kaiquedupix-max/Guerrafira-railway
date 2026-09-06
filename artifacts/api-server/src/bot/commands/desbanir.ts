@@ -15,9 +15,10 @@ const ANONYMOUS_MODERATOR_LABEL = "Equipe de Moderação";
 async function moderationActor(interaction: ChatInputCommandInteraction) {
   const member = interaction.guild ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null) : null;
   const anonymous = member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID) ?? false;
+  const displayName = member?.displayName?.trim() || interaction.user.globalName?.trim() || interaction.user.username?.trim() || "Administrador";
   return anonymous
     ? { id: interaction.user.id, name: ANONYMOUS_MODERATOR_LABEL, source: "system" as const }
-    : { id: interaction.user.id, name: interaction.user.tag, source: "discord" as const };
+    : { id: interaction.user.id, name: displayName, source: "discord" as const };
 }
 
 async function getBannedPlayers(query: string) {
