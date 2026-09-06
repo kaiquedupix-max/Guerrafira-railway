@@ -34,16 +34,23 @@ async function publicResponsibleNames(rows: typeof modLogsTable.$inferSelect[]):
   await Promise.all(adminIds.map(async adminId => {
     const sample = rows.find(x => String(x.adminId || "") === adminId);
     const fallback = String(sample?.adminName || "Administração");
-    if (fallback === MODERATOR_PUBLIC_LABEL) {
-      output.set(adminId, MODERATOR_PUBLIC_LABEL);
-      return;
-    }
     if (!guild) {
       output.set(adminId, fallback);
       return;
     }
     const member = await guild.members.fetch(adminId).catch(() => null);
-    output.set(adminId, member?.roles.cache.has(MODERATOR_ROLE_ID) ? MODERATOR_PUBLIC_LABEL : fallback);
+    if (!member) {
+      output.set(adminId, fallback);
+      return;
+    }
+    if (member.roles.cache.has(MODERATOR_ROLE_ID)) {
+      output.set(adminId, MODERATOR_PUBLIC_LABEL);
+      return;
+    }
+    output.set(
+      adminId,
+      member.displayName?.trim() || member.user.globalName?.trim() || member.user.username?.trim() || fallback,
+    );
   }));
 
   return output;
