@@ -27,7 +27,9 @@ router.get("/records", async (_req, res) => {
 
   const records = filtered.map(x => {
     const steam = steamProfiles.get(String(x.steamId || ""));
-    const { adminId: _adminId, adminName: _adminName, ...publicRecord } = x;
+    const publicRecord: Record<string, unknown> = { ...x };
+    delete publicRecord.adminId;
+    delete publicRecord.adminName;
     return {
       ...publicRecord,
       steamProfileUrl: steam?.profileUrl ?? `https://steamcommunity.com/profiles/${x.steamId}`,
