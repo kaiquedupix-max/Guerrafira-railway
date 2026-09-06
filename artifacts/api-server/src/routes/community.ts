@@ -3,7 +3,7 @@ import { db, modLogsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { getCommunitySession } from "../admin/communitySession.js";
 import { getSteamProfileSummaries } from "../admin/steamProfiles.js";
-import { discordClient } from "../bot/client.js";
+import { getGuerraFriaMember, resolveGuerraFriaDisplayNameByStoredName } from "../admin/permissions.js";
 
 const router = Router();
 const MODERATOR_ROLE_ID = "1538735197611360347";
@@ -26,31 +26,31 @@ router.get("/me", (_req, res) => {
 
 async function publicResponsibleNames(rows: typeof modLogsTable.$inferSelect[]): Promise<Map<string, string>> {
   const output = new Map<string, string>();
-  const client = discordClient();
-  const guildId = process.env.DISCORD_GUILD_ID;
-  const guild = client && guildId ? await client.guilds.fetch(guildId).catch(() => null) : null;
   const adminIds = [...new Set(rows.map(x => String(x.adminId || "")).filter(Boolean))];
 
   await Promise.all(adminIds.map(async adminId => {
     const sample = rows.find(x => String(x.adminId || "") === adminId);
-    const fallback = String(sample?.adminName || "Administração");
-    if (!guild) {
-      output.set(adminId, fallback);
-      return;
-    }
-    const member = await guild.members.fetch(adminId).catch(() => null);
-    if (!member) {
-      output.set(adminId, fallback);
-      return;
-    }
-    if (member.roles.cache.has(MODERATOR_ROLE_ID)) {
+    const storedName = String(sample?.adminName || "Administração").trim() || "Administração";
+
+    const member = /^\d{15,22}$/.test(adminId) ? await getGuerraFriaMember(adminId) : null;
+    if (member?.roles.cache.has(MODERATOR_ROLE_ID)) {
       output.set(adminId, MODERATOR_PUBLIC_LABEL);
       return;
     }
-    output.set(
-      adminId,
-      member.displayName?.trim() || member.user.globalName?.trim() || member.user.username?.trim() || fallback,
-    );
+
+    if (member) {
+      const displayName = member.nickname?.trim()
+        || member.displayName?.trim()
+        || member.user.globalName?.trim()
+        || member.user.username?.trim()
+        || storedName;
+      output.set(adminId, displayName);
+      return;
+    }
+
+    // Registros antigos podem ter salvo username/tag. Tenta localizar esse nome no
+    // servidor atual para exibir o display name/nickname de hoje, em vez do username antigo.
+    output.set(adminId, await resolveGuerraFriaDisplayNameByStoredName(storedName));
   }));
 
   return output;
