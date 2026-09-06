@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { db, modLogsTable, playersTable } from "@workspace/db";
 import { discordClient } from "../bot/client.js";
 import { executeRconCommand } from "../bot/utils/rcon.js";
+import { getSteamProfileSummaries } from "../admin/steamProfiles.js";
 import { logger } from "../lib/logger.js";
 
 export type ActionSource = "discord" | "web" | "system";
@@ -43,6 +44,19 @@ async function log(embed: EmbedBuilder) {
   if (channel?.isSendable()) await channel.send({ embeds: [embed] }).catch(error => logger.error({ error }, "Moderation log delivery failed"));
 }
 
+async function withSteamProfile(embed: EmbedBuilder, steamId: string): Promise<EmbedBuilder> {
+  try {
+    const steam = (await getSteamProfileSummaries([steamId])).get(steamId);
+    const profileUrl = steam?.profileUrl || `https://steamcommunity.com/profiles/${steamId}`;
+    embed.addFields({ name: "Perfil Steam", value: `[Abrir perfil do jogador](${profileUrl})`, inline: true });
+    if (steam?.avatarUrl) embed.setThumbnail(steam.avatarUrl);
+  } catch (error) {
+    logger.warn({ error, steamId }, "Steam profile enrichment failed for moderation embed");
+    embed.addFields({ name: "Perfil Steam", value: `[Abrir perfil do jogador](https://steamcommunity.com/profiles/${steamId})`, inline: true });
+  }
+  return embed;
+}
+
 const actorLabel = (actor: ActionActor) => actor.source === "web" ? `<@${actor.id}> • Painel Web` : actor.source === "system" ? actor.name : `<@${actor.id}>`;
 const gameActor = (actor: ActionActor) => safeChat(actor.name, 60);
 
@@ -62,10 +76,11 @@ export async function banPlayer(input: { steamId: string; duration: BanDuration;
   const expiresAt = days ? new Date(Date.now() + days * 86400000) : null;
   await executeRconRequired(`banid ${input.steamId} "${name}" "[${input.duration.toUpperCase()}] ${reason} | Recurso: discord.gg/guerrafria"`);
   await db.insert(modLogsTable).values({ action: "BAN", steamId: input.steamId, playerName: name, reason, adminId: input.actor.id, adminName: input.actor.name, banDuration: input.duration, banExpiresAt: expiresAt });
-  await log(new EmbedBuilder().setColor(0xe74c3c).setTitle("🔨 Banimento aplicado").addFields(
+  const banEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle("🔨 Banimento aplicado").addFields(
     { name: "Jogador", value: name, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Duração", value: input.duration, inline: true }, { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
-  ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp());
+  ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp();
+  await log(await withSteamProfile(banEmbed, input.steamId));
   const gameNotified = await sendGameModerationNotice(
     `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
     input.steamId, "BAN");
@@ -82,13 +97,14 @@ export async function preventiveBanPlayer(input: { steamId: string; reason: stri
   const connectionMessage = `[BANIMENTO PREVENTIVO] Motivo: ${reason} | Para liberacao: entre em discord.gg/guerrafria e abra um ticket para VERIFICACAO.`;
   await executeRconRequired(`banid ${input.steamId} "${name}" "${connectionMessage}"`);
   await db.insert(modLogsTable).values({ action: "PREVENTIVE_BAN", steamId: input.steamId, playerName: name, reason, adminId: input.actor.id, adminName: input.actor.name, banDuration: "perm", banExpiresAt: null });
-  await log(new EmbedBuilder().setColor(0xf59e0b).setTitle("🛡️ Banimento preventivo aplicado").setDescription(
+  const preventiveEmbed = new EmbedBuilder().setColor(0xf59e0b).setTitle("🛡️ Banimento preventivo aplicado").setDescription(
     "O jogador foi bloqueado preventivamente e deverá passar por **verificação administrativa** antes de retornar ao servidor."
   ).addFields(
     { name: "Jogador", value: name, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Status", value: "Preventivo • até revisão", inline: true }, { name: "Motivo", value: reason },
     { name: "Próximo passo", value: "Entrar em **discord.gg/guerrafria** e abrir um ticket para **VERIFICAÇÃO**." }, { name: "Responsável", value: actorLabel(input.actor) }
-  ).setFooter({ text: "Guerra Fria • Moderação Preventiva" }).setTimestamp());
+  ).setFooter({ text: "Guerra Fria • Moderação Preventiva" }).setTimestamp();
+  await log(await withSteamProfile(preventiveEmbed, input.steamId));
   const gameNotified = await sendGameModerationNotice(
     `say <color=#FFB000>[BANIMENTO PREVENTIVO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido preventivamente. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 130)}</color> | <color=#00FF88>Para ser desbanido, entre em discord.gg/guerrafria e abra um ticket para VERIFICAÇÃO.</color>`,
     input.steamId, "PREVENTIVE_BAN");
@@ -159,10 +175,11 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
     throw new ActionError("Não foi possível atribuir o cargo no Discord; a alteração no Rust foi revertida.", 503);
   }
   await db.insert(modLogsTable).values({ action: "VERIFICAR", steamId: input.steamId, playerName: row.playerName, reason: `Triagem concluída — Discord: ${member.user.tag}`, adminId: input.actor.id, adminName: input.actor.name });
-  await log(new EmbedBuilder().setColor(0x22c55e).setTitle("🛡️ Jogador verificado").addFields(
+  const verifyEmbed = new EmbedBuilder().setColor(0x22c55e).setTitle("🛡️ Jogador verificado").addFields(
     { name: "Jogador", value: row.playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Discord", value: `<@${input.discordUserId}>`, inline: true }, { name: "Responsável", value: actorLabel(input.actor) }
-  ).setFooter({ text: "Guerra Fria • Verificação" }).setTimestamp());
+  ).setFooter({ text: "Guerra Fria • Verificação" }).setTimestamp();
+  await log(await withSteamProfile(verifyEmbed, input.steamId));
   const notification = `say <color=#00FF88>[VERIFICAÇÃO CONCLUÍDA]</color> | <color=#FF8800>${safeChat(row.playerName, 80)}</color> foi verificado e considerado <color=#00FF88>LIMPO</color>. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color>`;
   const gameNotified = await sendGameModerationNotice(notification, input.steamId, "VERIFY");
   return { playerName: row.playerName, roleAssigned: Boolean(roleId), gameNotified };
