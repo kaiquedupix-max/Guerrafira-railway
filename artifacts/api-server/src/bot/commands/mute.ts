@@ -34,7 +34,8 @@ function durationLabel(value: string): string { return MUTE_DURATIONS.find(item 
 function durationMs(value: string): number { return MUTE_DURATIONS.find(item => item.value === value)?.ms ?? 0; }
 async function moderatorName(interaction: ChatInputCommandInteraction): Promise<string> {
   const member = interaction.guild ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null) : null;
-  return member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID) ? ANONYMOUS_MODERATOR_LABEL : interaction.user.tag;
+  if (member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID)) return ANONYMOUS_MODERATOR_LABEL;
+  return member?.displayName?.trim() || interaction.user.globalName?.trim() || interaction.user.username?.trim() || "Administrador";
 }
 async function dispatchRustCommand(command: string): Promise<void> {
   const pending = executeRconCommand(command);
