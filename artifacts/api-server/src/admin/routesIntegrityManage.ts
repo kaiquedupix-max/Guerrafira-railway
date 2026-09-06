@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db, modLogsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { requireAdmin } from "./guard.js";
-import { getGuerraFriaDisplayName } from "./permissions.js";
+import { getGuerraFriaDisplayName, resolveGuerraFriaDisplayNameByStoredName } from "./permissions.js";
 import { getSteamProfileSummaries } from "./steamProfiles.js";
 
 const router = Router();
@@ -12,10 +12,26 @@ router.get("/records", async (_req, res) => {
   const rows = await db.select().from(modLogsTable).orderBy(desc(modLogsTable.createdAt)).limit(3000);
   const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
   const steamProfiles = await getSteamProfileSummaries(filtered.map(x => String(x.steamId || "")));
+  const adminNames = new Map<string, string>();
+
+  await Promise.all([...new Set(filtered.map(x => String(x.adminId || "")).filter(Boolean))].map(async adminId => {
+    const sample = filtered.find(x => String(x.adminId || "") === adminId);
+    const fallback = String(sample?.adminName || "Administração").trim() || "Administração";
+    if (/^\d{15,22}$/.test(adminId)) {
+      const current = await getGuerraFriaDisplayName(adminId, "");
+      if (current) {
+        adminNames.set(adminId, current);
+        return;
+      }
+    }
+    adminNames.set(adminId, await resolveGuerraFriaDisplayNameByStoredName(fallback));
+  }));
+
   const records = filtered.map(x => {
     const steam = steamProfiles.get(String(x.steamId || ""));
     return {
       ...x,
+      adminName: adminNames.get(String(x.adminId || "")) || x.adminName,
       steamProfileUrl: steam?.profileUrl ?? `https://steamcommunity.com/profiles/${x.steamId}`,
       steamAvatarUrl: steam?.avatarUrl ?? null,
       steamPersonaName: steam?.personaName ?? null,
