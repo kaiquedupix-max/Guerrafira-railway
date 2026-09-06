@@ -18,7 +18,8 @@ function safe(value:string,max=180){return String(value??"").replace(/[\r\n\t"]/
 function safeChat(value:string,max=160){return safe(value,max).replace(/[<>]/g,"");}
 async function moderatorName(interaction:ChatInputCommandInteraction):Promise<string>{
   const member=interaction.guild?await interaction.guild.members.fetch(interaction.user.id).catch(()=>null):null;
-  return member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID)?ANONYMOUS_MODERATOR_LABEL:interaction.user.tag;
+  if(member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID))return ANONYMOUS_MODERATOR_LABEL;
+  return member?.displayName?.trim()||interaction.user.globalName?.trim()||interaction.user.username?.trim()||"Administrador";
 }
 async function dispatchRustCommand(command:string):Promise<void>{
   const pending=executeRconCommand(command);
