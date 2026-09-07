@@ -16,6 +16,8 @@ const ALLOWED_GIF_HOSTS = new Set([
   "www.giphy.com",
   "media.giphy.com",
   "i.giphy.com",
+  "cdn.discordapp.com",
+  "media.discordapp.net",
 ]);
 const ALLOWED_LINK_CATEGORY_IDS = new Set([
   "1530056461877641326",
@@ -30,6 +32,12 @@ function isAdmin(message: Message): boolean {
   return Boolean(message.member?.permissions.has(PermissionFlagsBits.Administrator));
 }
 
+function isVip(message: Message): boolean {
+  const vipRoleId = process.env.DISCORD_VIP_ROLE_ID?.trim();
+  if (!vipRoleId || !message.member) return false;
+  return message.member.roles.cache.has(vipRoleId);
+}
+
 function isAllowedLinkChannel(message: Message): boolean {
   if (!message.guild) return false;
   if (ALLOWED_LINK_CHANNEL_IDS.has(message.channelId)) return true;
@@ -42,10 +50,30 @@ function isAllowedGifUrl(rawUrl: string): boolean {
   try {
     const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
     const url = new URL(normalizedUrl);
-    return ALLOWED_GIF_HOSTS.has(url.hostname.toLowerCase());
+    const host = url.hostname.toLowerCase();
+    if (!ALLOWED_GIF_HOSTS.has(host)) return false;
+
+    if (host === "cdn.discordapp.com" || host === "media.discordapp.net") {
+      return /\.gif(?:$|[?#])/i.test(url.pathname + url.search + url.hash);
+    }
+
+    return true;
   } catch {
     return false;
   }
+}
+
+function isGifAttachment(message: Message): boolean {
+  return message.attachments.some((attachment) => {
+    const contentType = attachment.contentType?.toLowerCase() ?? "";
+    const name = attachment.name?.toLowerCase() ?? "";
+    return contentType === "image/gif" || name.endsWith(".gif");
+  });
+}
+
+function hasOnlyGifLinks(content: string): boolean {
+  const urls = content.match(URL_MATCH_REGEX) ?? [];
+  return urls.length > 0 && urls.every(isAllowedGifUrl);
 }
 
 function containsBlockedLink(content: string): boolean {
@@ -86,6 +114,10 @@ function formatWipeDate(date:Date):string{return new Intl.DateTimeFormat("pt-BR"
 async function handleLinkModeration(message:Message):Promise<boolean>{
   if(!message.guild||message.author.bot||isAdmin(message))return false;
   if(isAllowedLinkChannel(message))return false;
+
+  // VIP pode enviar GIFs normalmente sem abrir exceção para links comuns.
+  if(isVip(message) && (isGifAttachment(message) || hasOnlyGifLinks(message.content))) return false;
+
   if(!URL_REGEX.test(message.content)||!containsBlockedLink(message.content))return false;
   await message.delete().catch(err=>logger.warn({err,messageId:message.id},"Failed to delete blocked link"));
   const warning=await message.channel.send({content:`🚫 <@${message.author.id}>, links não são permitidos neste canal. Use os canais autorizados ou abra um ticket.`}).catch(()=>null);
