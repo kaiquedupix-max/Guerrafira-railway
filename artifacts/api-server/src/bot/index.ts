@@ -44,6 +44,7 @@ import * as removervipCommand from "./commands/removervip.js";
 import * as removerboosterCommand from "./commands/removerbooster.js";
 import * as leaderboardCommand from "./commands/leaderboard.js";
 import * as listaplayerCommand from "./commands/listaplayer.js";
+import * as duoCommand from "./commands/duo.js";
 import * as resetleaderboardCommand from "./commands/resetleaderboard.js";
 import * as criarmapaCommand from "./commands/criarmapa.js";
 import * as votacaoCommand from "./commands/votacao.js";
@@ -80,6 +81,7 @@ commands.set(removervipCommand.data.name, removervipCommand);
 commands.set(removerboosterCommand.data.name, removerboosterCommand);
 commands.set(leaderboardCommand.data.name, leaderboardCommand);
 commands.set(listaplayerCommand.data.name, listaplayerCommand);
+commands.set(duoCommand.data.name, duoCommand);
 commands.set(resetleaderboardCommand.data.name, resetleaderboardCommand);
 commands.set(criarmapaCommand.data.name, criarmapaCommand);
 commands.set(votacaoCommand.data.name, votacaoCommand);
@@ -241,7 +243,7 @@ async function handleConnectButton(interaction: Parameters<typeof handleTicketCr
 async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID; const guildId = process.env.DISCORD_GUILD_ID;
   if (!clientId) { logger.warn("DISCORD_CLIENT_ID not set"); return; }
-  const commandData = [banirCommand, banpreventivoCommand, kickarCommand, muteCommand, unmuteCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand, votacaoCommand, steamCommand, wipeCommand, testeftpCommand, enviarjsonCommand, wipedatasCommand].map(c => c.data.toJSON());
+  const commandData = [banirCommand, banpreventivoCommand, kickarCommand, muteCommand, unmuteCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, duoCommand, resetleaderboardCommand, criarmapaCommand, votacaoCommand, steamCommand, wipeCommand, testeftpCommand, enviarjsonCommand, wipedatasCommand].map(c => c.data.toJSON());
   try {
     if (guildId) { const guild = await client.guilds.fetch(guildId); await guild.commands.set(commandData); logger.info({ guildId }, "Slash commands registered"); }
     else { await client.application?.commands.set(commandData); logger.info("Slash commands registered globally"); }
