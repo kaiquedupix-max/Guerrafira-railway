@@ -8,6 +8,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Client
 import { logger } from "../lib/logger.js";
 
 const LEADERBOARD_URL = "https://www.guerrafriarust.com.br/leaderboard";
+const LEADERBOARD_MARKER = "Guerra Fria 2X • Leaderboard Oficial";
 
 function leaderboardButton() {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -25,7 +26,7 @@ function buildPanel(): EmbedBuilder {
     .setTitle("🏆 Leaderboard Oficial — Guerra Fria 2X")
     .setDescription("Consulte o ranking completo e atualizado do servidor pelo botão abaixo.")
     .setImage("https://raw.githubusercontent.com/kaiquedupix-max/Guerrafira-railway/main/assets/leaderboard-banner.png")
-    .setFooter({ text: "Guerra Fria 2X • Leaderboard Oficial" });
+    .setFooter({ text: LEADERBOARD_MARKER });
 }
 
 async function updateChannel(client: Client): Promise<void> {
@@ -35,14 +36,20 @@ async function updateChannel(client: Client): Promise<void> {
   const ch = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
   if (!ch?.isSendable()) return;
 
-  // O canal é apenas uma vitrine. Remove qualquer painel antigo publicado
-  // por este bot (Top Kills, KD, HS, Farm etc.) e recria um único cartão.
+  // Em reinícios, preserva o card já existente em vez de apagar e repostar.
   const recent = await ch.messages.fetch({ limit: 100 }).catch(() => null);
-  const botMsgs = recent ? [...recent.values()].filter(message => message.author.id === client.user?.id) : [];
-  for (const message of botMsgs) await message.delete().catch(() => {});
+  const existing = recent?.find(message =>
+    message.author.id === client.user?.id &&
+    message.embeds.some(embed => embed.footer?.text === LEADERBOARD_MARKER),
+  );
+
+  if (existing) {
+    logger.info({ channelId, messageId: existing.id }, "Existing leaderboard card preserved");
+    return;
+  }
 
   await ch.send({ embeds: [buildPanel()], components: [leaderboardButton()] });
-  logger.info({ channelId, removed: botMsgs.length }, "Single leaderboard presentation card published");
+  logger.info({ channelId }, "Leaderboard presentation card published because none existed");
 }
 
 export function startLeaderboardChannel(client: Client): void {
