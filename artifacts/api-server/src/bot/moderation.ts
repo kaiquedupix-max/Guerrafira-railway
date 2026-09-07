@@ -129,7 +129,31 @@ async function handleWipeReply(message:Message):Promise<void>{
   const now=new Date(),next=nextWipeDate(now),unix=Math.floor(next.getTime()/1000),countdown=formatCountdown(next,now);
   await message.reply({content:`🧊 **Próximo wipe — Guerra Fria**\n📅 O próximo wipe será **${formatWipeDate(next)}**.\n⏳ Faltam aproximadamente **${countdown}**.\n🕡 Os wipes acontecem **todas as segundas e sextas-feiras, às 18h30**.\n🔔 <t:${unix}:R>`,allowedMentions:{repliedUser:false}}).catch(err=>logger.warn({err},"Failed to answer wipe question"));
 }
+
+async function ensureVipGifPermissions(client: Client): Promise<void> {
+  const vipRoleId = process.env.DISCORD_VIP_ROLE_ID?.trim();
+  if (!vipRoleId) {
+    logger.warn("DISCORD_VIP_ROLE_ID not configured; VIP GIF permission sync skipped");
+    return;
+  }
+
+  for (const guild of client.guilds.cache.values()) {
+    const channels = await guild.channels.fetch().catch(() => null);
+    if (!channels) continue;
+
+    for (const channel of channels.values()) {
+      if (!channel || channel.isThread() || !channel.isTextBased() || !("permissionOverwrites" in channel)) continue;
+      await channel.permissionOverwrites.edit(vipRoleId, { EmbedLinks: true }).catch((err) => {
+        logger.warn({ err, guildId: guild.id, channelId: channel.id }, "Failed to grant VIP GIF embed permission");
+      });
+    }
+  }
+
+  logger.info({ vipRoleId }, "VIP GIF permissions synchronized");
+}
+
 export function startDiscordModeration(client:Client):void{
   client.on(Events.MessageCreate,async(message)=>{try{if(await handleLinkModeration(message))return;await handleWipeReply(message);}catch(err){logger.error({err},"Discord moderation handler failed");}});
+  client.once(Events.ClientReady, () => { void ensureVipGifPermissions(client); });
   logger.info({allowedCategories:[...ALLOWED_LINK_CATEGORY_IDS],allowedChannels:[...ALLOWED_LINK_CHANNEL_IDS]},"Discord moderation and wipe auto-response enabled");
 }
