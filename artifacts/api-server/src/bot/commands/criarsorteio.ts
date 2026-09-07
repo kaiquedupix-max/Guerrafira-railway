@@ -4,11 +4,11 @@ import {
   MessageFlags,
   type ChatInputCommandInteraction,
 } from "discord.js";
-import { createVipOnlyRaffle } from "../raffle.js";
+import { createRaffleCampaign } from "../raffle.js";
 
 export const data = new SlashCommandBuilder()
-  .setName("sorteio-vip")
-  .setDescription("Cria um sorteio exclusivo para membros VIP")
+  .setName("sorteio")
+  .setDescription("Cria um sorteio para todos ou exclusivo para VIP")
   .addStringOption((opt) =>
     opt
       .setName("premio")
@@ -34,21 +34,53 @@ export const data = new SlashCommandBuilder()
         { name: "7 dias", value: "168" },
       ),
   )
+  .addIntegerOption((opt) =>
+    opt
+      .setName("vencedores")
+      .setDescription("Quantidade de vencedores")
+      .setRequired(true)
+      .addChoices(
+        { name: "1 vencedor", value: 1 },
+        { name: "2 vencedores", value: 2 },
+      ),
+  )
+  .addStringOption((opt) =>
+    opt
+      .setName("publico")
+      .setDescription("Quem pode participar")
+      .setRequired(true)
+      .addChoices(
+        { name: "Todos os membros", value: "todos" },
+        { name: "Somente VIP", value: "vip" },
+      ),
+  )
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const prize = interaction.options.getString("premio", true).trim();
   const raffleHours = Number(interaction.options.getString("tempo", true));
+  const winnerCount = interaction.options.getInteger("vencedores", true);
+  const audience = interaction.options.getString("publico", true);
+  const vipOnly = audience === "vip";
 
-  const result = await createVipOnlyRaffle({
+  const result = await createRaffleCampaign({
     client: interaction.client,
     prize,
     raffleHours,
+    winnerCount,
+    vipOnly,
     createdBy: interaction.user.id,
   });
 
   await interaction.editReply(
-    `✅ Sorteio VIP criado!\n🎁 **${prize}**\n⏰ Encerra <t:${Math.floor(result.endsAt.getTime() / 1000)}:R>.\n🔒 Somente membros com o cargo VIP podem participar.`,
+    [
+      "✅ Sorteio criado!",
+      `🎁 **${prize}**`,
+      `🏆 **${winnerCount} ${winnerCount === 1 ? "vencedor" : "vencedores"}**`,
+      `👥 Público: **${vipOnly ? "Somente VIP" : "Todos os membros"}**`,
+      `⏰ Encerra <t:${Math.floor(result.endsAt.getTime() / 1000)}:R>.`,
+    ].join("\n"),
   );
 }
