@@ -10,7 +10,7 @@ import {
   type TextChannel,
 } from "discord.js";
 import { pool } from "@workspace/db";
-import { forceFinishActiveMapVote } from "./criarmapa.js";
+import { cancelActiveMapVoteRuntime, forceFinishActiveMapVote } from "./criarmapa.js";
 
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
@@ -140,6 +140,10 @@ async function closeVoteWithoutAutomaticWipe(
   const winner = maps[winnerIndex] ?? maps[0];
   if (!winner) throw new Error("A votação não possui mapas válidos.");
   const winnerName = winner.name || `Mapa ${winnerIndex + 1}`;
+
+  // Cancela os timers em memória ANTES de fechar a votação. Assim o callback normal
+  // não roda depois e não consegue recolocar a votação em status 'selected'.
+  cancelActiveMapVoteRuntime(vote.message_id);
 
   const updated = await pool.query(
     `UPDATE map_votes
