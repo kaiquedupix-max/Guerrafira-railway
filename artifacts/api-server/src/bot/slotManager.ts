@@ -3,7 +3,7 @@
  *
  * Automatic policy:
  *   - Never expands just because the server is full.
- *   - Every 10 players waiting in queue authorizes +5 slots.
+ *   - Every 3 players waiting in queue authorizes +5 slots.
  *   - The same queue pressure cannot be counted repeatedly on every tick.
  *   - When the queue is empty and population falls, slots shrink automatically
  *     in steps of 5, never below the configured minimum or online players.
@@ -16,7 +16,7 @@ import { logger } from "../lib/logger.js";
 
 const DEFAULT_MIN_SLOTS = Math.max(1, parseInt(process.env.SERVER_MIN_SLOTS ?? "100", 10) || 100);
 const DEFAULT_MAX_SLOTS = Math.max(DEFAULT_MIN_SLOTS, parseInt(process.env.SERVER_MAX_SLOTS ?? "250", 10) || 250);
-const QUEUE_THRESHOLD = 10;
+const QUEUE_THRESHOLD = 3;
 const SLOT_INCREMENT = 5;
 const INTERVAL = 15_000;
 const HARD_MAX = 1000;
@@ -36,7 +36,7 @@ let currentSlots: number | null = null;
 let tableReady = false;
 
 // Number of +5 expansions already consumed during the current queue episode.
-// It resets only after the queue drops below 10, preventing the same 10 queued
+// It resets only after the queue drops below 3, preventing the same queued
 // players from triggering another expansion every 15 seconds.
 let consumedQueueSteps = 0;
 
@@ -150,9 +150,6 @@ export async function updateSlotControlSettings(input: {
     const real = info.maxPlayers || currentSlots || minSlots;
     currentSlots = real;
 
-    // Changing panel settings must not fabricate queue pressure. In automatic
-    // mode we only enforce hard min/max boundaries here; queue-based expansion
-    // and population-based shrink are handled by the periodic manager tick.
     if (real < minSlots) {
       applied = await setSlots(minSlots);
     } else if (real > maxSlots && maxSlots >= players) {
@@ -181,8 +178,6 @@ export function startSlotManager(client: Client): void {
     const settings = await getSlotControlSettings();
     const { players, queued } = info;
 
-    // Trust the real server value so the bot/panel stay synchronized with any
-    // manual maxplayers change made outside this manager.
     currentSlots = info.maxPlayers || currentSlots || settings.minSlots;
 
     if (settings.mode === "manual") {
@@ -202,8 +197,6 @@ export function startSlotManager(client: Client): void {
       await setSlots(maxSlots);
     }
 
-    // A queue episode ends once fewer than 10 players remain waiting. The next
-    // time it reaches 10, a fresh +5 expansion becomes available.
     if (queued < QUEUE_THRESHOLD) {
       consumedQueueSteps = 0;
     }
@@ -219,8 +212,6 @@ export function startSlotManager(client: Client): void {
         const actualIncrease = target - before;
 
         if (actualIncrease > 0 && await setSlots(target)) {
-          // Count only the increments actually granted. This is important when
-          // the configured maximum is reached mid-step.
           consumedQueueSteps += Math.ceil(actualIncrease / SLOT_INCREMENT);
           logger.info(
             {
@@ -238,10 +229,6 @@ export function startSlotManager(client: Client): void {
         }
       }
     } else if (queued === 0) {
-      // With no queue, bring maxplayers back down as population falls. We round
-      // online players up to the same 5-slot step used by expansion so the value
-      // remains stable, and we only reduce one 5-slot step per tick to avoid
-      // abrupt drops. Never go below the configured minimum or online players.
       const before = currentSlots ?? minSlots;
       const desired = clamp(Math.max(minSlots, roundUpToSlotStep(players)), minSlots, maxSlots);
       if (before > desired) {
