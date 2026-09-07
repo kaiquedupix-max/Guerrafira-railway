@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
 import { auditWipe, buildWipePlan, diagnoseHost, executeProceduralWipe, executeWipe, type WipeKind } from "../core/hostWipe.js";
-import { createMapVote, type MapImageUpload } from "../bot/commands/criarmapa.js";
+import { cancelActiveMapVoteRuntime, createMapVote, type MapImageUpload } from "../bot/commands/criarmapa.js";
 import { discordClient } from "../bot/client.js";
-import { db, mapVotesTable, mapVoteBallotsTable } from "@workspace/db";
+import { db, pool, mapVotesTable, mapVoteBallotsTable } from "@workspace/db";
 import { desc } from "drizzle-orm";
 import { getWipeLockState, setWipeLock } from "../core/wipeLock.js";
 
@@ -11,6 +11,29 @@ const router = Router(); router.use(requireAdmin);
 const kindOf = (value: unknown): WipeKind => value === "general" ? "general" : "map";
 const modeOf = (value: unknown): "seed"|"link" => value === "link" ? "link" : "seed";
 const OFFICIAL_AFTER_FLOW_MS = 5 * 60_000;
+
+async function cancelPendingAutomaticVotes(reason: string): Promise<number> {
+  const pending = await pool.query<{ id: number; message_id: string }>(
+    `SELECT id, message_id
+       FROM map_votes
+      WHERE status IN ('active','selected')
+        AND applied_at IS NULL`,
+  );
+
+  for (const vote of pending.rows) cancelActiveMapVoteRuntime(vote.message_id);
+
+  if (pending.rows.length) {
+    await pool.query(
+      `UPDATE map_votes
+          SET status='manual_closed', applied_at=NOW(), failure_reason=$1
+        WHERE status IN ('active','selected')
+          AND applied_at IS NULL`,
+      [reason],
+    );
+  }
+
+  return pending.rows.length;
+}
 
 router.get("/wipe/lock",async(_req,res)=>{try{res.json(await getWipeLockState())}catch(error:any){res.status(500).json({error:error?.message||"Falha ao consultar trava."})}});
 router.post("/wipe/lock",async(req,res)=>{try{if(typeof req.body?.unlocked!=="boolean")return void res.status(400).json({error:"Estado inválido."});const actor={id:res.locals.admin.userId,name:res.locals.admin.username};const state=await setWipeLock(req.body.unlocked,`${actor.name} (${actor.id})`);await auditWipe(state.unlocked?"WIPE_UNLOCKED":"WIPE_LOCKED",actor,`Trava alterada pelo painel: ${state.unlocked?"liberado":"travado"}.`);res.json(state)}catch(error:any){res.status(500).json({error:error?.message||"Falha ao alterar trava."})}});
@@ -43,9 +66,10 @@ router.get("/wipe/status",async(_req,res)=>{
       const counts=maps.map((_m:any,index:number)=>voteBallots.filter(b=>b.optionIndex===index).reduce((sum,b)=>sum+b.weight,0));
       const max=Math.max(0,...counts);
       const leaders=counts.map((value,index)=>value===max&&max>0?index:-1).filter(index=>index>=0);
-      const flowAt=row.wipeAt?.getTime()??null;
+      const terminal=row.status==="manual_closed"||row.status==="completed"||row.appliedAt!==null;
+      const flowAt=terminal?null:(row.wipeAt?.getTime()??null);
       const officialWipeAt=flowAt===null?null:flowAt+OFFICIAL_AFTER_FLOW_MS;
-      return{id:row.id,status:row.status,endsAt:row.endsAt,wipeAt:flowAt===null?null:new Date(flowAt),flowAt:flowAt===null?null:new Date(flowAt),officialWipeAt:officialWipeAt===null?null:new Date(officialWipeAt),winnerIndex:row.winnerIndex,leaderIndexes:leaders,counts,participants:voteBallots.length,appliedAt:row.appliedAt,failureReason:row.failureReason,messageId:row.messageId,channelId:row.channelId,maps:maps.map((m:any)=>({name:m.name,mode:m.mode||(m.mapUrl?"link":"seed"),seed:m.seed,size:m.size,mapUrl:m.mapUrl,image:m.image}))}
+      return{id:row.id,status:row.status,statusLabel:row.status==="manual_closed"?"Encerrada manualmente":row.status,endsAt:terminal?null:row.endsAt,wipeAt:flowAt===null?null:new Date(flowAt),flowAt:flowAt===null?null:new Date(flowAt),officialWipeAt:officialWipeAt===null?null:new Date(officialWipeAt),automaticWipeCanceled:row.status==="manual_closed",winnerIndex:row.winnerIndex,leaderIndexes:leaders,counts,participants:voteBallots.length,appliedAt:row.appliedAt,failureReason:row.failureReason,messageId:row.messageId,channelId:row.channelId,maps:maps.map((m:any)=>({name:m.name,mode:m.mode||(m.mapUrl?"link":"seed"),seed:m.seed,size:m.size,mapUrl:m.mapUrl,image:m.image}))}
     })});
   }catch(error:any){res.status(500).json({error:error?.message||"Falha ao consultar votações."})}
 });
@@ -69,11 +93,17 @@ router.post("/wipe/vote",async(req,res)=>{
 router.post("/wipe/execute", async (req,res) => {
   try {
     const kind=kindOf(req.body?.kind),mode=modeOf(req.body?.mode),confirmation=String(req.body?.confirmation||""),actor={id:res.locals.admin.userId,name:res.locals.admin.username};
+    let result: unknown;
     if(mode==="link"){
       const mapUrl=String(req.body?.mapUrl??req.body?.mapaUrl??"").trim();if(!mapUrl)throw new Error("Informe o link .map do RustMaps.");
-      return void res.json(await executeWipe(kind,mapUrl,confirmation,actor));
+      result=await executeWipe(kind,mapUrl,confirmation,actor);
+    } else {
+      result=await executeProceduralWipe(kind,Number(req.body?.seed),Number(req.body?.size),confirmation,actor);
     }
-    res.json(await executeProceduralWipe(kind,Number(req.body?.seed),Number(req.body?.size),confirmation,actor));
+
+    const canceled=await cancelPendingAutomaticVotes(`Wipe automático cancelado após wipe manual executado por ${actor.name} (${actor.id}).`);
+    if(canceled>0) await auditWipe("AUTO_WIPES_CANCELED_AFTER_MANUAL",actor,`${canceled} votação(ões) automática(s) pendente(s) cancelada(s) após o wipe manual.`);
+    res.json(result);
   }
   catch(error:any){return void res.status(423).json({error:error?.message||"Wipe bloqueado."})}
 });
