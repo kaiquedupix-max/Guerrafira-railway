@@ -25,6 +25,7 @@ import { startSlotManager } from "./slotManager.js";
 import { startLeaderboardChannel } from "./leaderboardChannel.js";
 import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raffle.js";
 import { openVipModal, submitVipModal } from "./vipSteamLink.js";
+import { startDiscordModeration } from "./moderation.js";
 import * as banirCommand from "./commands/banir.js";
 import * as banpreventivoCommand from "./commands/banpreventivo.js";
 import * as kickarCommand from "./commands/kickar.js";
@@ -98,6 +99,7 @@ export async function startBot(): Promise<void> {
     GatewayIntentBits.GuildMembers,
   ];
   const client = new Client({ intents });
+  startDiscordModeration(client);
   client.once(Events.ClientReady, async (c) => {
     logger.info({ tag: c.user.tag }, "Discord bot online");
     const welcomeChannelId = process.env.DISCORD_WELCOME_CHANNEL_ID;
