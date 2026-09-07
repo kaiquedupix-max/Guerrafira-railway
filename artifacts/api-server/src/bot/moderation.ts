@@ -4,21 +4,12 @@ import {
   type Client,
   type Message,
 } from "discord.js";
+import { and, eq, gt } from "drizzle-orm";
+import { db, vipSubscriptionsTable } from "@workspace/db";
 import { logger } from "../lib/logger.js";
 
 const URL_REGEX = /(?:https?:\/\/|www\.)\S+|discord(?:app)?\.com\/invite\/\S+|discord\.gg\/\S+/i;
 const URL_MATCH_REGEX = /(?:https?:\/\/|www\.)[^\s<>]+|discord(?:app)?\.com\/invite\/[^\s<>]+|discord\.gg\/[^\s<>]+/gi;
-const ALLOWED_GIF_HOSTS = new Set([
-  "tenor.com",
-  "www.tenor.com",
-  "media.tenor.com",
-  "giphy.com",
-  "www.giphy.com",
-  "media.giphy.com",
-  "i.giphy.com",
-  "cdn.discordapp.com",
-  "media.discordapp.net",
-]);
 const ALLOWED_LINK_CATEGORY_IDS = new Set([
   "1530056461877641326",
   "1499084541791436862",
@@ -32,10 +23,27 @@ function isAdmin(message: Message): boolean {
   return Boolean(message.member?.permissions.has(PermissionFlagsBits.Administrator));
 }
 
-function isVip(message: Message): boolean {
+async function isVip(message: Message): Promise<boolean> {
   const vipRoleId = process.env.DISCORD_VIP_ROLE_ID?.trim();
-  if (!vipRoleId || !message.member) return false;
-  return message.member.roles.cache.has(vipRoleId);
+  if (vipRoleId && message.member?.roles.cache.has(vipRoleId)) return true;
+
+  // Fallback no banco: evita falso negativo quando o cache de cargos do Discord
+  // ainda não atualizou ou o membro acabou de receber o VIP.
+  try {
+    const [activeVip] = await db
+      .select({ id: vipSubscriptionsTable.id })
+      .from(vipSubscriptionsTable)
+      .where(and(
+        eq(vipSubscriptionsTable.discordUserId, message.author.id),
+        gt(vipSubscriptionsTable.expiresAt, new Date()),
+        eq(vipSubscriptionsTable.gameVipRemoved, false),
+      ))
+      .limit(1);
+    return Boolean(activeVip);
+  } catch (err) {
+    logger.warn({ err, userId: message.author.id }, "VIP DB fallback check failed");
+    return false;
+  }
 }
 
 function isAllowedLinkChannel(message: Message): boolean {
@@ -46,17 +54,28 @@ function isAllowedLinkChannel(message: Message): boolean {
   return Boolean(channel.parentId && ALLOWED_LINK_CATEGORY_IDS.has(channel.parentId));
 }
 
+function isGifHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "tenor.com" || host.endsWith(".tenor.com") ||
+    host === "giphy.com" || host.endsWith(".giphy.com") ||
+    host === "cdn.discordapp.com" || host === "media.discordapp.net"
+  );
+}
+
 function isAllowedGifUrl(rawUrl: string): boolean {
   try {
     const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
     const url = new URL(normalizedUrl);
-    const host = url.hostname.toLowerCase();
-    if (!ALLOWED_GIF_HOSTS.has(host)) return false;
+    if (!isGifHost(url.hostname)) return false;
 
+    const host = url.hostname.toLowerCase();
     if (host === "cdn.discordapp.com" || host === "media.discordapp.net") {
       return /\.gif(?:$|[?#])/i.test(url.pathname + url.search + url.hash);
     }
 
+    // Tenor/Giphy usam vários subdomínios e nem todo URL termina em .gif
+    // (ex.: /view/... ou media1.tenor.com/...). O domínio já identifica o GIF.
     return true;
   } catch {
     return false;
@@ -68,6 +87,28 @@ function isGifAttachment(message: Message): boolean {
     const contentType = attachment.contentType?.toLowerCase() ?? "";
     const name = attachment.name?.toLowerCase() ?? "";
     return contentType === "image/gif" || name.endsWith(".gif");
+  });
+}
+
+function hasGifEmbed(message: Message): boolean {
+  return message.embeds.some((embed) => {
+    const provider = embed.provider?.name?.toLowerCase() ?? "";
+    if (provider.includes("tenor") || provider.includes("giphy")) return true;
+
+    const candidates = [embed.url, embed.video?.url, embed.image?.url, embed.thumbnail?.url]
+      .filter((value): value is string => Boolean(value));
+    return candidates.some((rawUrl) => {
+      try {
+        const url = new URL(rawUrl);
+        return isGifHost(url.hostname) && (
+          url.hostname.includes("tenor") ||
+          url.hostname.includes("giphy") ||
+          /\.gif(?:$|[?#])/i.test(url.pathname + url.search + url.hash)
+        );
+      } catch {
+        return false;
+      }
+    });
   });
 }
 
@@ -115,14 +156,19 @@ async function handleLinkModeration(message:Message):Promise<boolean>{
   if(!message.guild||message.author.bot||isAdmin(message))return false;
   if(isAllowedLinkChannel(message))return false;
 
-  // VIP pode enviar GIFs normalmente sem abrir exceção para links comuns.
-  if(isVip(message) && (isGifAttachment(message) || hasOnlyGifLinks(message.content))) return false;
+  // VIP pode enviar GIF por link, picker do Discord ou upload.
+  // Links normais continuam bloqueados: se houver URL não-GIF junto, não entra na exceção.
+  const vip = await isVip(message);
+  if(vip && (isGifAttachment(message) || hasGifEmbed(message) || hasOnlyGifLinks(message.content))) {
+    const urls = message.content.match(URL_MATCH_REGEX) ?? [];
+    if (urls.every(isAllowedGifUrl)) return false;
+  }
 
   if(!URL_REGEX.test(message.content)||!containsBlockedLink(message.content))return false;
   await message.delete().catch(err=>logger.warn({err,messageId:message.id},"Failed to delete blocked link"));
   const warning=await message.channel.send({content:`🚫 <@${message.author.id}>, links não são permitidos neste canal. Use os canais autorizados ou abra um ticket.`}).catch(()=>null);
   if(warning)setTimeout(()=>warning.delete().catch(()=>{}),7_000);
-  logger.info({userId:message.author.id,channelId:message.channelId},"Blocked Discord link/message URL");return true;
+  logger.info({userId:message.author.id,channelId:message.channelId,vip},"Blocked Discord link/message URL");return true;
 }
 async function handleWipeReply(message:Message):Promise<void>{
   if(!message.guild||message.author.bot||!isWipeQuestion(message.content))return;
