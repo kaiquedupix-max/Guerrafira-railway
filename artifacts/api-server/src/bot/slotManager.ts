@@ -3,8 +3,8 @@
  *
  * Automatic policy:
  *   - Never expands just because the server is full.
- *   - Every 3 players waiting in queue authorizes +5 slots.
- *   - The same queue pressure cannot be counted repeatedly on every tick.
+ *   - While 5 or more players are waiting, opens +5 slots per manager cycle.
+ *   - Keeps expanding in +5 steps while the queue remains at 5+.
  *   - When the queue is empty and population falls, slots shrink automatically
  *     in steps of 5, never below the configured minimum or online players.
  *   - Runtime min/max limits configured by the admin panel are always respected.
@@ -16,7 +16,7 @@ import { logger } from "../lib/logger.js";
 
 const DEFAULT_MIN_SLOTS = Math.max(1, parseInt(process.env.SERVER_MIN_SLOTS ?? "100", 10) || 100);
 const DEFAULT_MAX_SLOTS = Math.max(DEFAULT_MIN_SLOTS, parseInt(process.env.SERVER_MAX_SLOTS ?? "250", 10) || 250);
-const QUEUE_THRESHOLD = 3;
+const QUEUE_THRESHOLD = 5;
 const SLOT_INCREMENT = 5;
 const INTERVAL = 15_000;
 const HARD_MAX = 1000;
@@ -34,11 +34,6 @@ export interface SlotControlSettings {
 
 let currentSlots: number | null = null;
 let tableReady = false;
-
-// Number of +5 expansions already consumed during the current queue episode.
-// It resets only after the queue drops below 3, preventing the same queued
-// players from triggering another expansion every 15 seconds.
-let consumedQueueSteps = 0;
 
 async function ensureSettingsTable(): Promise<void> {
   if (tableReady) return;
@@ -144,17 +139,12 @@ export async function updateSlotControlSettings(input: {
 
   let applied = true;
   if (mode === "manual") {
-    consumedQueueSteps = 0;
     applied = await setSlots(manualSlots);
   } else if (info) {
     const real = info.maxPlayers || currentSlots || minSlots;
     currentSlots = real;
-
-    if (real < minSlots) {
-      applied = await setSlots(minSlots);
-    } else if (real > maxSlots && maxSlots >= players) {
-      applied = await setSlots(maxSlots);
-    }
+    if (real < minSlots) applied = await setSlots(minSlots);
+    else if (real > maxSlots && maxSlots >= players) applied = await setSlots(maxSlots);
   }
 
   return { settings: await getSlotControlSettings(), applied, serverPlayers: players };
@@ -163,10 +153,7 @@ export async function updateSlotControlSettings(input: {
 function updatePresence(client: Client, players: number, slots: number): void {
   if (!client.user) return;
   client.user.setPresence({
-    activities: [{
-      name: `🎮 Guerra Fria 2X | 👥 ${players}/${slots} jogadores online`,
-      type: ActivityType.Playing,
-    }],
+    activities: [{ name: `🎮 Guerra Fria 2X | 👥 ${players}/${slots} jogadores online`, type: ActivityType.Playing }],
     status: "online",
   });
 }
@@ -177,11 +164,9 @@ export function startSlotManager(client: Client): void {
     if (!info) return;
     const settings = await getSlotControlSettings();
     const { players, queued } = info;
-
     currentSlots = info.maxPlayers || currentSlots || settings.minSlots;
 
     if (settings.mode === "manual") {
-      consumedQueueSteps = 0;
       const target = Math.max(settings.manualSlots, players);
       if (currentSlots !== target) await setSlots(target);
       updatePresence(client, players, currentSlots ?? target);
@@ -191,42 +176,17 @@ export function startSlotManager(client: Client): void {
     const minSlots = settings.minSlots;
     const maxSlots = settings.maxSlots;
 
-    if (currentSlots < minSlots) {
-      await setSlots(minSlots);
-    } else if (currentSlots > maxSlots && maxSlots >= players) {
-      await setSlots(maxSlots);
-    }
+    if (currentSlots < minSlots) await setSlots(minSlots);
+    else if (currentSlots > maxSlots && maxSlots >= players) await setSlots(maxSlots);
 
-    if (queued < QUEUE_THRESHOLD) {
-      consumedQueueSteps = 0;
-    }
-
+    // Enquanto houver pelo menos 5 pessoas na fila, abre +5 a cada ciclo.
+    // Assim, se depois da abertura a fila continuar em 5+, o próximo ciclo
+    // abre mais 5, até aliviar a fila ou atingir o máximo configurado.
     if (queued >= QUEUE_THRESHOLD && (currentSlots ?? minSlots) < maxSlots) {
-      const queueStepsNow = Math.floor(queued / QUEUE_THRESHOLD);
-      const newQueueSteps = Math.max(0, queueStepsNow - consumedQueueSteps);
-
-      if (newQueueSteps > 0) {
-        const before = currentSlots ?? minSlots;
-        const requestedIncrease = newQueueSteps * SLOT_INCREMENT;
-        const target = clamp(before + requestedIncrease, minSlots, maxSlots);
-        const actualIncrease = target - before;
-
-        if (actualIncrease > 0 && await setSlots(target)) {
-          consumedQueueSteps += Math.ceil(actualIncrease / SLOT_INCREMENT);
-          logger.info(
-            {
-              players,
-              queued,
-              queueThreshold: QUEUE_THRESHOLD,
-              slotIncrement: SLOT_INCREMENT,
-              queueStepsNow,
-              consumedQueueSteps,
-              from: before,
-              to: target,
-            },
-            "Queue threshold reached — slots expanded",
-          );
-        }
+      const before = currentSlots ?? minSlots;
+      const target = clamp(before + SLOT_INCREMENT, minSlots, maxSlots);
+      if (target > before && await setSlots(target)) {
+        logger.info({ players, queued, queueThreshold: QUEUE_THRESHOLD, slotIncrement: SLOT_INCREMENT, from: before, to: target }, "Queue remains at threshold — slots expanded");
       }
     } else if (queued === 0) {
       const before = currentSlots ?? minSlots;
@@ -234,10 +194,7 @@ export function startSlotManager(client: Client): void {
       if (before > desired) {
         const target = Math.max(desired, before - SLOT_INCREMENT, players, minSlots);
         if (target < before && await setSlots(target)) {
-          logger.info(
-            { players, queued, from: before, to: target, desired, slotIncrement: SLOT_INCREMENT },
-            "Population dropped — slots reduced",
-          );
+          logger.info({ players, queued, from: before, to: target, desired, slotIncrement: SLOT_INCREMENT }, "Population dropped — slots reduced");
         }
       }
     }
@@ -247,14 +204,5 @@ export function startSlotManager(client: Client): void {
 
   setTimeout(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), 10_000);
   setInterval(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), INTERVAL);
-  logger.info(
-    {
-      defaultMin: DEFAULT_MIN_SLOTS,
-      defaultMax: DEFAULT_MAX_SLOTS,
-      queueThreshold: QUEUE_THRESHOLD,
-      slotIncrement: SLOT_INCREMENT,
-      intervalMs: INTERVAL,
-    },
-    "Slot manager started with queue-threshold control and automatic shrink",
-  );
+  logger.info({ defaultMin: DEFAULT_MIN_SLOTS, defaultMax: DEFAULT_MAX_SLOTS, queueThreshold: QUEUE_THRESHOLD, slotIncrement: SLOT_INCREMENT, intervalMs: INTERVAL }, "Slot manager started with persistent queue-threshold control and automatic shrink");
 }
