@@ -198,6 +198,13 @@ async function loadVote(messageId: string, client?: Client): Promise<MapVoteRunt
   return vote;
 }
 
+export function cancelActiveMapVoteRuntime(messageId: string): void {
+  const runtime = activeVotes.get(messageId);
+  if (runtime?.timer) clearTimeout(runtime.timer);
+  if (runtime?.announcementTimer) clearInterval(runtime.announcementTimer);
+  activeVotes.delete(messageId);
+}
+
 export async function restoreActiveMapVotes(client: Client): Promise<void> {
   const savedVotes = await db.select().from(mapVotesTable).where(eq(mapVotesTable.status, "active"));
   for (const saved of savedVotes) {
