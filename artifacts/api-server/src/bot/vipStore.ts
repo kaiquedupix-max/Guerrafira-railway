@@ -96,34 +96,6 @@ function buildCard(card: (typeof VIP_CARDS)[number], includeImage = true) {
   return { embed, row };
 }
 
-
-async function clearVipStoreChannel(channel: TextChannel): Promise<number> {
-  let deletedTotal = 0;
-  for (let page = 0; page < 100; page++) {
-    const batch = await channel.messages.fetch({ limit: 100 });
-    if (!batch.size) break;
-
-    const recent = batch.filter(message => Date.now() - message.createdTimestamp < 13.8 * 24 * 60 * 60_000);
-    if (recent.size) {
-      const deleted = await channel.bulkDelete(recent, true);
-      deletedTotal += deleted.size;
-    }
-
-    const older = batch.filter(message => !recent.has(message.id));
-    for (const message of older.values()) {
-      await message.delete();
-      deletedTotal += 1;
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-
-    if (batch.size < 100) break;
-  }
-
-  const remaining = await channel.messages.fetch({ limit: 1 });
-  if (remaining.size) throw new Error("Não foi possível remover todas as mensagens do canal da Loja VIP.");
-  return deletedTotal;
-}
-
 async function sendStoreMessage(
   channel: TextChannel,
   payload: Parameters<TextChannel["send"]>[0],
@@ -167,6 +139,19 @@ function registerStoreInteractionHandler(client: Client): void {
   });
 }
 
+async function hasExistingStorePanel(channel: TextChannel, client: Client): Promise<boolean> {
+  const recent = await channel.messages.fetch({ limit: 100 }).catch((err) => {
+    logger.warn({ err, channelId: channel.id }, "Could not inspect VIP store messages");
+    return null;
+  });
+  if (!recent) return true;
+
+  return recent.some(message =>
+    message.author.id === client.user?.id &&
+    message.embeds.some(embed => embed.footer?.text?.includes(STORE_MARKER)),
+  );
+}
+
 export async function setupVipStore(client: Client): Promise<void> {
   registerStoreInteractionHandler(client);
   if (!moderationStarted) {
@@ -193,20 +178,15 @@ export async function setupVipStore(client: Client): Promise<void> {
   }
 
   if (channel.id !== DEFAULT_VIP_STORE_CHANNEL_ID) {
-    logger.error({ configuredChannelId: channel.id, expectedChannelId: DEFAULT_VIP_STORE_CHANNEL_ID }, "VIP store cleanup blocked for unexpected channel");
+    logger.error({ configuredChannelId: channel.id, expectedChannelId: DEFAULT_VIP_STORE_CHANNEL_ID }, "VIP store publishing blocked for unexpected channel");
     return;
   }
 
-  try {
-    const deleted = await clearVipStoreChannel(channel);
-    logger.info({ channelId, deleted }, "VIP store channel cleared before publishing cards");
-  } catch (err) {
-    // A loja nunca deve ficar vazia só porque uma mensagem antiga não pôde ser removida.
-    logger.error({ err, channelId }, "VIP store cleanup incomplete; publishing cards anyway");
+  // Reinício do bot não deve limpar o canal nem relançar os cards.
+  if (await hasExistingStorePanel(channel, client)) {
+    logger.info({ channelId }, "Existing VIP store panel preserved; no cards republished");
+    return;
   }
-
-  // Dá tempo para o Discord concluir a exclusão em lote antes dos novos envios.
-  await new Promise(resolve => setTimeout(resolve, 1_500));
 
   const header = new EmbedBuilder()
     .setColor(0x111827)
