@@ -2,15 +2,17 @@ import { pgTable, serial, varchar, integer, timestamp, text, boolean } from "dri
 
 export const rafflesTable = pgTable("raffles", {
   id:               serial("id").primaryKey(),
-  prizeTier:        varchar("prize_tier", { length: 16 }).notNull(),
+  prizeTier:        varchar("prize_tier", { length: 32 }).notNull(),
   prizeDurationDays: integer("prize_duration_days").notNull(),
   prizeText:        text("prize_text"),
   vipOnly:          boolean("vip_only").notNull().default(false),
+  winnerCount:      integer("winner_count").notNull().default(1),
   messageId:        varchar("message_id", { length: 64 }),
   channelId:        varchar("channel_id", { length: 64 }),
   endsAt:           timestamp("ends_at").notNull(),
   status:           varchar("status", { length: 16 }).notNull().default("active"),
   winnerDiscordId:  varchar("winner_discord_id", { length: 64 }),
+  winnerDiscordIds: text("winner_discord_ids"),
   winnerSteamId:    varchar("winner_steam_id", { length: 32 }),
   createdBy:        varchar("created_by", { length: 64 }).notNull(),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
