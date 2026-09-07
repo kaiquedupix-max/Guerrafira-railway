@@ -7,12 +7,14 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
+  type TextChannel,
 } from "discord.js";
 import { pool } from "@workspace/db";
 import { forceFinishActiveMapVote } from "./criarmapa.js";
 
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
+const CHAT_CHANNEL_ID = "1499084541791436861";
 const WIPE_HOUR_UTC = 21; // 18h em America/Sao_Paulo
 const WIPE_MINUTE_UTC = 25;
 
@@ -124,9 +126,77 @@ function discordTimestamp(value: Date | string | null, style: "F" | "R"): string
   return `<t:${Math.floor(time / 1000)}:${style}>`;
 }
 
-async function handleForcedFinish(interaction: ChatInputCommandInteraction): Promise<void> {
-  await repairInvalidWipeSchedules();
+async function closeVoteWithoutAutomaticWipe(
+  interaction: ChatInputCommandInteraction,
+  vote: ActiveVoteRow,
+  maps: MapOption[],
+  counts: number[],
+): Promise<{ winnerIndex: number; winnerName: string }> {
+  const max = counts.length ? Math.max(...counts) : 0;
+  const leaders = counts.map((value, index) => value === max ? index : -1).filter(index => index >= 0);
+  const winnerIndex = max > 0 && leaders.length
+    ? leaders[Math.floor(Math.random() * leaders.length)]
+    : 0;
+  const winner = maps[winnerIndex] ?? maps[0];
+  if (!winner) throw new Error("A votação não possui mapas válidos.");
+  const winnerName = winner.name || `Mapa ${winnerIndex + 1}`;
 
+  const updated = await pool.query(
+    `UPDATE map_votes
+        SET status='manual_closed', winner_index=$1, applied_at=NOW(), failure_reason=NULL
+      WHERE id=$2 AND status='active'
+      RETURNING id`,
+    [winnerIndex, vote.id],
+  );
+  if (!updated.rows[0]) throw new Error("A votação deixou de estar ativa antes da confirmação.");
+
+  const voteChannel = await interaction.client.channels.fetch(vote.channel_id).catch(() => null) as TextChannel | null;
+  if (voteChannel?.isSendable()) {
+    const original = await voteChannel.messages.fetch(vote.message_id).catch(() => null);
+    if (original) await original.edit({ components: [] }).catch(() => {});
+
+    const resultText = max <= 0
+      ? `Nenhum voto foi registrado; **${winnerName}** foi selecionado automaticamente.`
+      : leaders.length === 1
+        ? `🏆 **${winnerName}** venceu a votação!`
+        : `🤝 Houve empate entre **${leaders.map(index => maps[index]?.name || `Mapa ${index + 1}`).join(" • ")}**; **${winnerName}** venceu o desempate automático.`;
+
+    const embed = new EmbedBuilder()
+      .setColor(0xf59e0b)
+      .setTitle("🛑 VOTAÇÃO ENCERRADA PELO ADMINISTRADOR")
+      .setDescription(
+        `${resultText}\n\n` +
+        `🛡️ Encerrada manualmente por <@${interaction.user.id}>.\n` +
+        "⛔ **O wipe automático desta votação foi cancelado.** Nenhum horário de wipe foi alterado e nenhuma execução automática será feita por esta votação."
+      )
+      .addFields(...maps.map((map, index) => ({
+        name: `🗺️ ${map.name || `Mapa ${index + 1}`}`,
+        value: `**${counts[index] ?? 0} voto(s)**`,
+        inline: true,
+      })))
+      .setFooter({ text: "Guerra Fria • Resultado manual sem wipe automático" })
+      .setTimestamp();
+    await voteChannel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+  }
+
+  const chat = await interaction.client.channels.fetch(process.env.DISCORD_CHAT_CHANNEL_ID?.trim() || CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
+  if (chat?.isSendable()) {
+    await chat.send({
+      content:
+        `🏆 **MAPA VENCEDOR:** ${winnerName}\n` +
+        `${winner.mode === "link" || winner.mapUrl ? "Fonte: `RustMaps .map`" : `Seed: \`${winner.seed}\` • Size: \`${winner.size}\``}\n` +
+        `🛡️ Votação encerrada manualmente por <@${interaction.user.id}>.\n` +
+        "⛔ O wipe automático desta votação foi cancelado.",
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+  }
+
+  return { winnerIndex, winnerName };
+}
+
+async function handleForcedFinish(interaction: ChatInputCommandInteraction): Promise<void> {
+  // Importante: não repara nem recalcula wipe_at aqui. Forçar o fim da votação
+  // nunca deve mexer no horário salvo da agenda.
   const activeVote = await pool.query<ActiveVoteRow>(
     `SELECT id, message_id, channel_id, maps_json, ends_at, wipe_at
        FROM map_votes
@@ -163,7 +233,7 @@ async function handleForcedFinish(interaction: ChatInputCommandInteraction): Pro
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("vote_force_wipe").setLabel("Encerrar + wipe agora").setEmoji("🚨").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("vote_force_only").setLabel("Só encerrar votação").setEmoji("🛑").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("vote_force_only").setLabel("Só anunciar vencedor").setEmoji("🏆").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("vote_force_cancel").setLabel("Cancelar").setStyle(ButtonStyle.Secondary),
   );
 
@@ -174,7 +244,7 @@ async function handleForcedFinish(interaction: ChatInputCommandInteraction): Pro
       `${currentResult}\n\n` +
       "Escolha o que fazer com o **resultado atual**:\n\n" +
       "🚨 **Encerrar + wipe agora:** fecha a votação, define o vencedor atual e inicia o wipe imediatamente usando esse mapa.\n" +
-      "🛑 **Só encerrar votação:** fecha a votação e define o vencedor, mas mantém o wipe no próximo horário oficial de **segunda ou sexta às 18:25**.\n\n" +
+      "🏆 **Só anunciar vencedor:** fecha a votação, anuncia o mapa vencedor e **cancela definitivamente o wipe automático desta votação**. O horário do wipe não será recalculado nem alterado.\n\n" +
       "A ação será registrada publicamente com o administrador responsável.",
     )
     .setFooter({ text: "A confirmação expira em 60 segundos" });
@@ -196,31 +266,36 @@ async function handleForcedFinish(interaction: ChatInputCommandInteraction): Pro
 
     const wipeNow = button.customId === "vote_force_wipe";
     await interaction.editReply({
-      content: wipeNow ? "⏳ Encerrando votação e iniciando o wipe..." : "⏳ Encerrando a votação...",
+      content: wipeNow ? "⏳ Encerrando votação e iniciando o wipe..." : "⏳ Encerrando votação e cancelando o wipe automático desta votação...",
       embeds: [], components: [],
     });
+
+    if (!wipeNow) {
+      const result = await closeVoteWithoutAutomaticWipe(interaction, vote, maps, counts);
+      await interaction.editReply({
+        content:
+          `✅ **Votação encerrada pelo administrador.**\n` +
+          `🛡️ Administrador: <@${interaction.user.id}>\n` +
+          `🏆 Mapa vencedor: **${result.winnerName}**\n` +
+          "⛔ **Wipe automático desta votação cancelado.** Nenhum horário de wipe foi alterado.",
+        allowedMentions: { parse: [] },
+        components: [],
+      });
+      return;
+    }
 
     const result = await forceFinishActiveMapVote(
       interaction.client,
       { id: interaction.user.id, name: interaction.user.globalName ?? interaction.user.username },
-      wipeNow,
+      true,
     );
-
-    if (!wipeNow) await repairInvalidWipeSchedules();
-    const refreshed = await pool.query<{ wipe_at: Date | string | null }>(
-      `SELECT wipe_at FROM map_votes WHERE id=$1 LIMIT 1`,
-      [result.voteId],
-    );
-    const finalWipeAt = refreshed.rows[0]?.wipe_at ? new Date(refreshed.rows[0].wipe_at).getTime() : result.wipeAt;
 
     await interaction.editReply({
       content:
         `✅ **Votação encerrada pelo administrador.**\n` +
         `🛡️ Administrador: <@${interaction.user.id}>\n` +
         `🏆 Mapa vencedor: **${result.winnerName}**\n` +
-        (wipeNow
-          ? "🚨 O resultado foi aplicado e o **wipe foi iniciado imediatamente**."
-          : `🧊 O resultado foi aplicado e o wipe ficou programado para <t:${Math.floor(finalWipeAt / 1000)}:F> (**segunda ou sexta**).`),
+        "🚨 O resultado foi aplicado e o **wipe foi iniciado imediatamente**.",
       allowedMentions: { parse: [] },
       components: [],
     });
