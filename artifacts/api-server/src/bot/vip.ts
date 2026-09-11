@@ -22,8 +22,6 @@ function buildRconCmd(envKey: string, steamId: string): string | null {
     logger.warn({ envKey }, "RCON command env var not set — VIP action skipped in-game");
     return null;
   }
-  // Mantém compatibilidade com as variáveis antigas do Railway após a
-  // migração do servidor de Oxide para Carbon.
   return template
     .replace(/^oxide\./i, "c.")
     .replace(/\{steam[Ii][Dd]\}/g, steamId);
@@ -162,12 +160,14 @@ export async function revokeVip(opts: {
   ));
   const hasOtherSameTier = sameTier.some(s => s.id !== subscriptionId);
   let gameVipRemoved = hasOtherSameTier;
+  let didRunGameRevoke = false;
 
   if (!hasOtherSameTier) {
     const revokeCmd = buildRconCmd(`VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
     if (!revokeCmd) throw new Error(`Comando RCON de remoção do VIP ${tier} não configurado.`);
     await executeVipRcon(revokeCmd, "revoke");
     gameVipRemoved = true;
+    didRunGameRevoke = true;
   }
 
   const allForDiscord = discordUserId && !discordUserId.startsWith("manual")
@@ -187,7 +187,6 @@ export async function revokeVip(opts: {
     const guild = await client.guilds.fetch(guildId);
     const member = await guild.members.fetch(discordUserId).catch(() => null);
     if (!member) {
-      // Usuário fora do Discord: não existe cargo para remover.
       discordRoleRemoved = true;
     } else if (member.roles.cache.has(roleId)) {
       await member.roles.remove(roleId, `VIP ${tier} removido por ${reason === "expired" ? "expiração" : "administração"}`);
@@ -197,23 +196,29 @@ export async function revokeVip(opts: {
     }
   } else if (!hasOtherVip && (!roleId || !guildId) && discordUserId && !discordUserId.startsWith("manual")) {
     discordRoleRemoved = false;
-    logger.warn({ roleId, guildId, discordUserId }, "VIP Discord role removal could not run — configuration missing");
+    logger.warn({ roleId: Boolean(roleId), guildId: Boolean(guildId), discordUserId }, "VIP Discord role removal could not run — configuration missing");
   }
 
-  // Só marcamos como removido depois que cada etapa correspondente realmente terminou.
-  await db.update(vipSubscriptionsTable).set({
-    expiresAt: reason === "manual" ? now : undefined,
-    discordRoleRemoved,
-    gameVipRemoved,
-  }).where(eq(vipSubscriptionsTable.id, subscriptionId));
+  const updateData: {
+    expiresAt?: Date;
+    discordRoleRemoved: boolean;
+    gameVipRemoved: boolean;
+  } = { discordRoleRemoved, gameVipRemoved };
+  if (reason === "manual") updateData.expiresAt = now;
+
+  await db.update(vipSubscriptionsTable)
+    .set(updateData)
+    .where(eq(vipSubscriptionsTable.id, subscriptionId));
 
   if (!gameVipRemoved || !discordRoleRemoved) {
     throw new Error(`VIP não foi totalmente removido (jogo=${gameVipRemoved}, discord=${discordRoleRemoved})`);
   }
 
-  logger.info({ subscriptionId, tier, steamId, reason }, "✅ revokeVip complete");
+  logger.info({ subscriptionId, tier, steamId, reason, didRunGameRevoke }, "✅ revokeVip complete");
 
-  if (reason === "expired" || reason === "reconcile") {
+  // Só anuncia quando a expiração atual realmente executou e confirmou o revoke no Rust.
+  // Reconciliações de registros antigos não geram notificação enganosa/spam.
+  if (reason === "expired" && didRunGameRevoke) {
     await notifyVipExpired({ client, tier, steamId, discordUserId });
   }
 }
@@ -224,46 +229,23 @@ export function startVipExpiryChecker(client: Client): void {
 
   async function check() {
     const now = new Date();
-    const active = await db.select().from(vipSubscriptionsTable).where(and(
-      gt(vipSubscriptionsTable.expiresAt, now),
-      eq(vipSubscriptionsTable.gameVipRemoved, false),
-    ));
-    const reconciled = new Set<string>();
-    for (const sub of active) {
-      const key = `${sub.steamId}:${sub.vipTier}`;
-      if (reconciled.has(key)) continue;
-      reconciled.add(key);
-      const command = buildRconCmd(`VIP_${String(sub.vipTier).toUpperCase()}_GRANT_CMD`, sub.steamId);
-      if (!command) continue;
-      await executeVipRcon(command, "grant").catch(err =>
-        logger.error({ err, steamId: sub.steamId, tier: sub.vipTier }, "Active VIP reconciliation failed"),
-      );
-      const roleId = process.env.DISCORD_VIP_ROLE_ID, guildId = process.env.DISCORD_GUILD_ID;
-      if (roleId && guildId && sub.discordUserId && !sub.discordUserId.startsWith("manual")) {
-        const guild = await client.guilds.fetch(guildId).catch(() => null);
-        const member = guild ? await guild.members.fetch(sub.discordUserId).catch(() => null) : null;
-        if (member && !member.roles.cache.has(roleId)) {
-          await member.roles.add(roleId, "Reconciliação automática de VIP").catch(err =>
-            logger.error({ err, discordUserId: sub.discordUserId }, "VIP Discord role reconciliation failed"));
-        }
-      }
-    }
 
-    // Busca TODOS os expirados uma vez por processo. Isso corrige registros antigos
-    // que podem ter sido marcados como removidos mesmo quando o RCON falhou.
+    // Inclui registros expirados antigos na primeira passagem de cada processo para
+    // reparar estados históricos que haviam sido marcados como removidos sem confirmação RCON.
     const expired = await db.select().from(vipSubscriptionsTable).where(lte(vipSubscriptionsTable.expiresAt, now));
     const pending = expired.filter(sub => !processedExpired.has(sub.id));
     if (pending.length) logger.info({ count: pending.length }, "VIP expiry check — reconciling expired VIPs");
 
     for (const sub of pending) {
       try {
+        const wasAlreadyMarkedRemoved = sub.gameVipRemoved && sub.discordRoleRemoved;
         await revokeVip({
           subscriptionId: sub.id,
           tier: sub.vipTier as VipTier,
           steamId: sub.steamId,
           discordUserId: sub.discordUserId,
           client,
-          reason: sub.gameVipRemoved && sub.discordRoleRemoved ? "reconcile" : "expired",
+          reason: wasAlreadyMarkedRemoved ? "reconcile" : "expired",
         });
         processedExpired.add(sub.id);
       } catch (err) {
