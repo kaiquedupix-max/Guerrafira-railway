@@ -10,6 +10,7 @@ import { getWipeLockState, setWipeLock } from "../core/wipeLock.js";
 const router = Router(); router.use(requireAdmin);
 const kindOf = (value: unknown): WipeKind => value === "general" ? "general" : "map";
 const modeOf = (value: unknown): "seed"|"link" => value === "link" ? "link" : "seed";
+const FLOW_AFTER_VOTE_MS = 25 * 60_000;
 const OFFICIAL_AFTER_FLOW_MS = 5 * 60_000;
 
 async function cancelPendingAutomaticVotes(reason: string): Promise<number> {
@@ -60,15 +61,21 @@ router.get("/wipe/status",async(_req,res)=>{
     const rows=await db.select().from(mapVotesTable).orderBy(desc(mapVotesTable.createdAt)).limit(10);
     const ballots=await db.select().from(mapVoteBallotsTable);
     res.setHeader("Cache-Control","no-store");
-    res.json({serverNow:Date.now(),votes:rows.map(row=>{
+    res.json({serverNow:Date.now(),timeZone:"America/Sao_Paulo",votes:rows.map(row=>{
       let maps:any[]=[];try{maps=JSON.parse(row.mapsJson)}catch{}
       const voteBallots=ballots.filter(b=>b.mapVoteId===row.id);
       const counts=maps.map((_m:any,index:number)=>voteBallots.filter(b=>b.optionIndex===index).reduce((sum,b)=>sum+b.weight,0));
       const max=Math.max(0,...counts);
       const leaders=counts.map((value,index)=>value===max&&max>0?index:-1).filter(index=>index>=0);
       const terminal=row.status==="manual_closed"||row.status==="completed"||row.appliedAt!==null;
-      const flowAt=terminal?null:(row.wipeAt?.getTime()??null);
+
+      // Horário canônico do Guerra Fria: votação 18:00 BRT, fluxo 18:25 e wipe oficial 18:30.
+      // Nunca confiamos em wipe_at legado para exibição, pois versões antigas chegaram a gravar
+      // horários deslocados. O ends_at é a âncora e o fluxo é sempre +25 minutos.
+      const voteEndsMs=row.endsAt?.getTime()??null;
+      const flowAt=terminal||voteEndsMs===null?null:voteEndsMs+FLOW_AFTER_VOTE_MS;
       const officialWipeAt=flowAt===null?null:flowAt+OFFICIAL_AFTER_FLOW_MS;
+
       return{id:row.id,status:row.status,statusLabel:row.status==="manual_closed"?"Encerrada manualmente":row.status,endsAt:terminal?null:row.endsAt,wipeAt:flowAt===null?null:new Date(flowAt),flowAt:flowAt===null?null:new Date(flowAt),officialWipeAt:officialWipeAt===null?null:new Date(officialWipeAt),automaticWipeCanceled:row.status==="manual_closed",winnerIndex:row.winnerIndex,leaderIndexes:leaders,counts,participants:voteBallots.length,appliedAt:row.appliedAt,failureReason:row.failureReason,messageId:row.messageId,channelId:row.channelId,maps:maps.map((m:any)=>({name:m.name,mode:m.mode||(m.mapUrl?"link":"seed"),seed:m.seed,size:m.size,mapUrl:m.mapUrl,image:m.image}))}
     })});
   }catch(error:any){res.status(500).json({error:error?.message||"Falha ao consultar votações."})}
@@ -86,7 +93,7 @@ router.post("/wipe/vote",async(req,res)=>{
     const result=await createMapVote(client,{createdBy:res.locals.admin.userId,date,maps,imageFiles});
     const officialWipeAt=result.wipeAt+OFFICIAL_AFTER_FLOW_MS;
     await auditWipe("MAP_VOTE_CREATED",{id:res.locals.admin.userId,name:res.locals.admin.username},`Votação ${result.id} criada pelo painel; fluxo técnico ${new Date(result.wipeAt).toISOString()}; wipe oficial ${new Date(officialWipeAt).toISOString()}.`);
-    res.status(201).json({...result,flowAt:result.wipeAt,officialWipeAt});
+    res.status(201).json({...result,flowAt:result.wipeAt,officialWipeAt,timeZone:"America/Sao_Paulo"});
   }catch(error:any){res.status(409).json({error:error?.message||"Falha ao criar votação."})}
 });
 
