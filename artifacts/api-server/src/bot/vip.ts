@@ -68,39 +68,10 @@ async function notifyVipExpired(opts: {
   steamId: string;
   discordUserId: string;
 }): Promise<void> {
-  const { client, tier, steamId, discordUserId } = opts;
-  const channelId = process.env.DISCORD_LOG_CHANNEL_ID?.trim();
-  if (!channelId) return;
-
-  try {
-    const channel = await client.channels.fetch(channelId).catch(() => null);
-    if (!channel?.isSendable()) {
-      logger.warn({ channelId }, "VIP expiry notification channel unavailable");
-      return;
-    }
-
-    const tierInfo = VIP_TIERS[tier];
-    await channel.send({
-      embeds: [{
-        color: 0x2ecc71,
-        title: "✅ VIP removido por expiração",
-        description: "O VIP expirou e foi removido com sucesso do jogador.",
-        fields: [
-          { name: "VIP", value: `${tierInfo.emoji} ${tierInfo.name}`, inline: true },
-          { name: "Steam ID", value: `\`${steamId}\``, inline: true },
-          ...(discordUserId && !discordUserId.startsWith("manual")
-            ? [{ name: "Discord", value: `<@${discordUserId}>`, inline: true }]
-            : []),
-          { name: "Motivo", value: "Expiração automática", inline: true },
-        ],
-        footer: { text: "Guerra Fria • Sistema automático de VIP" },
-        timestamp: new Date().toISOString(),
-      }],
-      allowedMentions: { parse: [] },
-    });
-  } catch (err) {
-    logger.error({ err, steamId, tier }, "Failed to send VIP expiry notification");
-  }
+  logger.info(
+    { tier: opts.tier, steamId: opts.steamId },
+    "VIP expirado removido; notificação no Discord suprimida",
+  );
 }
 
 export async function grantVip(opts: {
@@ -216,8 +187,6 @@ export async function revokeVip(opts: {
 
   logger.info({ subscriptionId, tier, steamId, reason, didRunGameRevoke }, "✅ revokeVip complete");
 
-  // Só anuncia quando a expiração atual realmente executou e confirmou o revoke no Rust.
-  // Reconciliações de registros antigos não geram notificação enganosa/spam.
   if (reason === "expired" && didRunGameRevoke) {
     await notifyVipExpired({ client, tier, steamId, discordUserId });
   }
