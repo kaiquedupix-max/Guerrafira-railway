@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { logger } from "../lib/logger.js";
 
 const STRIPE_BASE = "https://api.stripe.com/v1";
@@ -73,7 +72,6 @@ export async function createStripeCheckout(opts: {
   body.set("cancel_url", `${baseUrl}/loja?stripe=cancelled`);
   body.set("client_reference_id", String(opts.paymentRowId));
   body.set("customer_email", opts.email);
-  body.set("locale", "pt-BR");
   body.set("payment_method_types[0]", "card");
   body.set("line_items[0][price_data][currency]", "brl");
   body.set("line_items[0][price_data][unit_amount]", String(Math.round(opts.amount * 100)));
@@ -132,26 +130,4 @@ export async function retrieveStripeCheckout(sessionId: string): Promise<StripeC
     logger.error({ err, sessionId }, "Stripe checkout lookup exception");
     return null;
   }
-}
-
-export function verifyStripeWebhookSignature(rawBody: string, signatureHeader: string | undefined): boolean {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-  if (!secret || !signatureHeader) return false;
-  const parts = signatureHeader.split(",").map(part => part.trim());
-  const timestampPart = parts.find(part => part.startsWith("t="));
-  const signatures = parts.filter(part => part.startsWith("v1=")).map(part => part.slice(3));
-  const timestamp = timestampPart ? Number(timestampPart.slice(2)) : NaN;
-  if (!Number.isFinite(timestamp) || signatures.length === 0) return false;
-  if (Math.abs(Math.floor(Date.now() / 1000) - timestamp) > 300) return false;
-
-  const expected = createHmac("sha256", secret).update(`${timestamp}.${rawBody}`, "utf8").digest("hex");
-  const expectedBuffer = Buffer.from(expected, "hex");
-  return signatures.some(signature => {
-    try {
-      const candidate = Buffer.from(signature, "hex");
-      return candidate.length === expectedBuffer.length && timingSafeEqual(candidate, expectedBuffer);
-    } catch {
-      return false;
-    }
-  });
 }
