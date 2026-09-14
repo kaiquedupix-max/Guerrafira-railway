@@ -128,16 +128,25 @@ async function executeTelagem(interaction: ChatInputCommandInteraction): Promise
   }
 
   const playerName = safeGameChat(target.name, 80) || steamId;
+  const administratorName = safeGameChat(
+    interaction.user.globalName ?? interaction.user.username ?? interaction.user.tag ?? "Administrador",
+    60,
+  ) || "Administrador";
+
   const announcement = await executeRconCommand(
-    `say <color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>${playerName}</color>.`,
+    `say <color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>${playerName}</color>. Administrador responsável: <color=#FFD166>${administratorName}</color>.`,
   );
   if (announcement === null) {
-    logger.warn({ steamId, playerName }, "Telagem started but public Rust chat announcement was not confirmed");
+    logger.warn(
+      { steamId, playerName, administratorId: interaction.user.id, administratorName },
+      "Telagem started but public Rust chat announcement was not confirmed",
+    );
   }
 
   await interaction.editReply(
     `🚨 Telagem iniciada em **${target.name}** (\`${steamId}\`).\n` +
-    "O plugin Verificacao foi acionado no Rust; o jogador foi imobilizado e recebeu o aviso de telagem. O servidor também foi avisado no chat.",
+    `Administrador responsável: **${interaction.user.tag ?? interaction.user.username}**.\n` +
+    "O jogador foi imobilizado e a tela dele permanece totalmente preta durante o processo. O servidor foi avisado no chat.",
   );
 }
 
@@ -224,6 +233,7 @@ async function sendTimeoutPrompt(client: Client, payload: VerificationEvent): Pr
     await administrator.send({
       content:
         `⏰ **O prazo de 5 minutos da telagem expirou.**\n\n` +
+        `Administrador que iniciou: **${administrator.tag ?? administrator.username}**\n` +
         `Jogador: **${playerName}**\n` +
         `SteamID: \`${steamId}\`\n\n` +
         "O jogador continua preso na verificação. Deseja aplicar **banimento permanente** por não comparecer dentro do prazo?",
