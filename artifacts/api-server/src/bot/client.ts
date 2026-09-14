@@ -6,7 +6,7 @@ import { logger } from "../lib/logger.js";
 import { startDailyRestartScheduler } from "./autoRestart.js";
 import { setupTicketClaimSystem } from "./ticketClaim.js";
 import { startSeasonDiscordRankSync } from "./seasonDiscordRankSync.js";
-import { startVerificationIntegration } from "./verificationIntegration.js";
+import { startVerificationIntegration } from "./verificationIntegrationV2.js";
 
 let _client: Client | null = null;
 let notificationBridgeStarted = false;
