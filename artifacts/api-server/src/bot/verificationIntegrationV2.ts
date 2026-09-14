@@ -1,4 +1,7 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   Events,
   MessageFlags,
   PermissionFlagsBits,
@@ -13,6 +16,8 @@ import { searchPlayers } from "./utils/players.js";
 
 const STEAM_ID_RE = /^7656119\d{10}$/;
 const EVENT_PREFIX = "[GF_VERIFICACAO]";
+const TIMEOUT_BAN_PREFIX = "verification_timeout_ban:";
+const TIMEOUT_KEEP_PREFIX = "verification_timeout_keep:";
 let started = false;
 
 const telagemData = new SlashCommandBuilder()
@@ -29,9 +34,15 @@ const telagemData = new SlashCommandBuilder()
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+function safeGameChat(value: string, max = 90): string {
+  return String(value ?? "")
+    .replace(/[<>\r\n\t;"'\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
 async function registerTelagemCommand(client: Client): Promise<void> {
-  // O index principal usa guild.commands.set(), que substitui toda a lista.
-  // Aguardamos esse registro terminar e só então garantimos /telagem.
   await sleep(5_000);
 
   const payload = telagemData.toJSON();
@@ -116,9 +127,17 @@ async function executeTelagem(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
+  const playerName = safeGameChat(target.name, 80) || steamId;
+  const announcement = await executeRconCommand(
+    `say <color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>${playerName}</color>.`,
+  );
+  if (announcement === null) {
+    logger.warn({ steamId, playerName }, "Telagem started but public Rust chat announcement was not confirmed");
+  }
+
   await interaction.editReply(
     `🚨 Telagem iniciada em **${target.name}** (\`${steamId}\`).\n` +
-    "O plugin Verificacao foi acionado no Rust; o jogador foi imobilizado e recebeu o aviso de telagem.",
+    "O plugin Verificacao foi acionado no Rust; o jogador foi imobilizado e recebeu o aviso de telagem. O servidor também foi avisado no chat.",
   );
 }
 
@@ -130,7 +149,16 @@ type VerificationEvent = {
   administrator?: string;
 };
 
+type PendingTimeout = {
+  steamId: string;
+  playerName: string;
+  administratorId: string;
+  reason: string;
+  createdAt: number;
+};
+
 const handledRefusals = new Map<string, number>();
+const pendingTimeouts = new Map<string, PendingTimeout>();
 
 function alreadyHandled(steamId: string): boolean {
   const now = Date.now();
@@ -144,7 +172,145 @@ function alreadyHandled(steamId: string): boolean {
   return previous !== undefined && now - previous < 15_000;
 }
 
-async function handleVerificationEvent(type: string, message: string): Promise<void> {
+function discordAdministratorId(value?: string): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw.toLowerCase().startsWith("discord:")) return null;
+  const id = raw.slice("discord:".length).trim();
+  return /^\d{16,20}$/.test(id) ? id : null;
+}
+
+function clearExpiredTimeouts(): void {
+  const now = Date.now();
+  for (const [steamId, pending] of pendingTimeouts) {
+    if (now - pending.createdAt > 60 * 60_000) pendingTimeouts.delete(steamId);
+  }
+}
+
+async function sendTimeoutPrompt(client: Client, payload: VerificationEvent): Promise<void> {
+  const steamId = String(payload.steamId ?? "").trim();
+  const administratorId = discordAdministratorId(payload.administrator);
+  if (!STEAM_ID_RE.test(steamId) || !administratorId) return;
+
+  clearExpiredTimeouts();
+  const playerName = String(payload.playerName ?? `Jogador ${steamId}`).trim().slice(0, 100);
+  const reason = String(payload.reason ?? "Não compareceu à verificação administrativa dentro do prazo de 5 minutos.")
+    .trim()
+    .slice(0, 300);
+
+  const pending: PendingTimeout = {
+    steamId,
+    playerName,
+    administratorId,
+    reason,
+    createdAt: Date.now(),
+  };
+  pendingTimeouts.set(steamId, pending);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${TIMEOUT_BAN_PREFIX}${steamId}`)
+      .setLabel("Banir permanentemente")
+      .setEmoji("🔨")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`${TIMEOUT_KEEP_PREFIX}${steamId}`)
+      .setLabel("Não banir agora")
+      .setEmoji("⏳")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  try {
+    const administrator = await client.users.fetch(administratorId);
+    await administrator.send({
+      content:
+        `⏰ **O prazo de 5 minutos da telagem expirou.**\n\n` +
+        `Jogador: **${playerName}**\n` +
+        `SteamID: \`${steamId}\`\n\n` +
+        "O jogador continua preso na verificação. Deseja aplicar **banimento permanente** por não comparecer dentro do prazo?",
+      components: [row],
+    });
+    logger.info({ steamId, playerName, administratorId }, "Verification timeout DM sent to moderator");
+  } catch (error) {
+    logger.error({ error, steamId, playerName, administratorId }, "Failed to DM moderator after verification timeout");
+  }
+}
+
+async function handleTimeoutButton(interaction: any): Promise<boolean> {
+  if (!interaction.isButton?.()) return false;
+
+  const customId = String(interaction.customId ?? "");
+  const isBan = customId.startsWith(TIMEOUT_BAN_PREFIX);
+  const isKeep = customId.startsWith(TIMEOUT_KEEP_PREFIX);
+  if (!isBan && !isKeep) return false;
+
+  const steamId = customId.slice((isBan ? TIMEOUT_BAN_PREFIX : TIMEOUT_KEEP_PREFIX).length);
+  const pending = pendingTimeouts.get(steamId);
+
+  if (!pending) {
+    await interaction.update({
+      content: "ℹ️ Esta decisão de telagem não está mais pendente. O jogador pode já ter sido verificado, liberado ou punido.",
+      components: [],
+    }).catch(() => {});
+    return true;
+  }
+
+  if (interaction.user.id !== pending.administratorId) {
+    await interaction.reply({ content: "❌ Somente o administrador que iniciou a telagem pode decidir este caso.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    return true;
+  }
+
+  if (isKeep) {
+    pendingTimeouts.delete(steamId);
+    await interaction.update({
+      content:
+        `⏳ **${pending.playerName}** não foi banido agora.\n` +
+        "Ele continuará preso na verificação até você concluir o processo. Use `/verificar` para aprovar e liberar o jogador, ou aplique a punição manualmente se necessário.",
+      components: [],
+    });
+    return true;
+  }
+
+  await interaction.deferUpdate();
+  try {
+    const { banPlayer } = await import("../core/systemActions.js");
+    const result = await banPlayer({
+      steamId,
+      duration: "perm",
+      reason: pending.reason,
+      playerName: pending.playerName,
+      actor: {
+        id: interaction.user.id,
+        name: interaction.user.tag ?? interaction.user.username ?? "Administrador",
+        source: "discord",
+      },
+    });
+
+    const releaseResult = await executeRconCommand(`verificacao liberar ${steamId}`);
+    if (releaseResult === null) {
+      logger.warn({ steamId }, "Timeout ban applied but verification session release was not confirmed");
+    }
+
+    pendingTimeouts.delete(steamId);
+    await interaction.editReply({
+      content:
+        `🔨 **Banimento permanente aplicado.**\n` +
+        `Jogador: **${result.playerName}** (\`${steamId}\`)\n` +
+        `Motivo: ${pending.reason}\n\n` +
+        "O ban feed e o anúncio padrão do servidor foram acionados.",
+      components: [],
+    });
+  } catch (error) {
+    logger.error({ error, steamId, playerName: pending.playerName }, "Failed to apply verification timeout ban");
+    await interaction.editReply({
+      content: "❌ Não foi possível aplicar o banimento agora. A telagem continua ativa; tente novamente pelo comando de banimento.",
+      components: [],
+    }).catch(() => {});
+  }
+
+  return true;
+}
+
+async function handleVerificationEvent(client: Client, type: string, message: string): Promise<void> {
   const index = message.indexOf(EVENT_PREFIX);
   if (index < 0) return;
 
@@ -161,17 +327,26 @@ async function handleVerificationEvent(type: string, message: string): Promise<v
     return;
   }
 
-  if (payload.eventType !== "refusal_ban") return;
-
   const steamId = String(payload.steamId ?? "").trim();
+
+  if (payload.eventType === "timeout_prompt") {
+    await sendTimeoutPrompt(client, payload);
+    return;
+  }
+
+  if (payload.eventType === "session_end") {
+    if (STEAM_ID_RE.test(steamId)) pendingTimeouts.delete(steamId);
+    return;
+  }
+
+  if (payload.eventType !== "refusal_ban") return;
   if (!STEAM_ID_RE.test(steamId) || alreadyHandled(steamId)) return;
 
+  pendingTimeouts.delete(steamId);
   const playerName = String(payload.playerName ?? `Jogador ${steamId}`).trim().slice(0, 100);
   const reason = String(payload.reason ?? "Recusou a verificação administrativa.").trim().slice(0, 300);
 
   try {
-    // Reutiliza o fluxo oficial de punição do bot para manter
-    // mod_logs, ban feed e anúncio padrão no servidor.
     const { banPlayer } = await import("../core/systemActions.js");
     await banPlayer({
       steamId,
@@ -203,6 +378,8 @@ export function startVerificationIntegration(client: Client): void {
 
   client.on(Events.InteractionCreate, async interaction => {
     try {
+      if (await handleTimeoutButton(interaction)) return;
+
       if (interaction.isAutocomplete() && interaction.commandName === telagemData.name) {
         await autocomplete(interaction);
         return;
@@ -222,7 +399,7 @@ export function startVerificationIntegration(client: Client): void {
   });
 
   addRconEventHandler((type, message) => {
-    handleVerificationEvent(type, message).catch(error =>
+    handleVerificationEvent(client, type, message).catch(error =>
       logger.error({ error }, "Verification RCON event handler failed"),
     );
   });
