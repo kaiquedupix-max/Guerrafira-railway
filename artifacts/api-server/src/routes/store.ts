@@ -1,10 +1,13 @@
 import { Router, type Request, type Response } from "express";
+import { eq } from "drizzle-orm";
 import { db, paymentsTable } from "@workspace/db";
 import { getCommunitySession } from "../admin/communitySession.js";
 import { createCardPreference, createPixPayment } from "../bot/mp.js";
+import { createStripeCheckout, isStripeConfigured, retrieveStripeCheckout } from "../bot/stripe.js";
 import { getLinkedSteamV2, saveLinkedSteamV2, STEAM_LOCKED_NOTICE } from "../bot/utils/linkedSteamV2.js";
 import { VIP_TIERS, type VipTier } from "../bot/vip.js";
 import { logger } from "../lib/logger.js";
+import { processStripeCheckoutSession } from "./stripePayment.js";
 
 const router = Router();
 const BASE_URL = "https://www.guerrafriarust.com.br";
@@ -65,7 +68,7 @@ router.get("/me", async (req, res) => {
   const session = getCommunitySession(req);
   if (!session) return res.status(401).json({ error: "Sua sessão expirou. Entre novamente com o Discord." });
   const linked = await getLinkedSteamV2(session.userId);
-  return res.json({ discordUserId: session.userId, username: session.username, steamId: linked?.steamId ?? null });
+  return res.json({ discordUserId: session.userId, username: session.username, steamId: linked?.steamId ?? null, stripeEnabled: isStripeConfigured() });
 });
 
 router.post("/pix", async (req, res) => {
@@ -84,10 +87,64 @@ router.post("/card", async (req, res) => {
   const vip = VIP_TIERS[input.tier];
   try {
     const preference = await createCardPreference({ amount: vip.price, title: `${vip.name} Guerra Fria - 30 dias`, discordUserId: input.discordUserId, steamId: input.steamId, vipTier: input.tier });
-    if (!preference) return res.status(502).json({ error: "O Mercado Pago não conseguiu criar o checkout do cartão." });
+    if (!preference) return res.status(502).json({ error: "O Mercado Pago não conseguiu criar o checkout do cartão. Você pode tentar a opção Cartão • Stripe." });
     await db.insert(paymentsTable).values({ mpPreferenceId: preference.preferenceId, mpExternalReference: preference.externalReference, discordUserId: input.discordUserId, steamId: input.steamId, email: input.email, vipTier: input.tier, amount: vip.price.toFixed(2), method: "credit_card", status: "pending" });
     return res.json({ checkoutUrl: preference.checkoutUrl, preferenceId: preference.preferenceId, steamId: input.steamId });
-  } catch (err) { logger.error({ err, tier: input.tier, discordUserId: input.discordUserId }, "Web store card error"); return res.status(500).json({ error: "Não foi possível abrir o checkout do cartão agora. Tente novamente." }); }
+  } catch (err) { logger.error({ err, tier: input.tier, discordUserId: input.discordUserId }, "Web store card error"); return res.status(500).json({ error: "Não foi possível abrir o cartão no Mercado Pago. Tente pagar com Cartão • Stripe." }); }
+});
+
+router.post("/stripe/card", async (req, res) => {
+  const input = await validate(req, res); if (!input) return;
+  if (!isStripeConfigured()) return res.status(503).json({ error: "Pagamento por Stripe ainda não está configurado." });
+  const vip = VIP_TIERS[input.tier];
+  try {
+    const [row] = await db.insert(paymentsTable).values({
+      discordUserId: input.discordUserId,
+      steamId: input.steamId,
+      email: input.email,
+      vipTier: input.tier,
+      amount: vip.price.toFixed(2),
+      method: "stripe_card",
+      status: "pending",
+    }).returning({ id: paymentsTable.id });
+    if (!row) return res.status(500).json({ error: "Não foi possível registrar a compra Stripe." });
+
+    const checkout = await createStripeCheckout({
+      paymentRowId: row.id,
+      amount: vip.price,
+      title: `${vip.name} Guerra Fria - 30 dias`,
+      email: input.email,
+      discordUserId: input.discordUserId,
+      steamId: input.steamId,
+      vipTier: input.tier,
+    });
+    if ("error" in checkout) {
+      await db.update(paymentsTable).set({ status: "failed", updatedAt: new Date() }).where(eq(paymentsTable.id, row.id));
+      return res.status(502).json({ error: checkout.error });
+    }
+
+    await db.update(paymentsTable).set({ stripeSessionId: checkout.sessionId, updatedAt: new Date() })
+      .where(eq(paymentsTable.id, row.id));
+    return res.json({ checkoutUrl: checkout.checkoutUrl, sessionId: checkout.sessionId, steamId: input.steamId });
+  } catch (err) {
+    logger.error({ err, tier: input.tier, discordUserId: input.discordUserId }, "Web store Stripe card error");
+    return res.status(500).json({ error: "Não foi possível abrir o checkout da Stripe agora. Tente novamente." });
+  }
+});
+
+router.get("/stripe/success", async (req, res) => {
+  const sessionId = typeof req.query.session_id === "string" ? req.query.session_id : "";
+  if (!sessionId) return void res.redirect("/loja?stripe=error");
+  try {
+    const checkout = await retrieveStripeCheckout(sessionId);
+    if (!checkout) return void res.redirect("/loja?stripe=error");
+    const processed = await processStripeCheckoutSession(checkout);
+    if (processed && checkout.payment_status === "paid") return void res.redirect("/loja?stripe=success");
+    return void res.redirect("/loja?stripe=pending");
+  } catch (err) {
+    logger.error({ err, sessionId }, "Stripe checkout success reconciliation failed");
+    return void res.redirect("/loja?stripe=error");
+  }
 });
 
 export default router;

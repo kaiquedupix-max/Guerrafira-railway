@@ -11,6 +11,7 @@ import promoRouter, { startPromoReconciler } from "./promo.js";
 import revenueView from "../admin/revenueView.js";
 import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
 import { startCardPaymentReconciler } from "./paymentReconciler.js";
+import { startStripePaymentReconciler } from "./stripePayment.js";
 import { startSeasonPaymentReconciler } from "./seasonPaymentReconciler.js";
 import leaderboardWebhookRouter from "./leaderboardWebhook.js";
 import seasonTransportRouter from "./seasonTransport.js";
@@ -37,6 +38,7 @@ import { repairWipeSchedule20260904 } from "../core/repairWipeSchedule20260904.j
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
+startStripePaymentReconciler();
 startSeasonPaymentReconciler();
 startSeasonEmailLifecycle();
 startSeasonGameRankSync();
