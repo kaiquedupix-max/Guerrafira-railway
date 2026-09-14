@@ -1,11 +1,13 @@
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db, paymentsTable, vipSubscriptionsTable } from "@workspace/db";
 import { discordClient } from "../bot/client.js";
 import { grantVip, type VipTier } from "../bot/vip.js";
-import type { StripeCheckoutSession } from "../bot/stripe.js";
+import { retrieveStripeCheckout, type StripeCheckoutSession } from "../bot/stripe.js";
 import { logger } from "../lib/logger.js";
 
 type PaymentRow = typeof paymentsTable.$inferSelect;
+let reconciliationStarted = false;
+let reconciliationRunning = false;
 
 function paymentIntentId(session: StripeCheckoutSession): string {
   if (typeof session.payment_intent === "string") return session.payment_intent;
@@ -139,4 +141,34 @@ export async function processStripeCheckoutSession(session: StripeCheckoutSessio
     updatedAt: new Date(),
   };
   return fulfillStripePayment(refreshed, session);
+}
+
+async function reconcilePendingStripePayments(): Promise<void> {
+  if (reconciliationRunning) return;
+  reconciliationRunning = true;
+  try {
+    const pending = await db.select().from(paymentsTable).where(and(
+      eq(paymentsTable.method, "stripe_card"),
+      inArray(paymentsTable.status, ["pending", "approved"]),
+      isNull(paymentsTable.vipGrantedAt),
+      isNotNull(paymentsTable.stripeSessionId),
+    )).orderBy(desc(paymentsTable.createdAt)).limit(100);
+
+    for (const row of pending) {
+      if (!row.stripeSessionId) continue;
+      const session = await retrieveStripeCheckout(row.stripeSessionId);
+      if (session) await processStripeCheckoutSession(session);
+    }
+  } finally {
+    reconciliationRunning = false;
+  }
+}
+
+export function startStripePaymentReconciler(): void {
+  if (reconciliationStarted) return;
+  reconciliationStarted = true;
+  setTimeout(() => reconcilePendingStripePayments().catch(err =>
+    logger.error({ err }, "Initial Stripe payment reconciliation failed")), 12_000);
+  setInterval(() => reconcilePendingStripePayments().catch(err =>
+    logger.error({ err }, "Stripe payment reconciliation failed")), 30_000);
 }
