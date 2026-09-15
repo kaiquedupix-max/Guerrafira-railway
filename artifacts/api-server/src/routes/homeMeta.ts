@@ -12,7 +12,9 @@ const DISCORD_INVITE_CODE = "guerrafria";
 function resolveBannerPath(): string | null {
   const candidates = [
     path.resolve(process.cwd(), "artifacts/api-server/public/gf-home-banner-exact.jpg"),
+    path.resolve(process.cwd(), "artifacts/api-server/public/gf-home-hero.jpg"),
     path.resolve(process.cwd(), "public/gf-home-banner-exact.jpg"),
+    path.resolve(process.cwd(), "public/gf-home-hero.jpg"),
   ];
   return candidates.find(existsSync) ?? null;
 }
