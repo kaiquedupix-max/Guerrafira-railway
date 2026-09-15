@@ -9,6 +9,7 @@ import {
 } from "discord.js";
 import { VIP_TIERS, type VipTier } from "./vip.js";
 import { handleVipStoreBuy } from "./vipStorePurchase.js";
+import { handleVipPayStripe } from "./ticketsLinked.js";
 import { startBoosterSystem } from "./booster.js";
 import { startDiscordModeration } from "./moderation.js";
 import { logger } from "../lib/logger.js";
@@ -76,9 +77,9 @@ function buildCard(card: (typeof VIP_CARDS)[number], includeImage = true) {
     .addFields(
       { name: "💰 Valor", value: `R$ ${vip.price.toFixed(2)}`, inline: true },
       { name: "⏱️ Duração", value: "30 dias", inline: true },
-      { name: "💳 Pagamento", value: "PIX ou Cartão", inline: true },
+      { name: "💳 Pagamento", value: "PIX • Mercado Pago • Stripe", inline: true },
     )
-    .setFooter({ text: `${STORE_MARKER} • Pagamentos via Mercado Pago` });
+    .setFooter({ text: `${STORE_MARKER} • Mercado Pago + Stripe` });
 
   if (includeImage) {
     const imageUrl = safeImageUrl(card.imageEnv);
@@ -121,6 +122,21 @@ function registerStoreInteractionHandler(client: Client): void {
 
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
+
+    if (interaction.customId === "vip_pay_stripe") {
+      try {
+        await handleVipPayStripe(interaction);
+      } catch (err) {
+        logger.error({ err, customId: interaction.customId }, "Stripe VIP ticket interaction failed");
+        try {
+          const payload = { content: "❌ Não foi possível gerar o checkout Stripe. Tente novamente.", ephemeral: true };
+          if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
+          else await interaction.reply(payload);
+        } catch {}
+      }
+      return;
+    }
+
     if (!interaction.customId.startsWith("vip_store_buy_")) return;
 
     try {
