@@ -10,9 +10,11 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
 } from "discord.js";
+import { eq } from "drizzle-orm";
 import { db, paymentsTable } from "@workspace/db";
 import { VIP_TIERS, type VipTier } from "./vip.js";
 import { createPixPayment, createCardPreference } from "./mp.js";
+import { createStripeCheckout, isStripeConfigured } from "./stripe.js";
 import { generateQrCodeBuffer } from "./utils/qrcode.js";
 import { getLinkedSteamV2, saveLinkedSteamV2, STEAM_LOCKED_NOTICE } from "./utils/linkedSteamV2.js";
 import { logger } from "../lib/logger.js";
@@ -141,7 +143,12 @@ export async function handleVipModal(interaction: ModalSubmitInteraction): Promi
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("vip_pay_pix").setLabel("📱 Pagar com PIX").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("vip_pay_card").setLabel("💳 Pagar com Cartão").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("vip_pay_card").setLabel("💳 Cartão • Mercado Pago").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("vip_pay_stripe")
+      .setLabel(isStripeConfigured() ? "💳 Cartão • Stripe" : "💳 Stripe indisponível")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!isStripeConfigured()),
   );
   await interaction.reply({ embeds: [embed], components: [row] });
 }
@@ -156,7 +163,7 @@ export async function handleVipPayPix(interaction: ButtonInteraction): Promise<v
   const amount = ctx.customPrice ?? vip.price;
   const label = ctx.customLabel ?? `${vip.name} 30 dias`;
   const pix = await createPixPayment({ amount, description: `${label} — Guerra Fria`, email: ctx.email, discordUserId: ctx.discordUserId, steamId: ctx.steamId, vipTier: ctx.tier });
-  if (!pix) { await interaction.editReply("❌ Erro ao gerar o PIX. Tente novamente."); return; }
+  if ("error" in pix) { await interaction.editReply(`❌ Erro ao gerar o PIX: ${pix.error}`); return; }
 
   await db.insert(paymentsTable).values({ mpPaymentId: pix.paymentId, discordUserId: ctx.discordUserId, steamId: ctx.steamId, email: ctx.email, vipTier: ctx.tier, amount: String(amount), method: "pix", status: "pending", ticketChannelId: channelId ?? undefined });
   pending.delete(channelId!);
@@ -182,16 +189,77 @@ export async function handleVipPayCard(interaction: ButtonInteraction): Promise<
   const amount = ctx.customPrice ?? vip.price;
   const label = ctx.customLabel ?? `${vip.name} 30 dias`;
   const pref = await createCardPreference({ amount, title: `${label} — Guerra Fria`, discordUserId: ctx.discordUserId, steamId: ctx.steamId, vipTier: ctx.tier });
-  if (!pref) { await interaction.editReply("❌ Erro ao gerar o checkout. Tente novamente ou use PIX."); return; }
+  if (!pref) { await interaction.editReply("❌ O Mercado Pago não conseguiu gerar o checkout. Tente **Cartão • Stripe** ou use PIX."); return; }
 
-  await db.insert(paymentsTable).values({ mpPreferenceId: pref.preferenceId, discordUserId: ctx.discordUserId, steamId: ctx.steamId, email: ctx.email, vipTier: ctx.tier, amount: String(amount), method: "credit_card", status: "pending", ticketChannelId: channelId ?? undefined });
+  await db.insert(paymentsTable).values({ mpPreferenceId: pref.preferenceId, mpExternalReference: pref.externalReference, discordUserId: ctx.discordUserId, steamId: ctx.steamId, email: ctx.email, vipTier: ctx.tier, amount: String(amount), method: "credit_card", status: "pending", ticketChannelId: channelId ?? undefined });
   pending.delete(channelId!);
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setLabel("💳 Ir para o Checkout").setStyle(ButtonStyle.Link).setURL(pref.checkoutUrl));
-  const embed = new EmbedBuilder().setColor(0x3498db).setTitle("💳 Pagamento via Cartão")
-    .setDescription(`**Valor:** R$ ${amount.toFixed(2)}\n\n🔒 Steam vinculada: \`${ctx.steamId}\`\n\nClique no botão para acessar o checkout seguro do Mercado Pago.\n\n✅ VIP ativado automaticamente após confirmação.`)
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setLabel("💳 Ir para o Mercado Pago").setStyle(ButtonStyle.Link).setURL(pref.checkoutUrl));
+  const embed = new EmbedBuilder().setColor(0x3498db).setTitle("💳 Cartão • Mercado Pago")
+    .setDescription(`**Valor:** R$ ${amount.toFixed(2)}\n\n🔒 Steam vinculada: \`${ctx.steamId}\`\n\nClique no botão para acessar o checkout seguro do Mercado Pago.\n\nSe o cartão não funcionar no Mercado Pago, volte e tente **Cartão • Stripe**.\n\n✅ VIP ativado automaticamente após confirmação.`)
     .setFooter({ text: `Preferência: ${pref.preferenceId} • Guerra Fria` });
   await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+export async function handleVipPayStripe(interaction: ButtonInteraction): Promise<void> {
+  await interaction.deferReply();
+  const channelId = interaction.channelId;
+  const ctx = channelId ? pending.get(channelId) : undefined;
+  if (!ctx) { await interaction.editReply("❌ Sessão expirada. Clique no plano VIP novamente."); return; }
+  if (!isStripeConfigured()) { await interaction.editReply("❌ Stripe ainda não está configurado no Railway. Use PIX ou Mercado Pago."); return; }
+
+  const vip = VIP_TIERS[ctx.tier];
+  const amount = ctx.customPrice ?? vip.price;
+  const label = ctx.customLabel ?? `${vip.name} 30 dias`;
+
+  try {
+    const [paymentRow] = await db.insert(paymentsTable).values({
+      discordUserId: ctx.discordUserId,
+      steamId: ctx.steamId,
+      email: ctx.email,
+      vipTier: ctx.tier,
+      amount: String(amount),
+      method: "stripe_card",
+      status: "pending",
+      ticketChannelId: channelId ?? undefined,
+    }).returning({ id: paymentsTable.id });
+
+    if (!paymentRow) {
+      await interaction.editReply("❌ Não foi possível registrar a compra Stripe. Tente novamente.");
+      return;
+    }
+
+    const checkout = await createStripeCheckout({
+      paymentRowId: paymentRow.id,
+      amount,
+      title: `${label} — Guerra Fria`,
+      email: ctx.email,
+      discordUserId: ctx.discordUserId,
+      steamId: ctx.steamId,
+      vipTier: ctx.tier,
+    });
+
+    if ("error" in checkout) {
+      await db.update(paymentsTable).set({ status: "failed", updatedAt: new Date() }).where(eq(paymentsTable.id, paymentRow.id));
+      await interaction.editReply(`❌ Não foi possível abrir o Stripe: ${checkout.error}`);
+      return;
+    }
+
+    await db.update(paymentsTable).set({ stripeSessionId: checkout.sessionId, updatedAt: new Date() }).where(eq(paymentsTable.id, paymentRow.id));
+    pending.delete(channelId!);
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setLabel("💳 Ir para o Stripe").setStyle(ButtonStyle.Link).setURL(checkout.checkoutUrl),
+    );
+    const embed = new EmbedBuilder().setColor(0x635bff).setTitle("💳 Cartão • Stripe")
+      .setDescription(`**Valor:** R$ ${amount.toFixed(2)}\n\n🔒 Steam vinculada: \`${ctx.steamId}\`\n\nClique no botão para acessar o checkout seguro do Stripe.\n\n✅ O VIP será ativado automaticamente depois que o Stripe confirmar o pagamento.`)
+      .setFooter({ text: `Sessão Stripe: ${checkout.sessionId} • Guerra Fria` });
+    await interaction.editReply({ embeds: [embed], components: [row] });
+    logger.info({ sessionId: checkout.sessionId, tier: ctx.tier, channelId }, "Stripe VIP checkout created from Discord ticket");
+  } catch (err) {
+    logger.error({ err, tier: ctx.tier, channelId }, "Stripe VIP checkout failed in Discord ticket");
+    await interaction.editReply("❌ Não foi possível gerar o checkout Stripe agora. Tente novamente ou use Mercado Pago.");
+  }
 }
 
 export async function handlePixCopy(interaction: ButtonInteraction): Promise<void> {
