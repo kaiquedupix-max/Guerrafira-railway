@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import leaderboardRouter from "./leaderboardV2";
 import publicStatusRouter from "./publicStatus.js";
+import profileRouter from "./profile.js";
 import homeMetaRouter from "./homeMeta.js";
 import adminRouter from "./admin";
 import communityRouter from "./community.js";
@@ -10,6 +11,8 @@ import storeRouter from "./store.js";
 import promoParticipantDetailsRouter from "./promoParticipantDetails.js";
 import promoRouter, { startPromoReconciler } from "./promo.js";
 import revenueView from "../admin/revenueView.js";
+import { withSiteChrome } from "../admin/siteChrome.js";
+import { getCommunitySession } from "../admin/communitySession.js";
 import { startPaymentStatusNotifier } from "../admin/paymentStatusNotifier.js";
 import { startCardPaymentReconciler } from "./paymentReconciler.js";
 import { startStripePaymentReconciler } from "./stripePayment.js";
@@ -50,7 +53,24 @@ void runSeasonEmailRepairAutorun();
 
 const router: IRouter = Router();
 router.use(healthRouter);
+
+// A página de status é legada e gera o próprio HTML. Interceptamos somente
+// GET /status para aplicar o mesmo chrome/tema usado no restante do portal.
+router.use((req, res, next) => {
+  if (req.method !== "GET" || req.path !== "/status") return next();
+  const originalSend = res.send.bind(res);
+  res.send = ((body?: any) => {
+    if (typeof body === "string" && /<html/i.test(body)) {
+      const session = getCommunitySession(req);
+      body = withSiteChrome(body, "status", { isAdmin:Boolean(session?.isAdmin), username:session?.username || "" });
+    }
+    return originalSend(body);
+  }) as any;
+  next();
+});
+
 router.use(publicStatusRouter);
+router.use(profileRouter);
 router.use(homeMetaRouter);
 router.use(rankAssetsRouter);
 router.use(leaderboardRouter);
