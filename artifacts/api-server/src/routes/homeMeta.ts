@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { Router, type IRouter } from "express";
 import { getCommunitySession } from "../admin/communitySession.js";
@@ -9,21 +9,69 @@ const router: IRouter = Router();
 const DISCORD_INVITE_URL = "https://discord.gg/guerrafria";
 const DISCORD_INVITE_CODE = "guerrafria";
 
-function resolveBannerPath(): string | null {
+function resolvePublicPath(...parts: string[]): string | null {
   const candidates = [
-    path.resolve(process.cwd(), "artifacts/api-server/public/gf-home-banner-exact.jpg"),
-    path.resolve(process.cwd(), "artifacts/api-server/public/gf-home-hero.jpg"),
-    path.resolve(process.cwd(), "public/gf-home-banner-exact.jpg"),
-    path.resolve(process.cwd(), "public/gf-home-hero.jpg"),
+    path.resolve(process.cwd(), "artifacts/api-server/public", ...parts),
+    path.resolve(process.cwd(), "public", ...parts),
   ];
   return candidates.find(existsSync) ?? null;
 }
 
+function resolveBannerPath(): string | null {
+  return resolvePublicPath("gf-home-banner-exact.jpg")
+    ?? resolvePublicPath("gf-home-hero.jpg")
+    ?? resolvePublicPath("guerra-fria-hero.jpeg");
+}
+
+function readChunkedArt(name: "hero" | "store" | "community"): Buffer | null {
+  const dirs = [
+    path.resolve(process.cwd(), "artifacts/api-server/public/art-v2"),
+    path.resolve(process.cwd(), "public/art-v2"),
+  ];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    const files = readdirSync(dir)
+      .filter(file => new RegExp(`^${name}-\\d+\\.b64$`).test(file))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (!files.length) continue;
+    if (name === "community" && files.length < 3) continue;
+    const encoded = files.map(file => readFileSync(path.join(dir, file), "utf8").trim()).join("");
+    if (!encoded) continue;
+    try {
+      const decoded = Buffer.from(encoded, "base64");
+      if (decoded.length > 5000) return decoded;
+    } catch {}
+  }
+  return null;
+}
+
 router.get("/home/banner", (_req, res) => {
+  const art = readChunkedArt("hero");
+  if (art) {
+    res.setHeader("Content-Type", "image/webp");
+    res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+    return void res.send(art);
+  }
   const file = resolveBannerPath();
   if (!file) return void res.status(404).end();
   res.setHeader("Cache-Control", "public, max-age=3600");
   return void res.sendFile(file);
+});
+
+router.get("/home/art/:name", (req, res) => {
+  const requested = String(req.params.name ?? "");
+  const name = requested === "store" ? "store" : requested === "community" ? "community" : "hero";
+  let art = readChunkedArt(name);
+  if (!art && name === "community") art = readChunkedArt("hero");
+  if (art) {
+    res.setHeader("Content-Type", "image/webp");
+    res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+    return void res.send(art);
+  }
+  const fallback = resolveBannerPath();
+  if (!fallback) return void res.status(404).end();
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  return void res.sendFile(fallback);
 });
 
 router.get("/home/meta", async (_req, res) => {
