@@ -24,10 +24,11 @@ function resolveBannerPath(): string | null {
 }
 
 function readChunkedArt(name: "hero" | "store" | "community"): Buffer | null {
-  const dirs = [
-    path.resolve(process.cwd(), "artifacts/api-server/public/art-v2"),
-    path.resolve(process.cwd(), "public/art-v2"),
-  ];
+  const versionDirs = name === "hero" ? ["art-v7", "art-v2"] : ["art-v2"];
+  const dirs = versionDirs.flatMap(version => [
+    path.resolve(process.cwd(), "artifacts/api-server/public", version),
+    path.resolve(process.cwd(), "public", version),
+  ]);
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     const files = readdirSync(dir)
