@@ -8,7 +8,6 @@ import { discordClient } from "../bot/client.js";
 const router: IRouter = Router();
 const DISCORD_INVITE_URL = "https://discord.gg/guerrafria";
 const DISCORD_INVITE_CODE = "guerrafria";
-const FINAL_HERO_CHUNKS = 15;
 
 function resolvePublicPath(...parts: string[]): string | null {
   const candidates = [
@@ -18,63 +17,57 @@ function resolvePublicPath(...parts: string[]): string | null {
   return candidates.find(existsSync) ?? null;
 }
 
+function resolveFinalHeroPath(): string | null {
+  return resolvePublicPath("gf-home-banner-final.webp");
+}
+
 function resolveBannerPath(): string | null {
-  return resolvePublicPath("gf-home-banner-exact.jpg")
+  return resolveFinalHeroPath()
+    ?? resolvePublicPath("gf-home-banner-exact.jpg")
     ?? resolvePublicPath("gf-home-hero.jpg")
     ?? resolvePublicPath("guerra-fria-hero.jpeg");
 }
 
-function isWebp(data: Buffer): boolean {
-  return data.length > 12
-    && data.toString("ascii", 0, 4) === "RIFF"
-    && data.toString("ascii", 8, 12) === "WEBP";
-}
-
 function readChunkedArt(name: "hero" | "store" | "community"): Buffer | null {
-  const versions = name === "hero" ? ["art-v7", "art-v2"] : ["art-v2"];
-  const roots = [
-    path.resolve(process.cwd(), "artifacts/api-server/public"),
-    path.resolve(process.cwd(), "public"),
-  ];
-
-  for (const version of versions) {
-    for (const root of roots) {
-      const dir = path.join(root, version);
-      if (!existsSync(dir)) continue;
-
-      const files = readdirSync(dir)
-        .filter(file => new RegExp(`^${name}-\\d+\\.b64$`).test(file))
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-
-      if (!files.length) continue;
-      if (name === "hero" && version === "art-v7" && files.length !== FINAL_HERO_CHUNKS) continue;
-      if (name === "community" && files.length < 3) continue;
-
-      const encoded = files
-        .map(file => readFileSync(path.join(dir, file), "utf8").trim())
-        .join("");
-      if (!encoded) continue;
-
-      try {
-        const decoded = Buffer.from(encoded, "base64");
-        if (!isWebp(decoded)) continue;
-        if (name === "hero" && version === "art-v7" && decoded.length < 120_000) continue;
-        if (decoded.length > 5_000) return decoded;
-      } catch {}
-    }
+  const versionDirs = name === "hero" ? ["art-v7", "art-v2"] : ["art-v2"];
+  const dirs = versionDirs.flatMap(version => [
+    path.resolve(process.cwd(), "artifacts/api-server/public", version),
+    path.resolve(process.cwd(), "public", version),
+  ]);
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    const files = readdirSync(dir)
+      .filter(file => new RegExp(`^${name}-\\d+\\.b64$`).test(file))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (!files.length) continue;
+    if (name === "community" && files.length < 3) continue;
+    const encoded = files.map(file => readFileSync(path.join(dir, file), "utf8").trim()).join("");
+    if (!encoded) continue;
+    try {
+      const decoded = Buffer.from(encoded, "base64");
+      if (decoded.length > 5000) return decoded;
+    } catch {}
   }
   return null;
 }
 
-function sendArt(res: any, art: Buffer): void {
+function sendFinalHero(res: any): boolean {
+  const file = resolveFinalHeroPath();
+  if (!file) return false;
   res.setHeader("Content-Type", "image/webp");
   res.setHeader("Cache-Control", "public, max-age=3600");
-  res.send(art);
+  res.sendFile(file);
+  return true;
 }
 
 router.get("/home/banner", (_req, res) => {
+  if (sendFinalHero(res)) return;
   const art = readChunkedArt("hero");
-  if (art) return void sendArt(res, art);
+  if (art) {
+    res.setHeader("Content-Type", "image/webp");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    return void res.send(art);
+  }
   const file = resolveBannerPath();
   if (!file) return void res.status(404).end();
   res.setHeader("Cache-Control", "public, max-age=3600");
@@ -84,9 +77,14 @@ router.get("/home/banner", (_req, res) => {
 router.get("/home/art/:name", (req, res) => {
   const requested = String(req.params.name ?? "");
   const name = requested === "store" ? "store" : requested === "community" ? "community" : "hero";
+  if (name === "hero" && sendFinalHero(res)) return;
   let art = readChunkedArt(name);
   if (!art && name === "community") art = readChunkedArt("hero");
-  if (art) return void sendArt(res, art);
+  if (art) {
+    res.setHeader("Content-Type", "image/webp");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    return void res.send(art);
+  }
   const fallback = resolveBannerPath();
   if (!fallback) return void res.status(404).end();
   res.setHeader("Cache-Control", "public, max-age=3600");
