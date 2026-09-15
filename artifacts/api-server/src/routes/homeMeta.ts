@@ -18,7 +18,8 @@ function resolvePublicPath(...parts: string[]): string | null {
 }
 
 function resolveFinalHeroPath(): string | null {
-  return resolvePublicPath("gf-home-banner-final.webp");
+  return resolvePublicPath("gf-home-hero-hd-20260915.png")
+    ?? resolvePublicPath("gf-home-banner-final.webp");
 }
 
 function resolveBannerPath(): string | null {
@@ -54,7 +55,7 @@ function readChunkedArt(name: "hero" | "store" | "community"): Buffer | null {
 function sendFinalHero(res: any): boolean {
   const file = resolveFinalHeroPath();
   if (!file) return false;
-  res.setHeader("Content-Type", "image/webp");
+  res.type(path.extname(file));
   res.setHeader("Cache-Control", "public, max-age=3600");
   res.sendFile(file);
   return true;
