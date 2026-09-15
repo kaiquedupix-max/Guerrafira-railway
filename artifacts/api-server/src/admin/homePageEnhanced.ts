@@ -4,7 +4,7 @@ import { renderHome as renderBaseHome } from "./homePage.js";
 /** Landing Guerra Fria alinhada ao mockup aprovado e às artes geradas. */
 export function renderHome(req: Request): string {
   const base = renderBaseHome(req)
-    .replace('src="/api/home/banner"', 'src="/api/home/art/hero?v=generated-20260915"');
+    .replace('src="/api/home/banner"', 'src="/api/home/art/hero?v=hero-crisp-20260915"');
 
   const mockupCss = `<style id="gf-home-approved-mockup">
 /* Referência desktop: mockup aprovado 1672 x 941 */
@@ -34,10 +34,63 @@ body{
   .heroLead{max-width:540px!important;margin-top:17px!important;font-size:15px!important;line-height:1.48!important}
   .heroActions{grid-template-columns:230px 224px 288px!important;gap:14px!important;margin-top:25px!important}
   .heroBtn{height:57px!important}
-  .heroVisual{height:420px!important;margin-left:-44px!important;overflow:hidden!important;background:#111!important;z-index:2!important}
-  .heroVisual:before{z-index:4!important;background:linear-gradient(90deg,#06090a 0%,#06090ae8 4%,#06090a7a 12%,#06090a22 23%,transparent 34%),linear-gradient(180deg,transparent 72%,rgba(6,9,10,.68) 100%)!important}
-  .heroBanner{display:block!important;visibility:visible!important;opacity:1!important;z-index:1!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;object-position:center center!important;filter:saturate(1.08) contrast(1.04)!important;transform:scale(1.005)!important;image-rendering:auto!important}
-  .heroGlow{z-index:3!important;opacity:.25!important}
+
+  /* Hero: imagem nativa, sem zoom contínuo para preservar nitidez. */
+  .heroVisual{
+    height:420px!important;
+    margin-left:-44px!important;
+    overflow:hidden!important;
+    background:#07090a!important;
+    z-index:2!important;
+    isolation:isolate!important;
+    box-shadow:
+      inset 34px 0 38px -28px #06090a,
+      inset -26px 0 38px -30px #06090a,
+      inset 0 24px 34px -28px #06090a,
+      inset 0 -30px 38px -28px #06090a!important;
+  }
+  .heroVisual:before{
+    content:''!important;
+    position:absolute!important;
+    inset:0!important;
+    z-index:4!important;
+    pointer-events:none!important;
+    background:
+      linear-gradient(90deg,#06090a 0%,rgba(6,9,10,.96) 4%,rgba(6,9,10,.68) 10%,rgba(6,9,10,.28) 19%,transparent 31%),
+      linear-gradient(270deg,rgba(6,9,10,.52) 0%,rgba(6,9,10,.18) 4%,transparent 10%),
+      linear-gradient(180deg,rgba(6,9,10,.44) 0%,rgba(6,9,10,.10) 5%,transparent 13%),
+      linear-gradient(0deg,rgba(6,9,10,.86) 0%,rgba(6,9,10,.34) 8%,transparent 20%)!important;
+  }
+  .heroVisual:after{
+    content:''!important;
+    position:absolute!important;
+    inset:0!important;
+    z-index:3!important;
+    pointer-events:none!important;
+    background:
+      radial-gradient(circle at 70% 28%,rgba(255,157,42,.13),transparent 28%),
+      radial-gradient(circle at 88% 72%,rgba(255,112,12,.07),transparent 26%)!important;
+    mix-blend-mode:screen!important;
+  }
+  .heroBanner{
+    display:block!important;
+    visibility:visible!important;
+    opacity:1!important;
+    position:absolute!important;
+    z-index:1!important;
+    inset:0!important;
+    width:100%!important;
+    height:100%!important;
+    object-fit:cover!important;
+    object-position:center center!important;
+    filter:saturate(1.07) contrast(1.055) brightness(1.015)!important;
+    transform:none!important;
+    animation:none!important;
+    image-rendering:auto!important;
+    will-change:auto!important;
+    backface-visibility:hidden!important;
+  }
+  .heroGlow{z-index:5!important;opacity:.18!important}
 
   .infoStrip{
     padding:0 0 17px!important;
@@ -137,7 +190,8 @@ body{
 
 @media (min-width:1500px){.hero h1{font-size:78px!important}}
 @media (max-width:1300px){
-  .heroBanner{content:url('/api/home/art/hero?v=generated-20260915')!important}
+  .heroBanner{content:url('/api/home/art/hero?v=hero-crisp-20260915')!important;animation:none!important;transform:none!important}
+  .heroVisual:before{background:linear-gradient(90deg,#06090a 0%,rgba(6,9,10,.88) 5%,rgba(6,9,10,.34) 18%,transparent 30%),linear-gradient(270deg,rgba(6,9,10,.35),transparent 9%),linear-gradient(180deg,rgba(6,9,10,.28),transparent 12%),linear-gradient(0deg,rgba(6,9,10,.72),transparent 18%)!important}
   .infoStrip{background:linear-gradient(180deg,rgba(6,9,10,.985),rgba(5,7,8,.94))!important}
   .portal{background:radial-gradient(620px 260px at 10% 45%,rgba(132,64,16,.08),transparent 65%),linear-gradient(180deg,rgba(5,7,8,.95),rgba(4,6,7,.99))!important}
   .storeArt{background-image:url('/api/home/art/store?v=generated-20260915')!important;background-size:cover!important;background-position:center!important}
