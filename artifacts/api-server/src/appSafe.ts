@@ -54,7 +54,7 @@ app.use((req,res,next)=>{
 app.get("/",(req,res)=>res.status(200).type("html").send(renderHome(req)));
 app.get("/leaderboard",(req,res)=>{
   const session=getCommunitySession(req);
-  return res.status(200).type("html").send(session?withSiteChrome(leaderboardHtml,"leaderboard",{isAdmin:session.isAdmin,username:session.username}):leaderboardHtml);
+  return res.status(200).type("html").send(withSiteChrome(leaderboardHtml,"leaderboard",{isAdmin:Boolean(session?.isAdmin),username:session?.username||""}));
 });
 
 app.get("/season:seasonNumber/guia",(req,res)=>{
@@ -93,7 +93,7 @@ const renderPromo=(req:express.Request,res:express.Response)=>{
     return res.redirect("/api/admin/auth/login?target=promo");
   }
   res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
-  return res.status(200).type("html").send(renderPromoPage(session.username));
+  return res.status(200).type("html").send(withSiteChrome(renderPromoPage(session.username),"season",{isAdmin:session.isAdmin,username:session.username}));
 };
 app.get("/promo",renderPromo);
 app.get("/promo/resgatar",renderPromo);
@@ -101,7 +101,7 @@ app.get("/promo/resgatar",renderPromo);
 const renderIntegrity=(req:express.Request,res:express.Response)=>{
   const session=getCommunitySession(req);
   const html=renderCommunityPage(req);
-  return res.status(200).type("html").send(session?withSiteChrome(html,"integrity",{isAdmin:session.isAdmin,username:session.username}):html);
+  return res.status(200).type("html").send(withSiteChrome(html,"integrity",{isAdmin:Boolean(session?.isAdmin),username:session?.username||""}));
 };
 app.get("/integridade",renderIntegrity);
 app.get("/auditoria",renderIntegrity);
