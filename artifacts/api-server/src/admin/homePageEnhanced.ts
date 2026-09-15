@@ -4,8 +4,27 @@ import { renderHome as renderBaseHome } from "./homePage.js";
 // The original artwork is served intact; all blending happens in CSS.
 const heroUrl = "/api/home/art/hero?v=hd-20260915";
 
+// Inline vectors keep the reference's monochrome icons crisp on every screen.
+const icon = (name: string, shapes: string) => `<svg class="homeIcon homeIcon-${name}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">${shapes}</svg>`;
+const homeIcons = {
+  gamepad: icon("gamepad", '<path d="M7.3 5h9.4c2.1 0 3.4 1.5 4 3.7l1.2 7.1c.5 3-2.4 4.3-4.2 2.2L15 15H9l-2.7 3c-1.8 2.1-4.7.8-4.2-2.2l1.2-7.1C3.9 6.5 5.2 5 7.3 5Z"/><path d="M7 8v5M4.5 10.5h5" fill="none" stroke="var(--orange)" stroke-width="1.8"/><circle cx="16" cy="9" r="1" fill="var(--orange)"/><circle cx="18.5" cy="11.5" r="1" fill="var(--orange)"/>'),
+  ranking: icon("ranking", '<path d="M3 12h4v9H3zm7-8h4v17h-4zm7 4h4v13h-4z"/>'),
+  gear: icon("gear", '<path fill-rule="evenodd" d="m10 2-.6 2.5-1.7 1-2.5-.7-2 3.4L5 10v2l-1.8 1.8 2 3.4 2.5-.7 1.7 1L10 20h4l.6-2.5 1.7-1 2.5.7 2-3.4L19 12v-2l1.8-1.8-2-3.4-2.5.7-1.7-1L14 2h-4Zm2 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/>'),
+  server: icon("server", '<g fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v5c0 4 16 4 16 0V5M4 13v5c0 4 16 4 16 0v-5M4 11v3c0 4 16 4 16 0v-3"/></g><path d="M7 9h3v1.5H7zm0 8h3v1.5H7z"/>'),
+  trophy: icon("trophy", '<path d="M6 2h12v3h4v4c0 3-2.2 5-5.3 5.2A6 6 0 0 1 14 16v3h4v3H6v-3h4v-3a6 6 0 0 1-2.7-1.8C4.2 14 2 12 2 9V5h4V2Zm0 6H4v1c0 1.5.8 2.5 2.2 2.9A16 16 0 0 1 6 8Zm12 0c0 1.4 0 2.7-.2 3.9C19.2 11.5 20 10.5 20 9V8h-2Z"/>'),
+  group: icon("group", '<circle cx="12" cy="7" r="3.3"/><circle cx="4.5" cy="9" r="2.5"/><circle cx="19.5" cy="9" r="2.5"/><path d="M6 21v-3a6 6 0 0 1 12 0v3H6ZM1 19v-2a4 4 0 0 1 5-3.9A8 8 0 0 0 4 19H1Zm19 0a8 8 0 0 0-2-5.9 4 4 0 0 1 5 3.9v2h-3Z"/>'),
+  database: icon("database", '<ellipse cx="12" cy="5" rx="8" ry="3.5"/><path d="M4 8.2c3.7 2.5 12.3 2.5 16 0v3.3c0 4.7-16 4.7-16 0V8.2Zm0 6.3c3.7 2.5 12.3 2.5 16 0V18c0 4.7-16 4.7-16 0v-3.5Z"/>'),
+};
+
 export function renderHome(req: Request): string {
   const base = renderBaseHome(req)
+    .replace('<span class="btnIcon">🎮</span>', `<span class="btnIcon">${homeIcons.gamepad}</span>`)
+    .replace('<span class="btnIcon">▥</span>', `<span class="btnIcon">${homeIcons.ranking}</span>`)
+    .replace('<span class="btnIcon">⚙</span>', `<span class="btnIcon">${homeIcons.gear}</span>`)
+    .replace('<span class="infoIcon">◉</span>', `<span class="infoIcon">${homeIcons.server}</span>`)
+    .replace('<span class="infoIcon">🏆</span>', `<span class="infoIcon">${homeIcons.trophy}</span>`)
+    .replace('<span class="infoIcon">👥</span>', `<span class="infoIcon">${homeIcons.group}</span>`)
+    .replace('<span class="infoIcon">◫</span>', `<span class="infoIcon">${homeIcons.database}</span>`)
     .replace('src="/api/home/banner"', `src="${heroUrl}" width="1983" height="793" fetchpriority="high" decoding="async"`)
     .replace('class="heroVisual reveal" data-tilt="soft"', 'class="heroVisual" aria-hidden="true"')
     .replace('ENTRE NA COMUNIDADE</h2>', 'ENTRE NA <em>COMUNIDADE</em></h2>')
@@ -78,6 +97,13 @@ body{background:radial-gradient(ellipse at 0% 65%,#a447091a,transparent 36%),rad
 .footer{height:82px;background:#050708bb}
 .heroCopy.reveal{opacity:1;transform:none;filter:none}
 a:focus-visible,button:focus-visible{outline:2px solid #ffb000;outline-offset:4px}
+.homeIcon{display:block;width:25px;height:25px;flex-shrink:0}
+.heroBtn .btnIcon,.heroBtn.primary .btnIcon{border:0;background:transparent}
+.heroBtn .homeIcon{width:23px;height:23px}
+.heroBtn.primary .homeIcon{color:#070809}
+.infoIcon .homeIcon{width:28px;height:28px;color:#f4f2ed}
+.infoIcon .homeIcon-server{color:#858e98}
+.infoIcon .homeIcon-trophy{color:#ffb000}
 @media(min-width:1900px){.heroCopy{padding-bottom:78px}.heroLead{font-size:15px}.heroActions{grid-template-columns:230px 224px 288px}}
 @media(max-width:1300px){
   .wrap{width:calc(100% - 48px)}.heroCopy{width:65%}.heroGrid{height:480px}.hero h1{font-size:70px}
