@@ -24,19 +24,31 @@ function resolveBannerPath(): string | null {
 }
 
 function readChunkedArt(name: "hero" | "store" | "community"): Buffer | null {
-  const dirs = [
-    path.resolve(process.cwd(), "artifacts/api-server/public/art-v2"),
-    path.resolve(process.cwd(), "public/art-v2"),
-  ];
+  const dirs = name === "hero"
+    ? [
+        path.resolve(process.cwd(), "artifacts/api-server/public/art-final"),
+        path.resolve(process.cwd(), "public/art-final"),
+        path.resolve(process.cwd(), "artifacts/api-server/public/art-v2"),
+        path.resolve(process.cwd(), "public/art-v2"),
+      ]
+    : [
+        path.resolve(process.cwd(), "artifacts/api-server/public/art-v2"),
+        path.resolve(process.cwd(), "public/art-v2"),
+      ];
+
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     const files = readdirSync(dir)
-      .filter(file => new RegExp(`^${name}-\\d+\\.b64$`).test(file))
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      .filter(file => new RegExp(`^${name}-\\d+[a-z0-9]*\\.b64$`, "i").test(file))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
     if (!files.length) continue;
     if (name === "community" && files.length < 3) continue;
-    const encoded = files.map(file => readFileSync(path.join(dir, file), "utf8").trim()).join("");
+
+    const encoded = files
+      .map(file => readFileSync(path.join(dir, file), "utf8").trim())
+      .join("");
     if (!encoded) continue;
+
     try {
       const decoded = Buffer.from(encoded, "base64");
       if (decoded.length > 5000) return decoded;
