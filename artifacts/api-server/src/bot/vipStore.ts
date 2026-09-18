@@ -210,19 +210,87 @@ async function refreshExistingStorePanel(channel: TextChannel, client: Client): 
   );
   if (!storeMessages.size) return false;
 
+  // O painel pode ter ficado parcialmente apagado: o header pode continuar
+  // existindo enquanto uma ou mais cards foram excluídas. Nesse caso, cada
+  // card ausente precisa ser recriada, e as existentes devem ser sincronizadas
+  // por completo (preço, imagem, descrição e botão).
+  let foundCards = 0;
+
   for (const card of VIP_CARDS) {
-    const message = storeMessages.find(item => item.embeds.some(embed => embed.title === card.title));
-    const currentEmbed = message?.embeds[0];
-    if (!message || !currentEmbed) continue;
+    const message = storeMessages.find(item =>
+      item.embeds.some(embed => embed.title === card.title),
+    );
+
+    if (!message) {
+      try {
+        const { embed, row } = buildCard(card, true);
+        await sendStoreMessage(
+          channel,
+          { embeds: [embed], components: [row] },
+          `repair-card-${card.tier}-with-image`,
+        );
+        foundCards += 1;
+        logger.info({ tier: card.tier, channelId: channel.id }, "Missing VIP store card recreated");
+      } catch (err) {
+        logger.warn(
+          { err, tier: card.tier, channelId: channel.id },
+          "VIP card recreation with image failed — retrying without image",
+        );
+
+        try {
+          const { embed, row } = buildCard(card, false);
+          await sendStoreMessage(
+            channel,
+            { embeds: [embed], components: [row] },
+            `repair-card-${card.tier}-without-image`,
+          );
+          foundCards += 1;
+          logger.info(
+            { tier: card.tier, channelId: channel.id },
+            "Missing VIP store card recreated without image",
+          );
+        } catch (retryErr) {
+          logger.error(
+            { err: retryErr, tier: card.tier, channelId: channel.id },
+            "VIP store card could not be recreated",
+          );
+        }
+      }
+      continue;
+    }
 
     try {
-      const updatedEmbed = new EmbedBuilder(currentEmbed.toJSON()).setDescription(card.description);
-      await message.edit({ embeds: [updatedEmbed] });
+      const { embed, row } = buildCard(card, true);
+      await message.edit({ embeds: [embed], components: [row] });
+      foundCards += 1;
       logger.info({ tier: card.tier, channelId: channel.id }, "Existing VIP store card refreshed");
     } catch (err) {
-      logger.warn({ err, tier: card.tier, channelId: channel.id }, "Could not refresh existing VIP store card");
+      logger.warn(
+        { err, tier: card.tier, channelId: channel.id },
+        "Could not refresh existing VIP store card — retrying without image",
+      );
+
+      try {
+        const { embed, row } = buildCard(card, false);
+        await message.edit({ embeds: [embed], components: [row] });
+        foundCards += 1;
+        logger.info(
+          { tier: card.tier, channelId: channel.id },
+          "Existing VIP store card refreshed without image",
+        );
+      } catch (retryErr) {
+        logger.error(
+          { err: retryErr, tier: card.tier, channelId: channel.id },
+          "Existing VIP store card could not be refreshed",
+        );
+      }
     }
   }
+
+  logger.info(
+    { channelId: channel.id, repairedOrRefreshed: foundCards, expected: VIP_CARDS.length },
+    "VIP store panel synchronization complete",
+  );
 
   return true;
 }
