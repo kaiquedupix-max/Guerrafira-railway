@@ -10,7 +10,7 @@ import { logger } from "../lib/logger.js";
 
 const PANEL_MARKER = "Guerra Fria • Verificação Booster";
 const DEFAULT_BOOSTER_CHANNEL_ID = "1499084541548298412";
-const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/kaiquedupix-max/Imagens-gf/refs/heads/main/EBC01249-5174-40E9-B18B-8841D151C1A5.png";
+const DEFAULT_BOOSTER_IMAGE_URL = "https://raw.githubusercontent.com/vkvucks-ai/kit-booster/refs/heads/main/apresentacao_kit_booster_guerra_fria_logo.png";
 let started = false;
 
 function grantCommand(steamId: string): string {
