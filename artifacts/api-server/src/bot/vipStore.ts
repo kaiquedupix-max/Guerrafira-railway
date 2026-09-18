@@ -40,6 +40,7 @@ const VIP_CARDS: Array<{
     description:
       "Apoie o servidor Guerra Fria e receba acesso ao pacote VIP Prata por **30 dias**.\n\n" +
       "Sua compra ajuda diretamente a manter o servidor funcionando, cobrindo hospedagem, infraestrutura e melhorias.\n\n" +
+      "🎛️ **Novo benefício:** agora o VIP Prata possui o comando **`/presset`** no jogo.\n\n" +
       "📦 **Importante:** os kits e benefícios podem ser ajustados ao longo do tempo para manter o equilíbrio do servidor.",
     imageEnv: "VIP_PRATA_IMAGE_URL",
   },
@@ -49,6 +50,7 @@ const VIP_CARDS: Array<{
     description:
       "Apoie o servidor Guerra Fria e receba acesso ao pacote VIP Ouro por **30 dias**.\n\n" +
       "Sua compra ajuda diretamente a manter o servidor funcionando, cobrindo hospedagem, infraestrutura e melhorias.\n\n" +
+      "🎛️ **Novo benefício:** agora o VIP Ouro possui o comando **`/presset`** no jogo.\n\n" +
       "📦 **Importante:** os kits e benefícios podem ser ajustados ao longo do tempo para manter o equilíbrio do servidor.",
     imageEnv: "VIP_OURO_IMAGE_URL",
   },
@@ -155,17 +157,34 @@ function registerStoreInteractionHandler(client: Client): void {
   });
 }
 
-async function hasExistingStorePanel(channel: TextChannel, client: Client): Promise<boolean> {
+async function refreshExistingStorePanel(channel: TextChannel, client: Client): Promise<boolean> {
   const recent = await channel.messages.fetch({ limit: 100 }).catch((err) => {
     logger.warn({ err, channelId: channel.id }, "Could not inspect VIP store messages");
     return null;
   });
   if (!recent) return true;
 
-  return recent.some(message =>
+  const storeMessages = recent.filter(message =>
     message.author.id === client.user?.id &&
     message.embeds.some(embed => embed.footer?.text?.includes(STORE_MARKER)),
   );
+  if (!storeMessages.size) return false;
+
+  for (const card of VIP_CARDS) {
+    const message = storeMessages.find(item => item.embeds.some(embed => embed.title === card.title));
+    const currentEmbed = message?.embeds[0];
+    if (!message || !currentEmbed) continue;
+
+    try {
+      const updatedEmbed = new EmbedBuilder(currentEmbed.toJSON()).setDescription(card.description);
+      await message.edit({ embeds: [updatedEmbed] });
+      logger.info({ tier: card.tier, channelId: channel.id }, "Existing VIP store card refreshed");
+    } catch (err) {
+      logger.warn({ err, tier: card.tier, channelId: channel.id }, "Could not refresh existing VIP store card");
+    }
+  }
+
+  return true;
 }
 
 export async function setupVipStore(client: Client): Promise<void> {
@@ -199,8 +218,8 @@ export async function setupVipStore(client: Client): Promise<void> {
   }
 
   // Reinício do bot não deve limpar o canal nem relançar os cards.
-  if (await hasExistingStorePanel(channel, client)) {
-    logger.info({ channelId }, "Existing VIP store panel preserved; no cards republished");
+  if (await refreshExistingStorePanel(channel, client)) {
+    logger.info({ channelId }, "Existing VIP store panel refreshed; no cards republished");
     return;
   }
 
