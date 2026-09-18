@@ -15,6 +15,8 @@ import { startDiscordModeration } from "./moderation.js";
 import { logger } from "../lib/logger.js";
 
 const STORE_MARKER = "Guerra Fria • Loja VIP";
+const VIP_KIT_UPDATE_MARKER = "Guerra Fria • Kit VIP • cooldown 8h";
+const VIP_KIT_COOLDOWN_HOURS = 8;
 const DEFAULT_VIP_STORE_CHANNEL_ID = "1530049713422729328";
 let storeInteractionHandlerRegistered = false;
 let moderationStarted = false;
@@ -31,6 +33,7 @@ const VIP_CARDS: Array<{
     description:
       "Apoie o servidor Guerra Fria e receba acesso ao pacote VIP Bronze por **30 dias**.\n\n" +
       "Sua compra ajuda diretamente a manter o servidor funcionando, cobrindo hospedagem, infraestrutura e melhorias.\n\n" +
+      "⏱️ **Cooldown do Kit VIP:** agora são apenas **8 horas** para resgatar novamente.\n\n" +
       "📦 **Importante:** os kits e benefícios podem ser ajustados ao longo do tempo para manter o equilíbrio do servidor.",
     imageEnv: "VIP_BRONZE_IMAGE_URL",
   },
@@ -40,6 +43,7 @@ const VIP_CARDS: Array<{
     description:
       "Apoie o servidor Guerra Fria e receba acesso ao pacote VIP Prata por **30 dias**.\n\n" +
       "Sua compra ajuda diretamente a manter o servidor funcionando, cobrindo hospedagem, infraestrutura e melhorias.\n\n" +
+      "⏱️ **Cooldown do Kit VIP:** agora são apenas **8 horas** para resgatar novamente.\n\n" +
       "🎛️ **Novo benefício:** agora o VIP Prata possui o comando **`/presset`** no jogo.\n\n" +
       "📦 **Importante:** os kits e benefícios podem ser ajustados ao longo do tempo para manter o equilíbrio do servidor.",
     imageEnv: "VIP_PRATA_IMAGE_URL",
@@ -50,6 +54,7 @@ const VIP_CARDS: Array<{
     description:
       "Apoie o servidor Guerra Fria e receba acesso ao pacote VIP Ouro por **30 dias**.\n\n" +
       "Sua compra ajuda diretamente a manter o servidor funcionando, cobrindo hospedagem, infraestrutura e melhorias.\n\n" +
+      "⏱️ **Cooldown do Kit VIP:** agora são apenas **8 horas** para resgatar novamente.\n\n" +
       "🎛️ **Novo benefício:** agora o VIP Ouro possui o comando **`/presset`** no jogo.\n\n" +
       "📦 **Importante:** os kits e benefícios podem ser ajustados ao longo do tempo para manter o equilíbrio do servidor.",
     imageEnv: "VIP_OURO_IMAGE_URL",
@@ -116,6 +121,41 @@ async function sendStoreMessage(
     }
   }
   throw lastError;
+}
+
+async function announceVipKitCooldown(client: Client): Promise<void> {
+  const channelId = process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID?.trim();
+  if (!channelId) {
+    logger.warn("VIP Kit cooldown announcement skipped — DISCORD_ANNOUNCEMENTS_CHANNEL_ID not configured");
+    return;
+  }
+
+  const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
+  if (!channel?.isTextBased() || !channel.isSendable()) {
+    logger.warn({ channelId }, "VIP Kit cooldown announcement channel unavailable");
+    return;
+  }
+
+  const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  const alreadySent = recent?.some(message =>
+    message.author.id === client.user?.id &&
+    message.embeds.some(embed => embed.footer?.text?.includes(VIP_KIT_UPDATE_MARKER)),
+  );
+
+  if (alreadySent) return;
+
+  const embed = new EmbedBuilder()
+    .setColor(0xd6a934)
+    .setTitle("⏱️ KIT VIP — COOLDOWN REDUZIDO")
+    .setDescription(
+      `O cooldown para resgatar novamente o **Kit VIP** agora é de apenas **${VIP_KIT_COOLDOWN_HOURS} horas**.\n\n` +
+      "🎁 Aproveite seu benefício VIP com muito menos tempo de espera entre os resgates."
+    )
+    .setFooter({ text: VIP_KIT_UPDATE_MARKER })
+    .setTimestamp();
+
+  await channel.send({ embeds: [embed] });
+  logger.info({ channelId }, "VIP Kit cooldown update announced");
 }
 
 function registerStoreInteractionHandler(client: Client): void {
@@ -194,6 +234,7 @@ export async function setupVipStore(client: Client): Promise<void> {
     moderationStarted = true;
   }
   await startBoosterSystem(client).catch((err) => logger.error({ err }, "Failed to start booster system"));
+  await announceVipKitCooldown(client).catch((err) => logger.error({ err }, "Failed to announce VIP Kit cooldown update"));
 
   const channelId =
     process.env.DISCORD_VIP_STORE_CHANNEL_ID?.trim() ||
