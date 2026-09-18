@@ -20,7 +20,7 @@ const TIMEOUT_BAN_PREFIX = "verification_timeout_ban:";
 const TIMEOUT_KEEP_PREFIX = "verification_timeout_keep:";
 let started = false;
 
-const telagemData = new SlashCommandBuilder()
+export const data = new SlashCommandBuilder()
   .setName("telagem")
   .setDescription("Inicia uma telagem/verificação administrativa em um jogador online")
   .addStringOption(opt =>
@@ -32,7 +32,6 @@ const telagemData = new SlashCommandBuilder()
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers);
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 function safeGameChat(value: string, max = 90): string {
   return String(value ?? "")
@@ -42,57 +41,7 @@ function safeGameChat(value: string, max = 90): string {
     .slice(0, max);
 }
 
-async function registerTelagemCommand(client: Client): Promise<void> {
-  await sleep(5_000);
-
-  const payload = telagemData.toJSON();
-  const guildId = process.env.DISCORD_GUILD_ID;
-
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      if (guildId) {
-        const guild = await client.guilds.fetch(guildId);
-        const current = await guild.commands.fetch();
-        const legacy = current.find(command => command.name === "telar");
-        if (legacy) await legacy.delete().catch(() => {});
-
-        const existing = current.find(command => command.name === telagemData.name);
-        if (existing) await existing.edit(payload);
-        else await guild.commands.create(payload);
-
-        await sleep(1_500);
-        const verified = await guild.commands.fetch();
-        if (verified.some(command => command.name === telagemData.name)) {
-          logger.info({ guildId }, "Slash command /telagem registered");
-          return;
-        }
-      } else {
-        const current = await client.application?.commands.fetch();
-        const legacy = current?.find(command => command.name === "telar");
-        if (legacy) await legacy.delete().catch(() => {});
-
-        const existing = current?.find(command => command.name === telagemData.name);
-        if (existing) await existing.edit(payload);
-        else await client.application?.commands.create(payload);
-
-        await sleep(1_500);
-        const verified = await client.application?.commands.fetch();
-        if (verified?.some(command => command.name === telagemData.name)) {
-          logger.info("Global slash command /telagem registered");
-          return;
-        }
-      }
-    } catch (error) {
-      logger.error({ error, attempt }, "Failed to register /telagem");
-    }
-
-    await sleep(2_000);
-  }
-
-  logger.error("Could not keep /telagem registered after retries");
-}
-
-async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
+export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
   const focused = interaction.options.getFocused().trim();
   const players = await searchPlayers(focused, 25);
   const online = players.filter(player => player.isOnline);
@@ -105,7 +54,7 @@ async function autocomplete(interaction: AutocompleteInteraction): Promise<void>
   );
 }
 
-async function executeTelagem(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const steamId = interaction.options.getString("jogador", true).trim();
@@ -390,14 +339,8 @@ export function startVerificationIntegration(client: Client): void {
     try {
       if (await handleTimeoutButton(interaction)) return;
 
-      if (interaction.isAutocomplete() && interaction.commandName === telagemData.name) {
-        await autocomplete(interaction);
-        return;
-      }
-
-      if (interaction.isChatInputCommand() && interaction.commandName === telagemData.name) {
-        await executeTelagem(interaction);
-      }
+      // /telagem é roteado pelo dispatcher principal do bot.
+      // Este listener cuida apenas das decisões pendentes da verificação.
     } catch (error) {
       logger.error({ error }, "Verification interaction failed");
       if (interaction.isChatInputCommand()) {
@@ -414,7 +357,4 @@ export function startVerificationIntegration(client: Client): void {
     );
   });
 
-  registerTelagemCommand(client).catch(error =>
-    logger.error({ error }, "Verification slash registration failed"),
-  );
 }
