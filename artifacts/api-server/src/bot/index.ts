@@ -54,6 +54,7 @@ import * as wipeCommand from "./commands/wipe.js";
 import * as testeftpCommand from "./commands/testeftp.js";
 import * as enviarjsonCommand from "./commands/enviarjson.js";
 import * as wipedatasCommand from "./commands/wipedatas.js";
+import * as telagemCommand from "./verificationIntegrationV2.js";
 import { handleMapVote } from "./commands/criarmapa.js";
 import { parseKillEvent, parseGatherEvent, parseCraftEvent } from "./killTracker.js";
 import { setupTicketPanel, handleTicketCreate, handleTicketTypeSelect, handleTicketClose, handleVipPayPix, handleVipPayCard, handlePixCopy } from "./tickets.js";
@@ -91,6 +92,7 @@ commands.set(wipeCommand.data.name, wipeCommand);
 commands.set(testeftpCommand.data.name, testeftpCommand);
 commands.set(enviarjsonCommand.data.name, enviarjsonCommand);
 commands.set(wipedatasCommand.data.name, wipedatasCommand);
+commands.set(telagemCommand.data.name, telagemCommand);
 
 export async function startBot(): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -245,7 +247,7 @@ async function handleConnectButton(interaction: Parameters<typeof handleTicketCr
 async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID; const guildId = process.env.DISCORD_GUILD_ID;
   if (!clientId) { logger.warn("DISCORD_CLIENT_ID not set"); return; }
-  const commandData = [banirCommand, banpreventivoCommand, kickarCommand, muteCommand, unmuteCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, duoCommand, resetleaderboardCommand, criarmapaCommand, votacaoCommand, steamCommand, wipeCommand, testeftpCommand, enviarjsonCommand, wipedatasCommand].map(c => c.data.toJSON());
+  const commandData = [...commands.values()].map(command => command.data.toJSON());
   try {
     if (guildId) { const guild = await client.guilds.fetch(guildId); await guild.commands.set(commandData); logger.info({ guildId }, "Slash commands registered"); }
     else { await client.application?.commands.set(commandData); logger.info("Slash commands registered globally"); }
