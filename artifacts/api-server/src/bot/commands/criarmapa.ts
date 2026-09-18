@@ -35,6 +35,7 @@ const CHAT_CHANNEL_ID = "1499084541791436861";
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
 const ANNOUNCEMENT_INTERVAL = 4 * 60 * 60_000;
+const VOTE_ANNOUNCEMENT_MARKER = "🗳️ **VOTAÇÃO DE MAPA ABERTA!**";
 const WIPE_DELAY_MS = 25 * 60_000;
 
 const VIP_MENTION = `<@&${VIP_ROLE_ID}>`;
@@ -162,13 +163,42 @@ function voteMessagePayload(vote: { endsAt: number; maps: MapOption[] }) {
   };
 }
 
-async function announceVote(client: Client, endsAt: number): Promise<void> {
+async function hasHumanActivityAfterLastVoteAnnouncement(client: Client): Promise<boolean> {
+  const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
+  if (!chat?.isTextBased()) return false;
+
+  const recent = await chat.messages.fetch({ limit: 100 }).catch(() => null);
+  if (!recent) return false;
+
+  let lastAnnouncementAt = 0;
+  for (const message of recent.values()) {
+    if (
+      message.author.id === client.user?.id &&
+      message.content.includes(VOTE_ANNOUNCEMENT_MARKER)
+    ) {
+      lastAnnouncementAt = Math.max(lastAnnouncementAt, message.createdTimestamp);
+    }
+  }
+
+  // Se o último aviso já saiu da janela das 100 mensagens, houve atividade suficiente
+  // no canal para permitir um novo lembrete.
+  if (!lastAnnouncementAt) return true;
+
+  return recent.some(message =>
+    message.createdTimestamp > lastAnnouncementAt &&
+    !message.author.bot,
+  );
+}
+
+async function announceVote(client: Client, endsAt: number, requireActivityAfterPrevious = false): Promise<void> {
   if (Date.now() >= endsAt) return;
+  if (requireActivityAfterPrevious && !(await hasHumanActivityAfterLastVoteAnnouncement(client))) return;
+
   const chat = await client.channels.fetch(CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
   if (chat?.isSendable()) {
     await chat.send({
       content:
-        `🗳️ **VOTAÇÃO DE MAPA ABERTA!**\n` +
+        `${VOTE_ANNOUNCEMENT_MARKER}\n` +
         `Acesse <#${VOTE_CHANNEL_ID}> e escolha o mapa do próximo wipe.\n` +
         `⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} valem **2 votos**.\n` +
         `⏳ Encerra <t:${Math.floor(endsAt / 1000)}:R>.`,
@@ -185,7 +215,7 @@ function scheduleRuntime(client: Client, vote: MapVoteRuntime): void {
   const remaining = vote.endsAt - Date.now();
   if (remaining <= 0) { finishVote(client, vote.messageId).catch(() => {}); return; }
   vote.timer = setTimeout(() => finishVote(client, vote.messageId).catch(() => {}), remaining);
-  vote.announcementTimer = setInterval(() => announceVote(client, vote.endsAt).catch(() => {}), ANNOUNCEMENT_INTERVAL);
+  vote.announcementTimer = setInterval(() => announceVote(client, vote.endsAt, true).catch(() => {}), ANNOUNCEMENT_INTERVAL);
   activeVotes.set(vote.messageId, vote);
 }
 async function loadVote(messageId: string, client?: Client): Promise<MapVoteRuntime | null> {
