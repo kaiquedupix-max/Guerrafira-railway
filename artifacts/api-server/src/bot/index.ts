@@ -23,6 +23,7 @@ import { startBoosterSystem } from "./booster.js";
 import { setupVipStore } from "./vipStore.js";
 import { startSlotManager } from "./slotManager.js";
 import { startLeaderboardChannel } from "./leaderboardChannel.js";
+import { ensureGameAnnouncementPlugin } from "./utils/gameAnnouncementPlugin.js";
 import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raffle.js";
 import { openVipModal, submitVipModal } from "./vipSteamLink.js";
 import { startDiscordModeration } from "./moderation.js";
@@ -120,6 +121,7 @@ export async function startBot(): Promise<void> {
     setDiscordClient(c);
     c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
     await registerSlashCommands(c);
+    await ensureGameAnnouncementPlugin();
     startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
     await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
   });
