@@ -37,7 +37,6 @@ import { runSeasonEmailRepairAutorun } from "./seasonEmailRepairAutorun.js";
 import rankAssetsRouter from "./rankAssets.js";
 import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
 import { startSeasonGameRankSync } from "../bot/seasonGameRankSync.js";
-import { startSeasonHourlyBackup } from "./seasonBackup.js";
 import { repairWipeSchedule20260904 } from "../core/repairWipeSchedule20260904.js";
 
 startPaymentStatusNotifier();
@@ -46,7 +45,6 @@ startStripePaymentReconciler();
 startSeasonPaymentReconciler();
 startSeasonEmailLifecycle();
 startSeasonGameRankSync();
-startSeasonHourlyBackup();
 startPromoReconciler();
 void repairWipeSchedule20260904().catch(error => console.error("Failed to repair 04/09 wipe schedule", error));
 void runSeasonEmailRepairAutorun();
