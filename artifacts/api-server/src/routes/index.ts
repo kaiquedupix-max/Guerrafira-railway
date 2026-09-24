@@ -38,6 +38,7 @@ import rankAssetsRouter from "./rankAssets.js";
 import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
 import { startSeasonGameRankSync } from "../bot/seasonGameRankSync.js";
 import { repairWipeSchedule20260904 } from "../core/repairWipeSchedule20260904.js";
+import vorkenIntegrationRouter from "./vorkenIntegration.js";
 
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
@@ -51,6 +52,7 @@ void runSeasonEmailRepairAutorun();
 
 const router: IRouter = Router();
 router.use(healthRouter);
+router.use(vorkenIntegrationRouter);
 
 // A página de status é legada e gera o próprio HTML. Interceptamos somente
 // GET /status para aplicar o mesmo chrome/tema usado no restante do portal.
