@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Verificacao", "Kaique", "1.6.2")]
+    [Info("Verificacao", "Kaique", "1.6.3")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, isolamento via Vanish e eventos RCON.")]
     public class Verificacao : RustPlugin
     {
@@ -66,7 +66,11 @@ namespace Oxide.Plugins
         {
             base.LoadConfig();
             settings = Config.ReadObject<Settings>() ?? new Settings();
-            settings.PrazoEmSegundos = Math.Max(30, Math.Min(3600, settings.PrazoEmSegundos));
+
+            // Regra fixa da verificacao: o jogador possui exatamente
+            // cinco minutos para validar o codigo no Discord.
+            settings.PrazoEmSegundos = 300;
+            settings.BanirAutomaticamenteAoExpirar = true;
 
             if (string.IsNullOrWhiteSpace(settings.CanalVerificacao))
                 settings.CanalVerificacao = "#verificacao";
@@ -262,13 +266,9 @@ namespace Oxide.Plugins
 
         private void Staff(string message)
         {
+            // Evita mensagens duplicadas no chat: o bot controla os avisos
+            // publicos de inicio/fim e o plugin mantém o detalhe no console.
             Puts(message);
-
-            foreach (BasePlayer player in BasePlayer.activePlayerList)
-            {
-                if (Allowed(player) && !Held(player))
-                    Tell(player, message);
-            }
         }
 
         private bool TryGetDiscordAdministrator(
@@ -773,51 +773,12 @@ namespace Oxide.Plugins
                     s.AvisoEnviado = true;
                     SaveData();
 
-                    string discordAdministrator;
+                    BanForTimeout(
+                        pair.Key,
+                        s
+                    );
 
-                    if (TryGetDiscordAdministrator(
-                            s,
-                            out discordAdministrator))
-                    {
-                        EmitEvent(
-                            "timeout_prompt",
-                            pair.Key,
-                            s,
-                            settings.MotivoDoBan
-                        );
-
-                        Staff(
-                            "Prazo expirado para " +
-                            pair.Key +
-                            ". Aguardando decisao do administrador no Discord."
-                        );
-                    }
-                    else if (settings.BanirAutomaticamenteAoExpirar)
-                    {
-                        ServerUsers.Set(
-                            pair.Key,
-                            ServerUsers.UserGroup.Banned,
-                            s.Nome,
-                            settings.MotivoDoBan
-                        );
-
-                        ServerUsers.Save();
-
-                        BasePlayer banned =
-                            Find(pair.Key);
-
-                        End(pair.Key, null);
-
-                        if (banned != null &&
-                            banned.IsConnected)
-                        {
-                            banned.Kick(
-                                settings.MotivoDoBan
-                            );
-                        }
-
-                        continue;
-                    }
+                    continue;
                 }
 
                 BasePlayer player =
@@ -855,8 +816,8 @@ namespace Oxide.Plugins
                 );
 
             return remaining == 0
-                ? "PRAZO ENCERRADO - AGUARDE A EQUIPE"
-                : "TEMPO RESTANTE PARA ENVIAR O CODIGO: " +
+                ? "PRAZO ENCERRADO - BANIMENTO AUTOMATICO"
+                : "TEMPO RESTANTE PARA VALIDAR O CODIGO: " +
                   (remaining / 60).ToString("00") +
                   ":" +
                   (remaining % 60).ToString("00");
@@ -922,10 +883,11 @@ namespace Oxide.Plugins
                     Text =
                     {
                         Text =
-                            "NAO DESCONECTE DO SERVIDOR.\n" +
-                            "Entre no Discord Guerra Fria e procure o canal " +
+                            "VERIFICACAO OBRIGATORIA. NAO DESCONECTE.\n" +
+                            "Voce tem 5 MINUTOS para enviar o codigo no canal " +
                             Clean(settings.CanalVerificacao) +
-                            ".",
+                            " do Discord.\n" +
+                            "RECUSAR, DESCONECTAR OU DEIXAR O TEMPO ACABAR RESULTA EM BAN PERMANENTE.",
                         FontSize = 20,
                         Align = TextAnchor.MiddleCenter,
                         Color = "0.95 0.18 0.18 1"
@@ -982,12 +944,14 @@ namespace Oxide.Plugins
                     ? "CODIGO ACEITO!\n" +
                       "Volte ao Discord e abra a sala privada criada pelo bot.\n" +
                       "Clique no link do Vorken, baixe, execute como administrador e aguarde."
-                    : "1. ENTRE NO DISCORD\n" +
+                    : "1. ENTRE NO DISCORD GUERRA FRIA\n" +
                       "2. ABRA O CANAL " +
                       Clean(settings.CanalVerificacao) +
                       "\n" +
-                      "3. ENVIE SOMENTE O CODIGO ACIMA\n" +
-                      "4. O BOT CRIARA SUA SALA PRIVADA E ENVIARA O LINK DO VORKEN";
+                      "3. ENVIE SOMENTE OS 4 DIGITOS ACIMA EM ATE 5 MINUTOS\n" +
+                      "4. ENTRE NA SALA PRIVADA CRIADA PELO BOT\n" +
+                      "5. BAIXE E EXECUTE O VORKEN E AGUARDE A DECISAO\n" +
+                      "A VERIFICACAO E OBRIGATORIA. RECUSAR RESULTA EM BAN.";
 
             ui.Add(
                 new CuiLabel
@@ -1063,7 +1027,7 @@ namespace Oxide.Plugins
                     },
                     Text =
                     {
-                        Text = "RECUSAR VERIFICACAO",
+                        Text = "RECUSAR E ACEITAR BAN",
                         FontSize = 15,
                         Align = TextAnchor.MiddleCenter,
                         Color = "1 1 1 1"
@@ -1187,11 +1151,12 @@ namespace Oxide.Plugins
                     {
                         Text =
                             "Copie o convite abaixo e entre no Discord.\n" +
-                            "Depois procure " +
+                            "Abra " +
                             Clean(settings.CanalVerificacao) +
-                            " e envie o codigo " +
+                            " e envie SOMENTE o codigo " +
                             EnsureCode(session) +
-                            ".",
+                            ".\n" +
+                            "Voce tem 5 minutos. A verificacao e obrigatoria; recusar ou expirar gera ban permanente.",
                         FontSize = 19,
                         Align = TextAnchor.MiddleCenter,
                         Color = "0.95 0.95 0.95 1"
@@ -1462,6 +1427,69 @@ namespace Oxide.Plugins
                 return;
 
             BanForRefusal(player, session);
+        }
+
+        private void BanForTimeout(
+            ulong id,
+            Session session)
+        {
+            string name =
+                Clean(
+                    string.IsNullOrWhiteSpace(session.Nome)
+                        ? id.ToString()
+                        : session.Nome
+                );
+
+            string reason =
+                string.IsNullOrWhiteSpace(settings.MotivoDoBan)
+                    ? "Nao enviou o codigo de verificacao no Discord dentro de 5 minutos."
+                    : Clean(settings.MotivoDoBan);
+
+            ServerUsers.Set(
+                id,
+                ServerUsers.UserGroup.Banned,
+                name,
+                reason
+            );
+
+            ServerUsers.Save();
+
+            BasePlayer player = Find(id);
+
+            sessions.Remove(id);
+            SaveData();
+
+            CuiHelper.DestroyUi(player, Ui);
+            CuiHelper.DestroyUi(player, DiscordUi);
+            CuiHelper.DestroyUi(player, ConfirmUi);
+
+            if (player != null &&
+                !session.JaEstavaInvisivel &&
+                Invisible(player))
+            {
+                Vanish.Call("Reappear", player);
+            }
+
+            EmitEvent(
+                "timeout_ban",
+                id,
+                session,
+                reason
+            );
+
+            Staff(
+                id +
+                " banido automaticamente por nao validar o codigo em 5 minutos."
+            );
+
+            if (player != null &&
+                player.IsConnected)
+            {
+                player.Kick(
+                    reason +
+                    " Banimento permanente."
+                );
+            }
         }
 
         private void BanForRefusal(
