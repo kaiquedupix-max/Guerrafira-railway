@@ -8,8 +8,45 @@ export const panelWipeJs = String.raw`
   const date=v=>v?new Date(v).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',weekday:'long',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
   const officialWipeAt=v=>v?new Date(v).getTime()+5*60*1000:null;
   function selectedSchedule(){const value=$('voteDate')?.value;if(!value)return null;const voteAt=Date.parse(value+'T18:00:00-03:00');return Number.isFinite(voteAt)?{voteEndsAt:voteAt,flowAt:voteAt+25*60*1000,wipeAt:voteAt+30*60*1000}:null}
-  function readImage(file){return new Promise((resolve,reject)=>{if(!file)return resolve(undefined);if(!/^image\/(png|jpeg|webp|gif)$/i.test(file.type))return reject(new Error('Use uma imagem PNG, JPG, WEBP ou GIF.'));if(file.size>5*1024*1024)return reject(new Error('Cada imagem pode ter no máximo 5 MB.'));const reader=new FileReader();reader.onload=()=>resolve({name:file.name,mime:file.type,data:String(reader.result)});reader.onerror=()=>reject(new Error('Não foi possível ler a imagem.'));reader.readAsDataURL(file)})}
-  function voteMapFields(n){return '<div class="stateCard" style="margin-bottom:10px"><b>Mapa '+n+'</b><div class="field"><label>Como carregar este mapa</label><select id="voteMode'+n+'"><option value="seed">Seed + Size</option><option value="link">Link .map (RustMaps Premium)</option></select></div><div id="voteSeedBox'+n+'" class="actionGrid"><div class="field"><label>Seed</label><input id="voteSeed'+n+'" type="number" min="0" max="2147483647" inputmode="numeric" placeholder="Ex.: 123456789"></div><div class="field"><label>Size</label><input id="voteSize'+n+'" type="number" min="1000" max="6000" inputmode="numeric" placeholder="Ex.: 3500"></div></div><div id="voteLinkBox'+n+'" class="field" style="display:none"><label>Link do arquivo .map</label><input id="voteMapUrl'+n+'" type="url" autocapitalize="off" autocomplete="off" placeholder="https://.../mapa.map"><small>Cole o link direto .map do RustMaps Premium. O link não será exibido publicamente na votação.</small></div><div class="field"><label>Imagem do mapa (arquivo opcional)</label><input id="voteImage'+n+'" type="file" accept="image/png,image/jpeg,image/webp,image/gif"><small>PNG, JPG, WEBP ou GIF • máximo 5 MB</small></div></div>'}
+  function blobToDataUrl(blob){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error('Não foi possível preparar a imagem.'));reader.readAsDataURL(blob)})}
+  function canvasBlob(canvas,type,quality){return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Não foi possível comprimir a imagem.')),type,quality))}
+  async function readImage(file){
+    if(!file)return undefined;
+    if(!/^image\/(png|jpeg|webp|gif)$/i.test(file.type))throw new Error('Use uma imagem PNG, JPG, WEBP ou GIF.');
+    if(file.size>5*1024*1024)throw new Error('Cada imagem pode ter no máximo 5 MB.');
+
+    // Antes do Coolify havia folga para enviar a imagem inteira em Base64. Em proxies
+    // self-hosted (principalmente Nginx), esse JSON pode receber 413 antes do Express.
+    // Mantemos a seleção de até 5 MB, mas enviamos uma cópia otimizada de ~180 KB.
+    const MAX_BYTES=180*1024,MAX_SIDE=1400;
+    let bitmap;
+    try{bitmap=await createImageBitmap(file)}catch{throw new Error('Não foi possível abrir a imagem selecionada.')}
+    try{
+      let scale=Math.min(1,MAX_SIDE/Math.max(bitmap.width,bitmap.height));
+      let width=Math.max(1,Math.round(bitmap.width*scale));
+      let height=Math.max(1,Math.round(bitmap.height*scale));
+      const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{alpha:false});
+      if(!ctx)throw new Error('Seu navegador não conseguiu preparar a imagem.');
+      let blob;
+      for(let resize=0;resize<4;resize++){
+        canvas.width=width;canvas.height=height;
+        ctx.clearRect(0,0,width,height);
+        ctx.drawImage(bitmap,0,0,width,height);
+        for(const quality of [.82,.72,.62,.52,.44]){
+          blob=await canvasBlob(canvas,'image/webp',quality);
+          if(blob.size<=MAX_BYTES)break;
+        }
+        if(blob&&blob.size<=MAX_BYTES)break;
+        width=Math.max(1,Math.round(width*.82));
+        height=Math.max(1,Math.round(height*.82));
+      }
+      if(!blob)throw new Error('Não foi possível comprimir a imagem.');
+      if(blob.size>MAX_BYTES)throw new Error('A imagem ficou grande demais mesmo após otimização. Tente outra imagem.');
+      const base=(file.name||'mapa').replace(/\.[^.]+$/,'').replace(/[^a-z0-9_-]+/gi,'-').slice(0,50)||'mapa';
+      return{name:base+'.webp',mime:'image/webp',data:await blobToDataUrl(blob)};
+    }finally{if(bitmap&&typeof bitmap.close==='function')bitmap.close()}
+  }
+  function voteMapFields(n){return '<div class="stateCard" style="margin-bottom:10px"><b>Mapa '+n+'</b><div class="field"><label>Como carregar este mapa</label><select id="voteMode'+n+'"><option value="seed">Seed + Size</option><option value="link">Link .map (RustMaps Premium)</option></select></div><div id="voteSeedBox'+n+'" class="actionGrid"><div class="field"><label>Seed</label><input id="voteSeed'+n+'" type="number" min="0" max="2147483647" inputmode="numeric" placeholder="Ex.: 123456789"></div><div class="field"><label>Size</label><input id="voteSize'+n+'" type="number" min="1000" max="6000" inputmode="numeric" placeholder="Ex.: 3500"></div></div><div id="voteLinkBox'+n+'" class="field" style="display:none"><label>Link do arquivo .map</label><input id="voteMapUrl'+n+'" type="url" autocapitalize="off" autocomplete="off" placeholder="https://.../mapa.map"><small>Cole o link direto .map do RustMaps Premium. O link não será exibido publicamente na votação.</small></div><div class="field"><label>Imagem do mapa (arquivo opcional)</label><input id="voteImage'+n+'" type="file" accept="image/png,image/jpeg,image/webp,image/gif"><small>PNG, JPG, WEBP ou GIF • até 5 MB • otimização automática antes do envio</small></div></div>'}
   function create(){const main=document.querySelector('.main');if(!main||$('wipeAdmin'))return;const view=document.createElement('section');view.id='wipeAdmin';view.className='view';view.innerHTML=
     '<div class="section"><div class="sectionHead"><div><h2>Central de Wipe</h2><div class="subtitle">Votação, mapas, automação e execução manual em um só lugar.</div></div><span id="wipeMode" class="badge yellow">CARREGANDO</span></div><div class="body">'+
     '<div class="cards"><div class="card"><small>API ELGAE</small><strong id="wipeApi">—</strong></div><div class="card"><small>SERVIDOR</small><strong id="wipeState">—</strong></div><div class="card"><small>MAPA VIA STARTUP</small><strong id="wipeStartup">—</strong></div><div class="card accent"><small>AUTOMAÇÃO</small><strong id="wipeLock">—</strong></div></div>'+
