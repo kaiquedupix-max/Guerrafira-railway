@@ -463,13 +463,15 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
     .setColor(0x2bf0c9)
     .setTitle("🛡️ Verificação Vorken • Guerra Fria")
     .setDescription(
-      "**Se você foi chamado para verificação dentro do Rust:**\n\n" +
-      "1. Veja o **código** exibido na tela do jogo.\n" +
-      "2. Envie **somente os 4 dígitos do código** neste canal.\n" +
+      "**A verificação é obrigatória quando solicitada pela administração.**\n\n" +
+      "1. Veja o **código de 4 dígitos** exibido na tela do Rust.\n" +
+      "2. Você tem **5 minutos** para enviar **somente o código** neste canal.\n" +
       "3. O bot criará uma **sala privada** para sua verificação.\n" +
-      "4. Dentro da sala você receberá seu **link exclusivo do Vorken**.\n" +
-      "5. Baixe, execute e aguarde a análise terminar.\n\n" +
-      "⚠️ Não compartilhe seu código. Não desconecte do servidor durante a verificação."
+      "4. Dentro da sala você receberá o **link exclusivo do Vorken**.\n" +
+      "5. Baixe, execute como administrador e aguarde a análise terminar.\n" +
+      "6. Quando finalizar, **aguarde a decisão da administração** dentro do ticket.\n\n" +
+      "🚫 **Recusar, desconectar do servidor ou deixar o prazo expirar encerra a verificação com punição administrativa.**\n" +
+      "⚠️ Não compartilhe seu código com outra pessoa."
     )
     .setFooter({ text: INSTRUCTIONS_MARKER });
 
