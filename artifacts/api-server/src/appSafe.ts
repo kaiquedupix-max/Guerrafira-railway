@@ -40,8 +40,12 @@ startStoragePolicy();
 app.use(pinoHttp({logger,serializers:{req(req){return{id:req.id,method:req.method,url:req.url?.split("?")[0]};},res(res){return{statusCode:res.statusCode};}}}));
 app.use(cors());
 app.use(cookieParser());
-app.use(express.json({limit:"18mb"}));
-app.use(express.urlencoded({extended:true}));
+// A votação de mapas pode enviar até 3 imagens de 5 MB em Base64.
+// Base64 adiciona ~33% ao payload, então 18 MB era insuficiente e causava HTTP 413.
+// 32 MB mantém margem para metadados sem remover o limite individual de 5 MB por imagem.
+const REQUEST_BODY_LIMIT = "32mb";
+app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 app.use((req,res,next)=>{
   if(req.path.startsWith("/admin")||req.path.startsWith("/painel")||req.path.startsWith("/api/admin")){
     res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
