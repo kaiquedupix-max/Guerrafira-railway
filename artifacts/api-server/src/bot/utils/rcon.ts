@@ -57,14 +57,25 @@ function _doConnect(): Promise<boolean> {
     socket.on("message", data => {
       try {
         const msg = JSON.parse(data.toString()) as RconResponse;
-        if (msg.Message) captureAntibotTelemetry(msg.Message);
-        const pending = pendingResolvers.get(msg.Identifier);
-        if (pending) { clearTimeout(pending.timer); pendingResolvers.delete(msg.Identifier); pending.resolve(msg.Message); return; }
         if (msg.Message) {
+          captureAntibotTelemetry(msg.Message);
+
+          // Eventos emitidos por plugins podem chegar no MESMO pacote/Identifier
+          // usado como resposta de um comando RCON. Antes, o return do resolver
+          // consumia a mensagem e o fluxo de verificação nunca recebia
+          // [GF_VERIFICACAO], fazendo o Discord responder "código não encontrado".
           for (const handler of rconEventHandlers) {
             try { handler(msg.Type ?? "", msg.Message); }
             catch (err) { logger.error({ err }, "RCON event handler error"); }
           }
+        }
+
+        const pending = pendingResolvers.get(msg.Identifier);
+        if (pending) {
+          clearTimeout(pending.timer);
+          pendingResolvers.delete(msg.Identifier);
+          pending.resolve(msg.Message);
+          return;
         }
       } catch {}
     });
