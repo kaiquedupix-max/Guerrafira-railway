@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Verificacao", "Kaique", "1.6.3")]
+    [Info("Verificacao", "Kaique", "1.6.4")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, isolamento via Vanish e eventos RCON.")]
     public class Verificacao : RustPlugin
     {
@@ -1459,9 +1459,12 @@ namespace Oxide.Plugins
             sessions.Remove(id);
             SaveData();
 
-            CuiHelper.DestroyUi(player, Ui);
-            CuiHelper.DestroyUi(player, DiscordUi);
-            CuiHelper.DestroyUi(player, ConfirmUi);
+            if (player != null)
+            {
+                CuiHelper.DestroyUi(player, Ui);
+                CuiHelper.DestroyUi(player, DiscordUi);
+                CuiHelper.DestroyUi(player, ConfirmUi);
+            }
 
             if (player != null &&
                 !session.JaEstavaInvisivel &&
