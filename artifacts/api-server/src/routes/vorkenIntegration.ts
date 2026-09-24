@@ -16,6 +16,14 @@ function safe(value: unknown, max = 500): string {
     .slice(0, max);
 }
 
+function safeRustChat(value: unknown, max = 80): string {
+  return String(value ?? "")
+    .replace(/[<>;"'\\\r\n\t]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
 function integrationKey(): string {
   return String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
 }
@@ -182,6 +190,9 @@ router.post("/integrations/vorken/progress", requireVorken, async (req, res) => 
 
 router.post("/integrations/vorken/decision", requireVorken, async (req, res) => {
   const steamId = safe(req.body?.steamId, 32);
+  const playerName =
+    safeRustChat(req.body?.playerName, 80) ||
+    steamId;
   const decision = safe(req.body?.decision, 20).toLowerCase() as "approve" | "deny";
   const reason =
     safe(req.body?.reason, 500) ||
@@ -212,7 +223,12 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
     if (decision === "approve") {
       await executeRconRequired(`verificacao liberar ${steamId}`);
 
-      const result = "Jogador liberado da sessão de verificação.";
+      await executeRconRequired(
+        `say <color=#2BF0C9>[VORKEN • VERIFICADO]</color> <color=#FFFFFF>O jogador</color> <color=#FFD166>${playerName}</color> <color=#FFFFFF>concluiu a verificação administrativa com sucesso e foi</color> <color=#2BF0C9>LIBERADO</color> <color=#FFFFFF>pela equipe.</color>`
+      );
+
+      const result =
+        `${playerName} concluiu a verificação administrativa e foi liberado pela equipe.`;
 
       await notifyTicket({
         channelId: ticketChannelId,
