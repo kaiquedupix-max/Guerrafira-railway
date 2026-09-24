@@ -24,7 +24,6 @@ const TIMEOUT_BAN_PREFIX = "verification_timeout_ban:";
 const TIMEOUT_KEEP_PREFIX = "verification_timeout_keep:";
 const INSTRUCTIONS_MARKER = "GF_VORKEN_VERIFICATION_INSTRUCTIONS_V1";
 let started = false;
-let actionPollBusy = false;
 
 export const data = new SlashCommandBuilder()
   .setName("telagem")
@@ -127,15 +126,6 @@ type RedeemResponse = {
   administratorId?: string | null;
 };
 
-type VorkenQueuedAction = {
-  id: number;
-  analysisId: number;
-  steamId: string;
-  discordUserId?: string | null;
-  ticketChannelId?: string | null;
-  action: "ban" | "release";
-  reason: string;
-};
 
 const handledRefusals = new Map<string, number>();
 const pendingTimeouts = new Map<string, PendingTimeout>();
@@ -625,141 +615,6 @@ async function handleTimeoutButton(interaction: any): Promise<boolean> {
   return true;
 }
 
-async function notifyActionTicket(
-  client: Client,
-  action: VorkenQueuedAction,
-  message: string,
-  success: boolean,
-): Promise<void> {
-  const channelId = String(action.ticketChannelId || "");
-  if (!/^\d{16,20}$/.test(channelId)) return;
-
-  const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel?.isSendable()) return;
-
-  const mention = /^\d{16,20}$/.test(String(action.discordUserId || ""))
-    ? `<@${action.discordUserId}>`
-    : "";
-
-  await channel.send({
-    content:
-      `${mention ? mention + "\n" : ""}` +
-      (success ? "✅ " : "❌ ") +
-      message,
-    allowedMentions: mention
-      ? { users: [String(action.discordUserId)] }
-      : { parse: [] },
-  }).catch(() => {});
-}
-
-async function processVorkenAction(client: Client, action: VorkenQueuedAction): Promise<void> {
-  let success = false;
-  let resultText = "";
-
-  try {
-    if (!STEAM_ID_RE.test(action.steamId)) {
-      throw new Error("SteamID inválido na decisão.");
-    }
-
-    if (action.action === "release") {
-      const result = await executeRconCommand(
-        `verificacao liberar ${action.steamId}`
-      );
-
-      if (result === null) {
-        throw new Error("Servidor não confirmou a liberação.");
-      }
-
-      success = true;
-      resultText = "Jogador liberado da verificação.";
-
-      await notifyActionTicket(
-        client,
-        action,
-        "A análise foi concluída e o jogador foi **liberado** pela administração.",
-        true,
-      );
-    } else if (action.action === "ban") {
-      const { banPlayer } = await import("../core/systemActions.js");
-
-      await executeRconCommand(
-        `verificacao liberar ${action.steamId}`
-      );
-
-      const result = await banPlayer({
-        steamId: action.steamId,
-        duration: "perm",
-        reason:
-          action.reason ||
-          "Trapaça confirmada na verificação Vorken.",
-        actor: {
-          id: "VORKEN",
-          name: "Painel Vorken",
-          source: "system",
-        },
-      });
-
-      success = true;
-      resultText =
-        `Banimento permanente aplicado a ${result.playerName}.`;
-
-      await notifyActionTicket(
-        client,
-        action,
-        `A análise foi concluída e o jogador foi **banido permanentemente**.\nMotivo: **${action.reason || "Trapaça confirmada na verificação Vorken."}**`,
-        true,
-      );
-    } else {
-      throw new Error("Ação desconhecida.");
-    }
-  } catch (error) {
-    resultText =
-      error instanceof Error
-        ? error.message
-        : "Falha desconhecida.";
-
-    await notifyActionTicket(
-      client,
-      action,
-      `Falha ao aplicar a decisão da análise: ${resultText}`,
-      false,
-    );
-  }
-
-  await vorkenRequest(
-    `/api/integrations/guerra-fria/actions/${action.id}/complete`,
-    {
-      method: "POST",
-      body: {
-        success,
-        result: success ? resultText : undefined,
-        error: success ? undefined : resultText,
-      },
-    },
-  ).catch(error =>
-    logger.error({ error, actionId: action.id }, "Failed to acknowledge Vorken action")
-  );
-}
-
-async function pollVorkenActions(client: Client): Promise<void> {
-  if (actionPollBusy || !integrationKey()) return;
-  actionPollBusy = true;
-
-  try {
-    const data = await vorkenRequest<{ action: VorkenQueuedAction | null }>(
-      "/api/integrations/guerra-fria/actions/next"
-    );
-
-    if (data.action) {
-      await processVorkenAction(client, data.action);
-    }
-  } catch (error) {
-    logger.warn({ error }, "Vorken action poll failed");
-  } finally {
-    actionPollBusy = false;
-  }
-}
-
 async function handleVerificationEvent(
   client: Client,
   type: string,
@@ -865,10 +720,4 @@ export function startVerificationIntegration(client: Client): void {
     );
   });
 
-  setInterval(
-    () => pollVorkenActions(client).catch(() => {}),
-    4000,
-  );
-
-  pollVorkenActions(client).catch(() => {});
 }
