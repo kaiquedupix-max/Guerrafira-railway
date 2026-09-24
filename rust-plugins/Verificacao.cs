@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Verificacao", "Kaique", "1.6.1")]
+    [Info("Verificacao", "Kaique", "1.6.2")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, isolamento via Vanish e eventos RCON.")]
     public class Verificacao : RustPlugin
     {
@@ -397,6 +397,93 @@ namespace Oxide.Plugins
                 new[] { "iniciar", steamId },
                 "discord:" + Clean(discordUserId)
             );
+
+            ulong parsedSteamId;
+            Session createdSession;
+
+            if (ulong.TryParse(steamId, out parsedSteamId) &&
+                sessions.TryGetValue(
+                    parsedSteamId,
+                    out createdSession))
+            {
+                string payload =
+                    JsonConvert.SerializeObject(new
+                    {
+                        eventType = "session_started",
+                        steamId = parsedSteamId.ToString(),
+                        playerName = Clean(createdSession.Nome),
+                        administrator = createdSession.Administrador,
+                        code = EnsureCode(createdSession),
+                        ttlSeconds = settings.PrazoEmSegundos
+                    });
+
+                arg.ReplyWith(
+                    EventPrefix + " " +
+                    payload
+                );
+            }
+        }
+
+        [ConsoleCommand("verificacao.lookup")]
+        private void LookupCommand(ConsoleSystem.Arg arg)
+        {
+            if (arg == null || arg.Connection != null)
+                return;
+
+            var rawArgs = arg.Args;
+
+            if (rawArgs == null || rawArgs.Length != 1)
+            {
+                arg.ReplyWith("[GF_VERIFICACAO_LOOKUP] NOT_FOUND");
+                return;
+            }
+
+            string code =
+                rawArgs[0].ToString().Trim();
+
+            if (!IsFourDigitCode(code))
+            {
+                arg.ReplyWith("[GF_VERIFICACAO_LOOKUP] NOT_FOUND");
+                return;
+            }
+
+            foreach (var pair in sessions)
+            {
+                Session session = pair.Value;
+
+                if (session == null ||
+                    EnsureCode(session) != code)
+                    continue;
+
+                int remaining =
+                    Math.Max(
+                        120,
+                        (int)Math.Ceiling(
+                            (session.PrazoUtc - DateTime.UtcNow)
+                            .TotalSeconds
+                        )
+                    );
+
+                string payload =
+                    JsonConvert.SerializeObject(new
+                    {
+                        eventType = "session_started",
+                        steamId = pair.Key.ToString(),
+                        playerName = Clean(session.Nome),
+                        administrator = session.Administrador,
+                        code = EnsureCode(session),
+                        ttlSeconds = remaining
+                    });
+
+                arg.ReplyWith(
+                    "[GF_VERIFICACAO_LOOKUP] " +
+                    payload
+                );
+
+                return;
+            }
+
+            arg.ReplyWith("[GF_VERIFICACAO_LOOKUP] NOT_FOUND");
         }
 
         private void Execute(
@@ -1714,7 +1801,8 @@ namespace Oxide.Plugins
                 name == "verificacao.voltar" ||
                 name == "verificacao.recusar" ||
                 name == "verificacao.recusar.cancelar" ||
-                name == "verificacao.recusar.confirmar")
+                name == "verificacao.recusar.confirmar" ||
+                name == "verificacao.lookup")
             {
                 return null;
             }
