@@ -49,9 +49,8 @@ function safeGameChat(value: string, max = 90): string {
 
 function normalizeCode(value: unknown): string {
   return String(value ?? "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 12);
+    .replace(/\D/g, "")
+    .slice(0, 4);
 }
 
 function vorkenBaseUrl(): string {
@@ -298,7 +297,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 async function registerVorkenSession(payload: VerificationEvent): Promise<void> {
   const steamId = String(payload.steamId || "").trim();
   const code = normalizeCode(payload.code);
-  if (!STEAM_ID_RE.test(steamId) || !/^[A-Z0-9]{6,12}$/.test(code)) return;
+  if (!STEAM_ID_RE.test(steamId) || !/^\d{4}$/.test(code)) return;
 
   await vorkenRequest("/api/integrations/guerra-fria/session", {
     method: "POST",
@@ -316,7 +315,7 @@ async function registerVorkenSession(payload: VerificationEvent): Promise<void> 
 
 async function cancelVorkenSession(code?: string): Promise<void> {
   const normalized = normalizeCode(code);
-  if (!/^[A-Z0-9]{6,12}$/.test(normalized)) return;
+  if (!/^\d{4}$/.test(normalized)) return;
 
   await vorkenRequest(
     `/api/integrations/guerra-fria/session/${encodeURIComponent(normalized)}/cancel`,
@@ -354,7 +353,7 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
     .setDescription(
       "**Se você foi chamado para verificação dentro do Rust:**\n\n" +
       "1. Veja o **código** exibido na tela do jogo.\n" +
-      "2. Envie **somente o código** neste canal.\n" +
+      "2. Envie **somente os 4 dígitos do código** neste canal.\n" +
       "3. O bot criará uma **sala privada** para sua verificação.\n" +
       "4. Dentro da sala você receberá seu **link exclusivo do Vorken**.\n" +
       "5. Baixe, execute e aguarde a análise terminar.\n\n" +
@@ -512,7 +511,7 @@ export async function handleVerificationCodeMessage(message: Message): Promise<b
   if (!channelId || message.channelId !== channelId) return false;
 
   const code = normalizeCode(message.content);
-  if (!/^[A-Z0-9]{6,12}$/.test(code)) return false;
+  if (!/^\d{4}$/.test(code)) return false;
 
   await message.delete().catch(() => {});
 
