@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { EmbedBuilder } from "discord.js";
 import crypto from "node:crypto";
 import { banPlayer, executeRconRequired } from "../core/systemActions.js";
 import { discordClient } from "../bot/client.js";
@@ -48,13 +49,24 @@ function requireVorken(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-async function notifyTicket(args: {
+function safeEvidenceUrl(value: unknown): string {
+  try {
+    const url = new URL(String(value || "").trim());
+    return ["http:", "https:"].includes(url.protocol)
+      ? url.href
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+async function upsertVerificationStatus(args: {
   channelId?: string;
-  discordUserId?: string;
-  steamId: string;
-  decision: "approve" | "deny";
-  reason: string;
-  result: string;
+  analysisId: number;
+  title: string;
+  description: string;
+  color: number;
+  evidenceUrl?: string;
 }): Promise<void> {
   const client = discordClient();
   const channelId = safe(args.channelId, 32);
@@ -62,24 +74,113 @@ async function notifyTicket(args: {
   if (!client || !/^\d{16,20}$/.test(channelId)) return;
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel?.isSendable()) return;
+  if (!channel?.isTextBased() || !channel.isSendable()) return;
 
-  const mention = /^\d{16,20}$/.test(String(args.discordUserId || ""))
-    ? `<@${args.discordUserId}>`
-    : "";
+  const marker = `GF_VORKEN_STATUS_${args.analysisId}`;
 
-  const message =
-    args.decision === "deny"
-      ? `🔨 **Verificação concluída: jogador punido**\nSteamID: \`${args.steamId}\`\nMotivo: **${args.reason}**\n${args.result}`
-      : `✅ **Verificação concluída: jogador liberado**\nSteamID: \`${args.steamId}\`\nA sessão de verificação no servidor foi encerrada.`;
+  const embed = new EmbedBuilder()
+    .setColor(args.color)
+    .setTitle(args.title)
+    .setDescription(args.description)
+    .setFooter({ text: marker })
+    .setTimestamp();
 
-  await channel.send({
-    content: `${mention ? mention + "\n" : ""}${message}`,
-    allowedMentions: mention
-      ? { users: [String(args.discordUserId)] }
-      : { parse: [] },
-  }).catch(() => {});
+  if (args.evidenceUrl) {
+    embed.addFields({
+      name: "Provas da verificação",
+      value: `[Abrir evidências no Vorken](${args.evidenceUrl})`
+    });
+  }
+
+  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  const existing = recent?.find(message =>
+    message.author.id === client.user?.id &&
+    message.embeds.some(item => item.footer?.text === marker)
+  );
+
+  if (existing) {
+    await existing.edit({ embeds: [embed] }).catch(() => {});
+  } else {
+    await channel.send({ embeds: [embed] }).catch(() => {});
+  }
 }
+
+async function notifyTicket(args: {
+  channelId?: string;
+  discordUserId?: string;
+  analysisId: number;
+  steamId: string;
+  decision: "approve" | "deny";
+  reason: string;
+  result: string;
+  evidenceUrl?: string;
+}): Promise<void> {
+  const evidenceUrl = safeEvidenceUrl(args.evidenceUrl);
+
+  await upsertVerificationStatus({
+    channelId: args.channelId,
+    analysisId: args.analysisId,
+    title:
+      args.decision === "deny"
+        ? "🔨 Verificação encerrada · jogador banido"
+        : "✅ Verificação encerrada · jogador liberado",
+    description:
+      args.decision === "deny"
+        ? `**SteamID:** \`${args.steamId}\`\n**Motivo:** ${args.reason}\n${args.result}`
+        : `**SteamID:** \`${args.steamId}\`\nA administração concluiu a análise e liberou o jogador.`,
+    color:
+      args.decision === "deny"
+        ? 0xe74c3c
+        : 0x22c55e,
+    evidenceUrl: evidenceUrl || undefined,
+  });
+}
+
+router.post("/integrations/vorken/progress", requireVorken, async (req, res) => {
+  const analysisId = Number(req.body?.analysisId);
+  const stage = safe(req.body?.stage, 40).toLowerCase();
+  const ticketChannelId = safe(req.body?.ticketChannelId, 32);
+  const analysisId = Number(req.body?.analysisId);
+  const evidenceUrl = safeEvidenceUrl(req.body?.evidenceUrl);
+
+  if (!Number.isInteger(analysisId) || analysisId <= 0) {
+    res.status(400).json({ error: "invalid_analysis_id" });
+    return;
+  }
+
+  const stages: Record<string, { title: string; description: string; color: number }> = {
+    started: {
+      title: "🟢 Verificação iniciada",
+      description: "O Vorken foi aberto no computador do jogador e a coleta técnica foi iniciada.",
+      color: 0x2bf0c9,
+    },
+    processing: {
+      title: "🔎 Verificação em andamento",
+      description: "A coleta do computador terminou. O relatório está sendo processado e classificado.",
+      color: 0x4aa3ff,
+    },
+    completed: {
+      title: "✅ Verificação finalizada",
+      description: "A análise terminou. **Aguarde a decisão da administração.**",
+      color: 0xf0b429,
+    },
+  };
+
+  const state = stages[stage];
+
+  if (!state) {
+    res.status(400).json({ error: "invalid_progress_stage" });
+    return;
+  }
+
+  await upsertVerificationStatus({
+    channelId: ticketChannelId,
+    analysisId,
+    ...state,
+  });
+
+  res.json({ ok: true });
+});
 
 router.post("/integrations/vorken/decision", requireVorken, async (req, res) => {
   const steamId = safe(req.body?.steamId, 32);
@@ -102,6 +203,11 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
     return;
   }
 
+  if (!Number.isInteger(analysisId) || analysisId <= 0) {
+    res.status(400).json({ error: "invalid_analysis_id" });
+    return;
+  }
+
   try {
     if (decision === "approve") {
       await executeRconRequired(`verificacao liberar ${steamId}`);
@@ -111,6 +217,7 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
       await notifyTicket({
         channelId: ticketChannelId,
         discordUserId,
+        analysisId,
         steamId,
         decision,
         reason,
@@ -134,6 +241,7 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
         name: "Painel Vorken",
         source: "system",
       },
+      evidenceUrl: evidenceUrl || undefined,
     });
 
     const result = `Banimento permanente aplicado a ${punishment.playerName}.`;
@@ -141,10 +249,12 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
     await notifyTicket({
       channelId: ticketChannelId,
       discordUserId,
+      analysisId,
       steamId,
       decision,
       reason,
       result,
+      evidenceUrl: evidenceUrl || undefined,
     });
 
     res.json({ ok: true, result });
