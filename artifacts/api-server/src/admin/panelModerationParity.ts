@@ -1,6 +1,7 @@
 export const panelModerationParityJs = String.raw`
 (function(){'use strict';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const linkify = v => esc(v).replace(/(https:\/\/[^\s&<]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#72e6ca;text-decoration:underline">Abrir provas</a>');
   const toast = (msg,bad=false) => {
     const t=document.getElementById('toast');
     if(!t)return;
@@ -72,7 +73,7 @@ export const panelModerationParityJs = String.raw`
       const duration=state.ban.duration==='perm'?'Permanente':(state.ban.duration||'Não informado');
       const title=preventive?'Banimento preventivo ativo':'Banimento ativo';
       const next=preventive?'<small>Para liberação: o jogador deve abrir um ticket em discord.gg/guerrafria e passar por VERIFICAÇÃO.</small>':'';
-      card.innerHTML='<b style="color:'+(preventive?'#ffd27a':'#ff9a9a')+'">'+title+'</b><small>Motivo: '+esc(state.ban.reason||'Não informado')+'</small><small>Duração: '+esc(duration)+(state.ban.adminName?' • Aplicado por '+esc(state.ban.adminName):'')+'</small>'+next;
+      card.innerHTML='<b style="color:'+(preventive?'#ffd27a':'#ff9a9a')+'">'+title+'</b><small>Motivo: '+linkify(state.ban.reason||'Não informado')+'</small><small>Duração: '+esc(duration)+(state.ban.adminName?' • Aplicado por '+esc(state.ban.adminName):'')+'</small>'+next;
       const field=drawer.querySelector('.field');
       if(field)field.parentElement?.insertBefore(card,field);
     }
