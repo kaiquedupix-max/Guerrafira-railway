@@ -67,22 +67,52 @@ async function sendGameModerationNotice(command: string, steamId: string, type: 
   });
 }
 
-export async function banPlayer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string }) {
+export async function banPlayer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string; evidenceUrl?: string; skipRcon?: boolean }) {
   const row = await player(input.steamId);
   const name = safe(input.playerName || row?.playerName || `Jogador offline (${input.steamId})`, 100);
   const reason = safe(input.reason);
   if (!reason) throw new ActionError("Motivo obrigatório.");
   const days = input.duration === "3d" ? 3 : input.duration === "7d" ? 7 : input.duration === "30d" ? 30 : 0;
   const expiresAt = days ? new Date(Date.now() + days * 86400000) : null;
-  await executeRconRequired(`banid ${input.steamId} "${name}" "[${input.duration.toUpperCase()}] ${reason} | Recurso: discord.gg/guerrafria"`);
-  await db.insert(modLogsTable).values({ action: "BAN", steamId: input.steamId, playerName: name, reason, adminId: input.actor.id, adminName: input.actor.name, banDuration: input.duration, banExpiresAt: expiresAt });
+  const evidenceUrl = String(input.evidenceUrl || "").trim();
+
+  if (!input.skipRcon) {
+    await executeRconRequired(`banid ${input.steamId} "${name}" "[${input.duration.toUpperCase()}] ${reason} | Recurso: discord.gg/guerrafria"`);
+  }
+
+  const auditReason = safe(
+    evidenceUrl
+      ? `${reason} | Provas: ${evidenceUrl}`
+      : reason,
+    300
+  );
+
+  await db.insert(modLogsTable).values({
+    action: "BAN",
+    steamId: input.steamId,
+    playerName: name,
+    reason: auditReason,
+    adminId: input.actor.id,
+    adminName: input.actor.name,
+    banDuration: input.duration,
+    banExpiresAt: expiresAt
+  });
   const banEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle("🔨 Banimento aplicado").addFields(
     { name: "Jogador", value: name, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Duração", value: input.duration, inline: true }, { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
-  ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp();
+  );
+
+  if (evidenceUrl) {
+    banEmbed.addFields({
+      name: "Provas da verificação",
+      value: `[Abrir evidências no Vorken](${evidenceUrl})`
+    });
+  }
+
+  banEmbed.setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp();
   await log(await withSteamProfile(banEmbed, input.steamId));
   const gameNotified = await sendGameModerationNotice(
-    `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
+    `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 125)}</color>${evidenceUrl ? " | <color=#00E6C3>Provas/motivo: Discord ou www.guerrafriarust.com.br</color>" : ""}`,
     input.steamId, "BAN");
   return { playerName: name, expiresAt, gameNotified };
 }
