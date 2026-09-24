@@ -144,6 +144,55 @@ async function notifyTicket(args: {
   });
 }
 
+async function scheduleVerificationTicketDeletion(
+  channelId?: string,
+  delayMs = 20_000,
+): Promise<void> {
+  const id = safe(channelId, 32);
+  const client = discordClient();
+
+  if (!client || !/^\d{16,20}$/.test(id))
+    return;
+
+  const channel =
+    await client.channels.fetch(id).catch(() => null);
+
+  if (!channel || !channel.isTextBased())
+    return;
+
+  const topic =
+    "topic" in channel
+      ? String(channel.topic || "")
+      : "";
+
+  // Segurança: nunca apaga o canal público #verificacao nem outro canal
+  // arbitrário; apenas tickets privados criados pelo fluxo Vorken.
+  if (!topic.startsWith("Vorken •"))
+    return;
+
+  setTimeout(async () => {
+    try {
+      const latest =
+        await client.channels.fetch(id).catch(() => null);
+
+      if (
+        latest &&
+        "delete" in latest &&
+        typeof latest.delete === "function"
+      ) {
+        await latest.delete(
+          "Verificação Vorken concluída"
+        );
+      }
+    } catch (error) {
+      logger.warn(
+        { error, channelId: id },
+        "Failed to delete completed Vorken verification ticket",
+      );
+    }
+  }, Math.max(5_000, delayMs));
+}
+
 router.post("/integrations/vorken/progress", requireVorken, async (req, res) => {
   const analysisId = Number(req.body?.analysisId);
   const stage = safe(req.body?.stage, 40).toLowerCase();
@@ -240,6 +289,10 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
         result,
       });
 
+      await scheduleVerificationTicketDeletion(
+        ticketChannelId
+      );
+
       res.json({ ok: true, result });
       return;
     }
@@ -272,6 +325,10 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
       result,
       evidenceUrl: evidenceUrl || undefined,
     });
+
+    await scheduleVerificationTicketDeletion(
+      ticketChannelId
+    );
 
     res.json({ ok: true, result });
   } catch (error) {
