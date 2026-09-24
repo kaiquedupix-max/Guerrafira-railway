@@ -470,7 +470,7 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
       "4. Dentro da sala você receberá o **link exclusivo do Vorken**.\n" +
       "5. Baixe, execute como administrador e aguarde a análise terminar.\n" +
       "6. Quando finalizar, **aguarde a decisão da administração** dentro do ticket.\n\n" +
-      "🚫 **Recusar, desconectar do servidor ou deixar o prazo expirar encerra a verificação com punição administrativa.**\n" +
+      "🚫 **Recusar, desconectar do servidor ou deixar os 5 minutos expirarem resulta em banimento permanente.**\n" +
       "⚠️ Não compartilhe seu código com outra pessoa."
     )
     .setFooter({ text: INSTRUCTIONS_MARKER });
