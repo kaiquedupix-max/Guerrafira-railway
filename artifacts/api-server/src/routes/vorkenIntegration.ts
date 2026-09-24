@@ -140,8 +140,6 @@ router.post("/integrations/vorken/progress", requireVorken, async (req, res) => 
   const analysisId = Number(req.body?.analysisId);
   const stage = safe(req.body?.stage, 40).toLowerCase();
   const ticketChannelId = safe(req.body?.ticketChannelId, 32);
-  const analysisId = Number(req.body?.analysisId);
-  const evidenceUrl = safeEvidenceUrl(req.body?.evidenceUrl);
 
   if (!Number.isInteger(analysisId) || analysisId <= 0) {
     res.status(400).json({ error: "invalid_analysis_id" });
@@ -192,6 +190,8 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
       : "Resultado da verificação aprovado.");
   const discordUserId = safe(req.body?.discordUserId, 32);
   const ticketChannelId = safe(req.body?.ticketChannelId, 32);
+  const analysisId = Number(req.body?.analysisId);
+  const evidenceUrl = safeEvidenceUrl(req.body?.evidenceUrl);
 
   if (!STEAM_ID_RE.test(steamId)) {
     res.status(400).json({ error: "invalid_steam_id" });
