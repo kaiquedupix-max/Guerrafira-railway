@@ -848,7 +848,7 @@ async function handleVerificationEvent(
     return;
   }
 
-  if (payload.eventType !== "refusal_ban") return;
+  if (!["refusal_ban", "timeout_ban"].includes(String(payload.eventType || ""))) return;
   if (!STEAM_ID_RE.test(steamId) || alreadyHandled(steamId)) return;
 
   pendingTimeouts.delete(steamId);
@@ -861,7 +861,11 @@ async function handleVerificationEvent(
 
   const reason = String(
     payload.reason ??
-    "Recusou a verificação administrativa."
+    (
+      payload.eventType === "timeout_ban"
+        ? "Não enviou o código de verificação no Discord dentro de 5 minutos."
+        : "Recusou a verificação administrativa."
+    )
   ).trim().slice(0, 300);
 
   try {
@@ -871,9 +875,13 @@ async function handleVerificationEvent(
       duration: "perm",
       reason,
       playerName,
+      skipRcon: true,
       actor: {
         id: "SYSTEM",
-        name: "Sistema de Verificação",
+        name:
+          payload.eventType === "timeout_ban"
+            ? "Prazo da Verificação"
+            : "Sistema de Verificação",
         source: "system",
       },
     });
