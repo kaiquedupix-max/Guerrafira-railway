@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Verificacao", "Kaique", "1.6.0")]
+    [Info("Verificacao", "Kaique", "1.6.1")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, isolamento via Vanish e eventos RCON.")]
     public class Verificacao : RustPlugin
     {
@@ -118,12 +118,58 @@ namespace Oxide.Plugins
             }
         }
 
+        private bool IsFourDigitCode(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) ||
+                value.Length != 4)
+                return false;
+
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (value[i] < '0' ||
+                    value[i] > '9')
+                    return false;
+            }
+
+            return true;
+        }
+
+        private bool CodeInUse(string code)
+        {
+            foreach (Session existing in sessions.Values)
+            {
+                if (existing != null &&
+                    existing.Codigo == code)
+                    return true;
+            }
+
+            return false;
+        }
+
         private string NewCode()
         {
-            return Guid.NewGuid()
-                .ToString("N")
-                .Substring(0, 8)
-                .ToUpperInvariant();
+            for (int attempt = 0; attempt < 100; attempt++)
+            {
+                string code =
+                    UnityEngine.Random.Range(0, 10000)
+                        .ToString("D4");
+
+                if (!CodeInUse(code))
+                    return code;
+            }
+
+            for (int number = 0; number <= 9999; number++)
+            {
+                string code =
+                    number.ToString("D4");
+
+                if (!CodeInUse(code))
+                    return code;
+            }
+
+            throw new InvalidOperationException(
+                "Nao existem codigos de verificacao livres."
+            );
         }
 
         private string EnsureCode(Session session)
@@ -131,8 +177,7 @@ namespace Oxide.Plugins
             if (session == null)
                 return "";
 
-            if (string.IsNullOrWhiteSpace(session.Codigo) ||
-                session.Codigo.Length < 6)
+            if (!IsFourDigitCode(session.Codigo))
             {
                 session.Codigo = NewCode();
             }
@@ -812,7 +857,7 @@ namespace Oxide.Plugins
                 {
                     Text =
                     {
-                        Text = "SEU CODIGO DE VERIFICACAO",
+                        Text = "SEU CODIGO DE VERIFICACAO · 4 DIGITOS",
                         FontSize = 18,
                         Align = TextAnchor.MiddleCenter,
                         Color = "0.55 0.95 0.95 1"
