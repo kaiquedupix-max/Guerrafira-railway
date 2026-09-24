@@ -24,6 +24,8 @@ const TIMEOUT_BAN_PREFIX = "verification_timeout_ban:";
 const TIMEOUT_KEEP_PREFIX = "verification_timeout_keep:";
 const INSTRUCTIONS_MARKER = "GF_VORKEN_VERIFICATION_INSTRUCTIONS_V1";
 let started = false;
+let resolvedVerificationChannelId = "";
+let resolvedVerificationCategoryId = "";
 
 export const data = new SlashCommandBuilder()
   .setName("telagem")
@@ -137,11 +139,74 @@ function discordAdministratorId(value?: string): string | null {
   return /^\d{16,20}$/.test(id) ? id : null;
 }
 
-function verificationChannelId(): string {
+function configuredVerificationChannelId(): string {
   return String(process.env.DISCORD_VERIFICATION_CHANNEL_ID || "").trim();
 }
 
-function verificationStaffRoleIds(): string[] {
+async function resolveVerificationDiscordStructure(client: Client): Promise<void> {
+  const guildId = String(process.env.DISCORD_GUILD_ID || "").trim();
+  if (!guildId) {
+    logger.warn("DISCORD_GUILD_ID not set; verification channel cannot be resolved automatically");
+    return;
+  }
+
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) return;
+
+  await guild.channels.fetch().catch(() => null);
+
+  const configuredChannelId = configuredVerificationChannelId();
+  const configuredChannel = configuredChannelId
+    ? await guild.channels.fetch(configuredChannelId).catch(() => null)
+    : null;
+
+  const existingCategory = guild.channels.cache.find(channel =>
+    channel.type === ChannelType.GuildCategory &&
+    ["verificacao vorken", "verificação vorken", "verificacao", "verificação"]
+      .includes(channel.name.toLowerCase())
+  );
+
+  let categoryId =
+    String(process.env.DISCORD_VERIFICATION_CATEGORY_ID || "").trim();
+
+  if (!categoryId) categoryId = existingCategory?.id || "";
+
+  if (!categoryId) {
+    const category = await guild.channels.create({
+      name: "VERIFICAÇÃO VORKEN",
+      type: ChannelType.GuildCategory,
+    });
+    categoryId = category.id;
+  }
+
+  resolvedVerificationCategoryId = categoryId;
+
+  const existingText = guild.channels.cache.find(channel =>
+    channel.type === ChannelType.GuildText &&
+    ["verificacao", "verificação"].includes(channel.name.toLowerCase())
+  );
+
+  if (configuredChannel?.type === ChannelType.GuildText) {
+    resolvedVerificationChannelId = configuredChannel.id;
+    return;
+  }
+
+  if (existingText?.type === ChannelType.GuildText) {
+    resolvedVerificationChannelId = existingText.id;
+    return;
+  }
+
+  const created = await guild.channels.create({
+    name: "verificacao",
+    type: ChannelType.GuildText,
+    parent: categoryId || undefined,
+    topic: "Envie aqui o código mostrado na tela do Rust para iniciar sua verificação Vorken.",
+  });
+
+  resolvedVerificationChannelId = created.id;
+}
+
+function verificationStaffRoleIds(guild: NonNullable<Message["guild"]>): string[] {
   const raw = [
     process.env.DISCORD_VERIFICATION_STAFF_ROLE_IDS,
     process.env.DISCORD_MODERATOR_ROLE_IDS,
@@ -150,12 +215,24 @@ function verificationStaffRoleIds(): string[] {
     .filter(Boolean)
     .join(",");
 
-  return [...new Set(
-    raw
-      .split(/[;,\s]+/)
-      .map(value => value.trim())
-      .filter(value => /^\d{16,20}$/.test(value))
-  )];
+  const configured = raw
+    .split(/[;,\s]+/)
+    .map(value => value.trim())
+    .filter(value => /^\d{16,20}$/.test(value));
+
+  const moderationRoles = guild.roles.cache
+    .filter(role =>
+      role.id !== guild.id &&
+      (
+        role.permissions.has(PermissionFlagsBits.Administrator) ||
+        role.permissions.has(PermissionFlagsBits.BanMembers) ||
+        role.permissions.has(PermissionFlagsBits.ModerateMembers) ||
+        role.permissions.has(PermissionFlagsBits.ManageGuild)
+      )
+    )
+    .map(role => role.id);
+
+  return [...new Set([...configured, ...moderationRoles])];
 }
 
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -248,9 +325,14 @@ async function cancelVorkenSession(code?: string): Promise<void> {
 }
 
 async function ensureVerificationInstructions(client: Client): Promise<void> {
-  const channelId = verificationChannelId();
+  await resolveVerificationDiscordStructure(client);
+
+  const channelId =
+    resolvedVerificationChannelId ||
+    configuredVerificationChannelId();
+
   if (!channelId) {
-    logger.warn("DISCORD_VERIFICATION_CHANNEL_ID not set; verification code channel disabled");
+    logger.warn("Verification channel could not be resolved");
     return;
   }
 
@@ -310,7 +392,7 @@ async function createVerificationTicket(
   const botId = message.client.user?.id;
   if (!botId) throw new Error("Bot indisponível.");
 
-  const staffIds = verificationStaffRoleIds()
+  const staffIds = verificationStaffRoleIds(guild)
     .filter(id => guild.roles.cache.has(id));
 
   const permissionOverwrites = [
@@ -366,7 +448,10 @@ async function createVerificationTicket(
   const channel = await guild.channels.create({
     name: ticketName(session.playerName, session.steamId),
     type: ChannelType.GuildText,
-    parent: process.env.DISCORD_VERIFICATION_CATEGORY_ID?.trim() || undefined,
+    parent:
+      resolvedVerificationCategoryId ||
+      process.env.DISCORD_VERIFICATION_CATEGORY_ID?.trim() ||
+      undefined,
     topic:
       `Vorken • ${session.playerName} • ${session.steamId} • análise #${session.analysisId}`,
     permissionOverwrites,
@@ -420,7 +505,10 @@ async function createVerificationTicket(
 export async function handleVerificationCodeMessage(message: Message): Promise<boolean> {
   if (message.author.bot || !message.guild) return false;
 
-  const channelId = verificationChannelId();
+  const channelId =
+    resolvedVerificationChannelId ||
+    configuredVerificationChannelId();
+
   if (!channelId || message.channelId !== channelId) return false;
 
   const code = normalizeCode(message.content);
