@@ -55,6 +55,7 @@ import * as testeftpCommand from "./commands/testeftp.js";
 import * as enviarjsonCommand from "./commands/enviarjson.js";
 import * as wipedatasCommand from "./commands/wipedatas.js";
 import * as telagemCommand from "./verificationIntegrationV2.js";
+import { handleVerificationCodeMessage } from "./verificationIntegrationV2.js";
 import { handleMapVote } from "./commands/criarmapa.js";
 import { parseKillEvent, parseGatherEvent, parseCraftEvent } from "./killTracker.js";
 import { setupTicketPanel, handleTicketCreate, handleTicketTypeSelect, handleTicketClose, handleVipPayPix, handleVipPayCard, handlePixCopy } from "./tickets.js";
@@ -227,6 +228,9 @@ export async function startBot(): Promise<void> {
 
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return;
+
+    if (await handleVerificationCodeMessage(msg)) return;
+
     const chatChannelId = process.env.DISCORD_CHAT_CHANNEL_ID;
     if (!chatChannelId || msg.channelId !== chatChannelId) return;
     const content = msg.content.trim(); if (!content) return;
