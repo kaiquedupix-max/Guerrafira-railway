@@ -110,6 +110,52 @@ type VerificationEvent = {
   ttlSeconds?: number;
 };
 
+function parseVerificationEvent(message: string | null | undefined): VerificationEvent | null {
+  const rawMessage = String(message || "");
+
+  for (const prefix of [EVENT_PREFIX, "[GF_VERIFICACAO_LOOKUP]"]) {
+    const index = rawMessage.indexOf(prefix);
+    if (index < 0) continue;
+
+    const raw = rawMessage.slice(index + prefix.length).trim();
+
+    if (!raw || raw === "NOT_FOUND")
+      continue;
+
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+
+    if (start < 0 || end < start)
+      continue;
+
+    try {
+      return JSON.parse(
+        raw.slice(start, end + 1)
+      ) as VerificationEvent;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function recoverVerificationSessionFromRust(code: string): Promise<VerificationEvent | null> {
+  const response = await executeRconCommand(
+    `verificacao.lookup ${code}`
+  );
+
+  const payload =
+    parseVerificationEvent(response);
+
+  if (!payload)
+    return null;
+
+  await registerVorkenSession(payload);
+
+  return payload;
+}
+
 type PendingTimeout = {
   steamId: string;
   playerName: string;
@@ -126,6 +172,52 @@ type RedeemResponse = {
   playerName: string;
   administratorId?: string | null;
 };
+
+async function redeemVerificationCode(
+  code: string,
+  discordUserId: string,
+): Promise<RedeemResponse> {
+  try {
+    return await vorkenRequest<RedeemResponse>(
+      "/api/integrations/guerra-fria/session/redeem",
+      {
+        method: "POST",
+        body: {
+          code,
+          discordUserId,
+        },
+      },
+    );
+  } catch (firstError) {
+    // Recuperação automática: se o evento RCON inicial tiver sido perdido
+    // ou o código tiver expirado no backend, perguntamos ao plugin Rust
+    // se essa sessão de 4 dígitos ainda está ativa. Se estiver, registramos
+    // novamente no Vorken e tentamos o resgate uma segunda vez.
+    const recovered =
+      await recoverVerificationSessionFromRust(code)
+        .catch(error => {
+          logger.warn(
+            { error, code },
+            "Failed to recover verification code from Rust"
+          );
+          return null;
+        });
+
+    if (!recovered)
+      throw firstError;
+
+    return await vorkenRequest<RedeemResponse>(
+      "/api/integrations/guerra-fria/session/redeem",
+      {
+        method: "POST",
+        body: {
+          code,
+          discordUserId,
+        },
+      },
+    );
+  }
+}
 
 
 const handledRefusals = new Map<string, number>();
@@ -272,6 +364,26 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       "❌ O servidor Rust não confirmou o comando. Confira o RCON e o plugin Verificacao."
     );
     return;
+  }
+
+  const directSession =
+    parseVerificationEvent(result);
+
+  if (directSession) {
+    try {
+      await registerVorkenSession(directSession);
+    } catch (error) {
+      logger.error(
+        { error, steamId, directSession },
+        "Failed to register direct Vorken verification session"
+      );
+
+      await interaction.editReply(
+        "❌ A telagem iniciou no Rust, mas o código não foi registrado no Vorken. " +
+        "Confira VORKEN_GF_INTEGRATION_KEY e VORKEN_BASE_URL."
+      );
+      return;
+    }
   }
 
   const playerName = safeGameChat(target.name, 80) || steamId;
@@ -516,16 +628,11 @@ export async function handleVerificationCodeMessage(message: Message): Promise<b
   await message.delete().catch(() => {});
 
   try {
-    const session = await vorkenRequest<RedeemResponse>(
-      "/api/integrations/guerra-fria/session/redeem",
-      {
-        method: "POST",
-        body: {
-          code,
-          discordUserId: message.author.id,
-        },
-      },
-    );
+    const session =
+      await redeemVerificationCode(
+        code,
+        message.author.id,
+      );
 
     const ticket = await createVerificationTicket(message, session, code);
 
@@ -707,21 +814,11 @@ async function handleVerificationEvent(
   type: string,
   message: string,
 ): Promise<void> {
-  const index = message.indexOf(EVENT_PREFIX);
-  if (index < 0) return;
+  const payload =
+    parseVerificationEvent(message);
 
-  const raw = message.slice(index + EVENT_PREFIX.length).trim();
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start < 0 || end < start) return;
-
-  let payload: VerificationEvent;
-  try {
-    payload = JSON.parse(raw.slice(start, end + 1)) as VerificationEvent;
-  } catch (error) {
-    logger.warn({ error, type, raw }, "Invalid verification RCON event");
+  if (!payload)
     return;
-  }
 
   const steamId = String(payload.steamId ?? "").trim();
 
