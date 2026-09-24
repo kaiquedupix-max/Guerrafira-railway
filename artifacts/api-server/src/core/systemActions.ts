@@ -82,7 +82,7 @@ export async function banPlayer(input: { steamId: string; duration: BanDuration;
 
   const auditReason = safe(
     evidenceUrl
-      ? `${reason} | Provas: ${evidenceUrl}`
+      ? `${safe(reason, 170)} | Provas: ${evidenceUrl}`
       : reason,
     300
   );
