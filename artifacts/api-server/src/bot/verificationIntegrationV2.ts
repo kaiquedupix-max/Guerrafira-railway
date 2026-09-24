@@ -2,6 +2,8 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChannelType,
+  EmbedBuilder,
   Events,
   MessageFlags,
   PermissionFlagsBits,
@@ -9,6 +11,8 @@ import {
   type AutocompleteInteraction,
   type ChatInputCommandInteraction,
   type Client,
+  type Message,
+  type TextChannel,
 } from "discord.js";
 import { logger } from "../lib/logger.js";
 import { addRconEventHandler, executeRconCommand, getOnlinePlayers } from "./utils/rcon.js";
@@ -18,7 +22,9 @@ const STEAM_ID_RE = /^7656119\d{10}$/;
 const EVENT_PREFIX = "[GF_VERIFICACAO]";
 const TIMEOUT_BAN_PREFIX = "verification_timeout_ban:";
 const TIMEOUT_KEEP_PREFIX = "verification_timeout_keep:";
+const INSTRUCTIONS_MARKER = "GF_VORKEN_VERIFICATION_INSTRUCTIONS_V1";
 let started = false;
+let actionPollBusy = false;
 
 export const data = new SlashCommandBuilder()
   .setName("telagem")
@@ -32,13 +38,134 @@ export const data = new SlashCommandBuilder()
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers);
 
-
 function safeGameChat(value: string, max = 90): string {
   return String(value ?? "")
     .replace(/[<>\r\n\t;"'\\]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
+}
+
+function normalizeCode(value: unknown): string {
+  return String(value ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 12);
+}
+
+function vorkenBaseUrl(): string {
+  return String(
+    process.env.VORKEN_BASE_URL ||
+    "https://vorkenac.guerrafriarust.com.br"
+  ).replace(/\/$/, "");
+}
+
+function integrationKey(): string {
+  return String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
+}
+
+async function vorkenRequest<T>(
+  path: string,
+  options: {
+    method?: "GET" | "POST";
+    body?: unknown;
+  } = {},
+): Promise<T> {
+  const key = integrationKey();
+  if (!key) throw new Error("VORKEN_GF_INTEGRATION_KEY não configurada.");
+
+  const response = await fetch(vorkenBaseUrl() + path, {
+    method: options.method || "GET",
+    headers: {
+      "x-vorken-integration-key": key,
+      ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
+    },
+    body: options.body !== undefined
+      ? JSON.stringify(options.body)
+      : undefined,
+  });
+
+  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+
+  if (!response.ok) {
+    throw new Error(
+      String(
+        data.message ||
+        data.error ||
+        `Vorken HTTP ${response.status}`
+      )
+    );
+  }
+
+  return data as T;
+}
+
+type VerificationEvent = {
+  eventType?: string;
+  steamId?: string;
+  playerName?: string;
+  reason?: string;
+  administrator?: string;
+  code?: string;
+  ttlSeconds?: number;
+};
+
+type PendingTimeout = {
+  steamId: string;
+  playerName: string;
+  administratorId: string;
+  reason: string;
+  createdAt: number;
+};
+
+type RedeemResponse = {
+  ok: boolean;
+  analysisId: number;
+  publicLink: string;
+  steamId: string;
+  playerName: string;
+  administratorId?: string | null;
+};
+
+type VorkenQueuedAction = {
+  id: number;
+  analysisId: number;
+  steamId: string;
+  discordUserId?: string | null;
+  ticketChannelId?: string | null;
+  action: "ban" | "release";
+  reason: string;
+};
+
+const handledRefusals = new Map<string, number>();
+const pendingTimeouts = new Map<string, PendingTimeout>();
+
+function discordAdministratorId(value?: string): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw.toLowerCase().startsWith("discord:")) return null;
+  const id = raw.slice("discord:".length).trim();
+  return /^\d{16,20}$/.test(id) ? id : null;
+}
+
+function verificationChannelId(): string {
+  return String(process.env.DISCORD_VERIFICATION_CHANNEL_ID || "").trim();
+}
+
+function verificationStaffRoleIds(): string[] {
+  const raw = [
+    process.env.DISCORD_VERIFICATION_STAFF_ROLE_IDS,
+    process.env.DISCORD_MODERATOR_ROLE_IDS,
+    process.env.DISCORD_ADMIN_ROLE_ID,
+  ]
+    .filter(Boolean)
+    .join(",");
+
+  return [...new Set(
+    raw
+      .split(/[;,\s]+/)
+      .map(value => value.trim())
+      .filter(value => /^\d{16,20}$/.test(value))
+  )];
 }
 
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -70,53 +197,287 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  const result = await executeRconCommand(`verificacao.bot ${steamId} ${interaction.user.id}`);
+  const result = await executeRconCommand(
+    `verificacao.bot ${steamId} ${interaction.user.id}`
+  );
+
   if (result === null) {
-    await interaction.editReply("❌ O servidor Rust não confirmou o comando. Confira o RCON e o plugin Verificacao.");
+    await interaction.editReply(
+      "❌ O servidor Rust não confirmou o comando. Confira o RCON e o plugin Verificacao."
+    );
     return;
   }
 
   const playerName = safeGameChat(target.name, 80) || steamId;
   const administratorName = safeGameChat(
-    interaction.user.globalName ?? interaction.user.username ?? interaction.user.tag ?? "Administrador",
+    interaction.user.globalName ??
+    interaction.user.username ??
+    interaction.user.tag ??
+    "Administrador",
     60,
   ) || "Administrador";
 
-  const announcement = await executeRconCommand(
-    `say <color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>${playerName}</color>. Administrador responsável: <color=#FFD166>${administratorName}</color>.`,
+  await executeRconCommand(
+    `say <color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>${playerName}</color>. Administrador responsável: <color=#FFD166>${administratorName}</color>.`
   );
-  if (announcement === null) {
-    logger.warn(
-      { steamId, playerName, administratorId: interaction.user.id, administratorName },
-      "Telagem started but public Rust chat announcement was not confirmed",
-    );
-  }
 
   await interaction.editReply(
     `🚨 Telagem iniciada em **${target.name}** (\`${steamId}\`).\n` +
-    `Administrador responsável: **${interaction.user.tag ?? interaction.user.username}**.\n` +
-    "O jogador foi imobilizado e a tela dele permanece totalmente preta durante o processo. O servidor foi avisado no chat.",
+    "O jogador recebeu na tela um código individual. Ele deve entrar no canal de verificação do Discord e enviar esse código. " +
+    "O ticket privado e a análise Vorken serão criados automaticamente."
   );
 }
 
-type VerificationEvent = {
-  eventType?: string;
-  steamId?: string;
-  playerName?: string;
-  reason?: string;
-  administrator?: string;
-};
+async function registerVorkenSession(payload: VerificationEvent): Promise<void> {
+  const steamId = String(payload.steamId || "").trim();
+  const code = normalizeCode(payload.code);
+  if (!STEAM_ID_RE.test(steamId) || !/^[A-Z0-9]{6,12}$/.test(code)) return;
 
-type PendingTimeout = {
-  steamId: string;
-  playerName: string;
-  administratorId: string;
-  reason: string;
-  createdAt: number;
-};
+  await vorkenRequest("/api/integrations/guerra-fria/session", {
+    method: "POST",
+    body: {
+      code,
+      steamId,
+      playerName: String(payload.playerName || steamId).slice(0, 100),
+      administratorId: discordAdministratorId(payload.administrator) || undefined,
+      ttlSeconds: Math.max(120, Math.min(3600, Number(payload.ttlSeconds || 600))),
+    },
+  });
 
-const handledRefusals = new Map<string, number>();
-const pendingTimeouts = new Map<string, PendingTimeout>();
+  logger.info({ steamId, code }, "Vorken verification session registered");
+}
+
+async function cancelVorkenSession(code?: string): Promise<void> {
+  const normalized = normalizeCode(code);
+  if (!/^[A-Z0-9]{6,12}$/.test(normalized)) return;
+
+  await vorkenRequest(
+    `/api/integrations/guerra-fria/session/${encodeURIComponent(normalized)}/cancel`,
+    { method: "POST", body: {} },
+  ).catch(() => {});
+}
+
+async function ensureVerificationInstructions(client: Client): Promise<void> {
+  const channelId = verificationChannelId();
+  if (!channelId) {
+    logger.warn("DISCORD_VERIFICATION_CHANNEL_ID not set; verification code channel disabled");
+    return;
+  }
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased() || !channel.isSendable()) {
+    logger.warn({ channelId }, "Verification channel not available");
+    return;
+  }
+
+  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  const existing = recent?.find(message =>
+    message.author.id === client.user?.id &&
+    message.embeds.some(embed => embed.footer?.text === INSTRUCTIONS_MARKER)
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x2bf0c9)
+    .setTitle("🛡️ Verificação Vorken • Guerra Fria")
+    .setDescription(
+      "**Se você foi chamado para verificação dentro do Rust:**\n\n" +
+      "1. Veja o **código** exibido na tela do jogo.\n" +
+      "2. Envie **somente o código** neste canal.\n" +
+      "3. O bot criará uma **sala privada** para sua verificação.\n" +
+      "4. Dentro da sala você receberá seu **link exclusivo do Vorken**.\n" +
+      "5. Baixe, execute e aguarde a análise terminar.\n\n" +
+      "⚠️ Não compartilhe seu código. Não desconecte do servidor durante a verificação."
+    )
+    .setFooter({ text: INSTRUCTIONS_MARKER });
+
+  if (existing) {
+    await existing.edit({ embeds: [embed] }).catch(() => {});
+  } else {
+    await channel.send({ embeds: [embed] });
+  }
+}
+
+function ticketName(playerName: string, steamId: string): string {
+  const base = playerName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 38) || "jogador";
+
+  return `verificacao-${base}-${steamId.slice(-4)}`.slice(0, 90);
+}
+
+async function createVerificationTicket(
+  message: Message,
+  session: RedeemResponse,
+  code: string,
+): Promise<TextChannel> {
+  if (!message.guild) throw new Error("A verificação deve ser enviada dentro do servidor Discord.");
+
+  const guild = message.guild;
+  const botId = message.client.user?.id;
+  if (!botId) throw new Error("Bot indisponível.");
+
+  const staffIds = verificationStaffRoleIds()
+    .filter(id => guild.roles.cache.has(id));
+
+  const permissionOverwrites = [
+    {
+      id: guild.id,
+      deny: [PermissionFlagsBits.ViewChannel],
+    },
+    {
+      id: message.author.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.EmbedLinks,
+      ],
+    },
+    {
+      id: botId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.ManageChannels,
+        PermissionFlagsBits.ManageMessages,
+      ],
+    },
+    ...staffIds.map(id => ({
+      id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.ManageMessages,
+      ],
+    })),
+  ];
+
+  if (session.administratorId &&
+      /^\d{16,20}$/.test(session.administratorId) &&
+      session.administratorId !== message.author.id) {
+    permissionOverwrites.push({
+      id: session.administratorId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.ManageMessages,
+      ],
+    });
+  }
+
+  const channel = await guild.channels.create({
+    name: ticketName(session.playerName, session.steamId),
+    type: ChannelType.GuildText,
+    parent: process.env.DISCORD_VERIFICATION_CATEGORY_ID?.trim() || undefined,
+    topic:
+      `Vorken • ${session.playerName} • ${session.steamId} • análise #${session.analysisId}`,
+    permissionOverwrites,
+  });
+
+  if (channel.type !== ChannelType.GuildText) {
+    throw new Error("Não foi possível criar a sala de verificação.");
+  }
+
+  await vorkenRequest(
+    `/api/integrations/guerra-fria/session/${encodeURIComponent(code)}/ticket`,
+    {
+      method: "POST",
+      body: { ticketChannelId: channel.id },
+    },
+  );
+
+  await executeRconCommand(
+    `verificacao atender ${session.steamId}`
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x2bf0c9)
+    .setTitle("Vorken • Análise criada")
+    .setDescription(
+      `A verificação de **${session.playerName}** foi vinculada com sucesso.\n\n` +
+      "**Passos:**\n" +
+      "1. Abra o link abaixo.\n" +
+      "2. Baixe o **Vorken.exe**.\n" +
+      "3. Execute como administrador.\n" +
+      "4. Mantenha o Rust aberto e aguarde a análise concluir.\n" +
+      "5. Aguarde a decisão da equipe nesta sala."
+    )
+    .addFields(
+      { name: "SteamID", value: `\`${session.steamId}\``, inline: true },
+      { name: "Análise", value: `#${session.analysisId}`, inline: true },
+      { name: "Link exclusivo", value: `[Abrir e baixar Vorken](${session.publicLink})` },
+    )
+    .setFooter({ text: "Guerra Fria • Verificação privada" })
+    .setTimestamp();
+
+  await channel.send({
+    content: `<@${message.author.id}>`,
+    embeds: [embed],
+    allowedMentions: { users: [message.author.id] },
+  });
+
+  return channel;
+}
+
+export async function handleVerificationCodeMessage(message: Message): Promise<boolean> {
+  if (message.author.bot || !message.guild) return false;
+
+  const channelId = verificationChannelId();
+  if (!channelId || message.channelId !== channelId) return false;
+
+  const code = normalizeCode(message.content);
+  if (!/^[A-Z0-9]{6,12}$/.test(code)) return false;
+
+  await message.delete().catch(() => {});
+
+  try {
+    const session = await vorkenRequest<RedeemResponse>(
+      "/api/integrations/guerra-fria/session/redeem",
+      {
+        method: "POST",
+        body: {
+          code,
+          discordUserId: message.author.id,
+        },
+      },
+    );
+
+    const ticket = await createVerificationTicket(message, session, code);
+
+    const confirmation = await message.channel.send({
+      content:
+        `<@${message.author.id}> ✅ Código aceito. Sua sala privada foi criada: <#${ticket.id}>`,
+      allowedMentions: { users: [message.author.id] },
+    }).catch(() => null);
+
+    if (confirmation) {
+      setTimeout(() => confirmation.delete().catch(() => {}), 15_000);
+    }
+  } catch (error) {
+    logger.warn(
+      { error, userId: message.author.id, code },
+      "Verification code redeem failed",
+    );
+
+    const reply = await message.channel.send({
+      content:
+        `<@${message.author.id}> ❌ ${error instanceof Error ? error.message : "Código inválido ou expirado."}`,
+      allowedMentions: { users: [message.author.id] },
+    }).catch(() => null);
+
+    if (reply) setTimeout(() => reply.delete().catch(() => {}), 15_000);
+  }
+
+  return true;
+}
 
 function alreadyHandled(steamId: string): boolean {
   const now = Date.now();
@@ -128,13 +489,6 @@ function alreadyHandled(steamId: string): boolean {
   }
 
   return previous !== undefined && now - previous < 15_000;
-}
-
-function discordAdministratorId(value?: string): string | null {
-  const raw = String(value ?? "").trim();
-  if (!raw.toLowerCase().startsWith("discord:")) return null;
-  const id = raw.slice("discord:".length).trim();
-  return /^\d{16,20}$/.test(id) ? id : null;
 }
 
 function clearExpiredTimeouts(): void {
@@ -150,19 +504,20 @@ async function sendTimeoutPrompt(client: Client, payload: VerificationEvent): Pr
   if (!STEAM_ID_RE.test(steamId) || !administratorId) return;
 
   clearExpiredTimeouts();
-  const playerName = String(payload.playerName ?? `Jogador ${steamId}`).trim().slice(0, 100);
-  const reason = String(payload.reason ?? "Não compareceu à verificação administrativa dentro do prazo de 5 minutos.")
-    .trim()
-    .slice(0, 300);
 
-  const pending: PendingTimeout = {
+  const playerName = String(payload.playerName ?? `Jogador ${steamId}`).trim().slice(0, 100);
+  const reason = String(
+    payload.reason ??
+    "Não compareceu à verificação administrativa dentro do prazo de 5 minutos."
+  ).trim().slice(0, 300);
+
+  pendingTimeouts.set(steamId, {
     steamId,
     playerName,
     administratorId,
     reason,
     createdAt: Date.now(),
-  };
-  pendingTimeouts.set(steamId, pending);
+  });
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -181,16 +536,14 @@ async function sendTimeoutPrompt(client: Client, payload: VerificationEvent): Pr
     const administrator = await client.users.fetch(administratorId);
     await administrator.send({
       content:
-        `⏰ **O prazo de 5 minutos da telagem expirou.**\n\n` +
-        `Administrador que iniciou: **${administrator.tag ?? administrator.username}**\n` +
+        "⏰ **O prazo da telagem expirou.**\n\n" +
         `Jogador: **${playerName}**\n` +
         `SteamID: \`${steamId}\`\n\n` +
-        "O jogador continua preso na verificação. Deseja aplicar **banimento permanente** por não comparecer dentro do prazo?",
+        "Deseja aplicar banimento permanente por não comparecimento?",
       components: [row],
     });
-    logger.info({ steamId, playerName, administratorId }, "Verification timeout DM sent to moderator");
   } catch (error) {
-    logger.error({ error, steamId, playerName, administratorId }, "Failed to DM moderator after verification timeout");
+    logger.error({ error, steamId, administratorId }, "Failed to DM verification timeout");
   }
 }
 
@@ -202,19 +555,24 @@ async function handleTimeoutButton(interaction: any): Promise<boolean> {
   const isKeep = customId.startsWith(TIMEOUT_KEEP_PREFIX);
   if (!isBan && !isKeep) return false;
 
-  const steamId = customId.slice((isBan ? TIMEOUT_BAN_PREFIX : TIMEOUT_KEEP_PREFIX).length);
+  const steamId = customId.slice(
+    (isBan ? TIMEOUT_BAN_PREFIX : TIMEOUT_KEEP_PREFIX).length
+  );
   const pending = pendingTimeouts.get(steamId);
 
   if (!pending) {
     await interaction.update({
-      content: "ℹ️ Esta decisão de telagem não está mais pendente. O jogador pode já ter sido verificado, liberado ou punido.",
+      content: "ℹ️ Esta decisão não está mais pendente.",
       components: [],
     }).catch(() => {});
     return true;
   }
 
   if (interaction.user.id !== pending.administratorId) {
-    await interaction.reply({ content: "❌ Somente o administrador que iniciou a telagem pode decidir este caso.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    await interaction.reply({
+      content: "❌ Somente o administrador que iniciou a telagem pode decidir este caso.",
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
     return true;
   }
 
@@ -222,16 +580,21 @@ async function handleTimeoutButton(interaction: any): Promise<boolean> {
     pendingTimeouts.delete(steamId);
     await interaction.update({
       content:
-        `⏳ **${pending.playerName}** não foi banido agora.\n` +
-        "Ele continuará preso na verificação até você concluir o processo. Use `/verificar` para aprovar e liberar o jogador, ou aplique a punição manualmente se necessário.",
+        `⏳ **${pending.playerName}** continuará preso na verificação até a decisão final.`,
       components: [],
     });
     return true;
   }
 
   await interaction.deferUpdate();
+
   try {
     const { banPlayer } = await import("../core/systemActions.js");
+
+    // Libera a sessão antes do ban para evitar que o kick seja classificado
+    // pelo plugin como uma segunda evasão.
+    await executeRconCommand(`verificacao liberar ${steamId}`);
+
     const result = await banPlayer({
       steamId,
       duration: "perm",
@@ -244,24 +607,17 @@ async function handleTimeoutButton(interaction: any): Promise<boolean> {
       },
     });
 
-    const releaseResult = await executeRconCommand(`verificacao liberar ${steamId}`);
-    if (releaseResult === null) {
-      logger.warn({ steamId }, "Timeout ban applied but verification session release was not confirmed");
-    }
-
     pendingTimeouts.delete(steamId);
+
     await interaction.editReply({
       content:
-        `🔨 **Banimento permanente aplicado.**\n` +
-        `Jogador: **${result.playerName}** (\`${steamId}\`)\n` +
-        `Motivo: ${pending.reason}\n\n` +
-        "O ban feed e o anúncio padrão do servidor foram acionados.",
+        `🔨 Banimento permanente aplicado em **${result.playerName}** (\`${steamId}\`).`,
       components: [],
     });
   } catch (error) {
-    logger.error({ error, steamId, playerName: pending.playerName }, "Failed to apply verification timeout ban");
+    logger.error({ error, steamId }, "Failed verification timeout ban");
     await interaction.editReply({
-      content: "❌ Não foi possível aplicar o banimento agora. A telagem continua ativa; tente novamente pelo comando de banimento.",
+      content: "❌ Não foi possível aplicar o banimento.",
       components: [],
     }).catch(() => {});
   }
@@ -269,7 +625,146 @@ async function handleTimeoutButton(interaction: any): Promise<boolean> {
   return true;
 }
 
-async function handleVerificationEvent(client: Client, type: string, message: string): Promise<void> {
+async function notifyActionTicket(
+  client: Client,
+  action: VorkenQueuedAction,
+  message: string,
+  success: boolean,
+): Promise<void> {
+  const channelId = String(action.ticketChannelId || "");
+  if (!/^\d{16,20}$/.test(channelId)) return;
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isSendable()) return;
+
+  const mention = /^\d{16,20}$/.test(String(action.discordUserId || ""))
+    ? `<@${action.discordUserId}>`
+    : "";
+
+  await channel.send({
+    content:
+      `${mention ? mention + "\n" : ""}` +
+      (success ? "✅ " : "❌ ") +
+      message,
+    allowedMentions: mention
+      ? { users: [String(action.discordUserId)] }
+      : { parse: [] },
+  }).catch(() => {});
+}
+
+async function processVorkenAction(client: Client, action: VorkenQueuedAction): Promise<void> {
+  let success = false;
+  let resultText = "";
+
+  try {
+    if (!STEAM_ID_RE.test(action.steamId)) {
+      throw new Error("SteamID inválido na decisão.");
+    }
+
+    if (action.action === "release") {
+      const result = await executeRconCommand(
+        `verificacao liberar ${action.steamId}`
+      );
+
+      if (result === null) {
+        throw new Error("Servidor não confirmou a liberação.");
+      }
+
+      success = true;
+      resultText = "Jogador liberado da verificação.";
+
+      await notifyActionTicket(
+        client,
+        action,
+        "A análise foi concluída e o jogador foi **liberado** pela administração.",
+        true,
+      );
+    } else if (action.action === "ban") {
+      const { banPlayer } = await import("../core/systemActions.js");
+
+      await executeRconCommand(
+        `verificacao liberar ${action.steamId}`
+      );
+
+      const result = await banPlayer({
+        steamId: action.steamId,
+        duration: "perm",
+        reason:
+          action.reason ||
+          "Trapaça confirmada na verificação Vorken.",
+        actor: {
+          id: "VORKEN",
+          name: "Painel Vorken",
+          source: "system",
+        },
+      });
+
+      success = true;
+      resultText =
+        `Banimento permanente aplicado a ${result.playerName}.`;
+
+      await notifyActionTicket(
+        client,
+        action,
+        `A análise foi concluída e o jogador foi **banido permanentemente**.\nMotivo: **${action.reason || "Trapaça confirmada na verificação Vorken."}**`,
+        true,
+      );
+    } else {
+      throw new Error("Ação desconhecida.");
+    }
+  } catch (error) {
+    resultText =
+      error instanceof Error
+        ? error.message
+        : "Falha desconhecida.";
+
+    await notifyActionTicket(
+      client,
+      action,
+      `Falha ao aplicar a decisão da análise: ${resultText}`,
+      false,
+    );
+  }
+
+  await vorkenRequest(
+    `/api/integrations/guerra-fria/actions/${action.id}/complete`,
+    {
+      method: "POST",
+      body: {
+        success,
+        result: success ? resultText : undefined,
+        error: success ? undefined : resultText,
+      },
+    },
+  ).catch(error =>
+    logger.error({ error, actionId: action.id }, "Failed to acknowledge Vorken action")
+  );
+}
+
+async function pollVorkenActions(client: Client): Promise<void> {
+  if (actionPollBusy || !integrationKey()) return;
+  actionPollBusy = true;
+
+  try {
+    const data = await vorkenRequest<{ action: VorkenQueuedAction | null }>(
+      "/api/integrations/guerra-fria/actions/next"
+    );
+
+    if (data.action) {
+      await processVorkenAction(client, data.action);
+    }
+  } catch (error) {
+    logger.warn({ error }, "Vorken action poll failed");
+  } finally {
+    actionPollBusy = false;
+  }
+}
+
+async function handleVerificationEvent(
+  client: Client,
+  type: string,
+  message: string,
+): Promise<void> {
   const index = message.indexOf(EVENT_PREFIX);
   if (index < 0) return;
 
@@ -288,6 +783,21 @@ async function handleVerificationEvent(client: Client, type: string, message: st
 
   const steamId = String(payload.steamId ?? "").trim();
 
+  if (payload.eventType === "session_started") {
+    await registerVorkenSession(payload).catch(async error => {
+      logger.error({ error, steamId, code: payload.code }, "Failed to register Vorken verification session");
+
+      const administratorId = discordAdministratorId(payload.administrator);
+      if (administratorId) {
+        const user = await client.users.fetch(administratorId).catch(() => null);
+        await user?.send(
+          "❌ A telagem começou no Rust, mas o Vorken não conseguiu registrar o código. Verifique VORKEN_BASE_URL e VORKEN_GF_INTEGRATION_KEY."
+        ).catch(() => {});
+      }
+    });
+    return;
+  }
+
   if (payload.eventType === "timeout_prompt") {
     await sendTimeoutPrompt(client, payload);
     return;
@@ -295,6 +805,7 @@ async function handleVerificationEvent(client: Client, type: string, message: st
 
   if (payload.eventType === "session_end") {
     if (STEAM_ID_RE.test(steamId)) pendingTimeouts.delete(steamId);
+    await cancelVorkenSession(payload.code);
     return;
   }
 
@@ -302,8 +813,17 @@ async function handleVerificationEvent(client: Client, type: string, message: st
   if (!STEAM_ID_RE.test(steamId) || alreadyHandled(steamId)) return;
 
   pendingTimeouts.delete(steamId);
-  const playerName = String(payload.playerName ?? `Jogador ${steamId}`).trim().slice(0, 100);
-  const reason = String(payload.reason ?? "Recusou a verificação administrativa.").trim().slice(0, 300);
+  await cancelVorkenSession(payload.code);
+
+  const playerName = String(
+    payload.playerName ??
+    `Jogador ${steamId}`
+  ).trim().slice(0, 100);
+
+  const reason = String(
+    payload.reason ??
+    "Recusou a verificação administrativa."
+  ).trim().slice(0, 300);
 
   try {
     const { banPlayer } = await import("../core/systemActions.js");
@@ -318,16 +838,8 @@ async function handleVerificationEvent(client: Client, type: string, message: st
         source: "system",
       },
     });
-
-    logger.info(
-      { steamId, playerName, administrator: payload.administrator ?? null },
-      "Verification refusal synchronized with Discord moderation",
-    );
   } catch (error) {
-    logger.error(
-      { error, steamId, playerName, administrator: payload.administrator ?? null },
-      "Failed to synchronize verification refusal ban",
-    );
+    logger.error({ error, steamId, playerName }, "Failed to synchronize verification refusal ban");
   }
 }
 
@@ -335,26 +847,28 @@ export function startVerificationIntegration(client: Client): void {
   if (started) return;
   started = true;
 
+  ensureVerificationInstructions(client).catch(error =>
+    logger.error({ error }, "Failed to publish verification instructions")
+  );
+
   client.on(Events.InteractionCreate, async interaction => {
     try {
       if (await handleTimeoutButton(interaction)) return;
-
-      // /telagem é roteado pelo dispatcher principal do bot.
-      // Este listener cuida apenas das decisões pendentes da verificação.
     } catch (error) {
       logger.error({ error }, "Verification interaction failed");
-      if (interaction.isChatInputCommand()) {
-        const message = "❌ Falha ao processar a telagem.";
-        if (interaction.deferred || interaction.replied) await interaction.editReply(message).catch(() => {});
-        else await interaction.reply({ content: message, flags: MessageFlags.Ephemeral }).catch(() => {});
-      }
     }
   });
 
   addRconEventHandler((type, message) => {
     handleVerificationEvent(client, type, message).catch(error =>
-      logger.error({ error }, "Verification RCON event handler failed"),
+      logger.error({ error }, "Verification RCON event handler failed")
     );
   });
 
+  setInterval(
+    () => pollVorkenActions(client).catch(() => {}),
+    4000,
+  );
+
+  pollVorkenActions(client).catch(() => {});
 }
