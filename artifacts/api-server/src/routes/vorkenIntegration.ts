@@ -309,20 +309,6 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
           ? `${verification.playerName} foi verificado automaticamente no Rust e no Discord e liberado da telagem.`
           : `${verification.playerName} foi verificado no Rust e no Discord e liberado da telagem.`;
 
-      await notifyTicket({
-        channelId: ticketChannelId,
-        discordUserId,
-        analysisId,
-        steamId,
-        decision,
-        reason,
-        result,
-      });
-
-      await scheduleVerificationTicketDeletion(
-        ticketChannelId
-      );
-
       res.json({
         ok: true,
         result,
@@ -331,6 +317,30 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
         roleAssigned:
           verification.roleAssigned,
       });
+
+      setImmediate(() => {
+        notifyTicket({
+          channelId: ticketChannelId,
+          discordUserId,
+          analysisId,
+          steamId,
+          decision,
+          reason,
+          result,
+        })
+          .then(() =>
+            scheduleVerificationTicketDeletion(
+              ticketChannelId
+            )
+          )
+          .catch((error) =>
+            logger.error(
+              { error, steamId, analysisId },
+              "Failed to finalize Vorken approve ticket asynchronously"
+            )
+          );
+      });
+
       return;
     }
 
@@ -352,22 +362,33 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
 
     const result = `Banimento permanente aplicado a ${punishment.playerName}.`;
 
-    await notifyTicket({
-      channelId: ticketChannelId,
-      discordUserId,
-      analysisId,
-      steamId,
-      decision,
-      reason,
-      result,
-      evidenceUrl: evidenceUrl || undefined,
-    });
-
-    await scheduleVerificationTicketDeletion(
-      ticketChannelId
-    );
-
+    // Responde ao Vorken assim que o ban principal foi confirmado.
+    // Atualização do ticket e exclusão do canal não precisam bloquear o painel.
     res.json({ ok: true, result });
+
+    setImmediate(() => {
+      notifyTicket({
+        channelId: ticketChannelId,
+        discordUserId,
+        analysisId,
+        steamId,
+        decision,
+        reason,
+        result,
+        evidenceUrl: evidenceUrl || undefined,
+      })
+        .then(() =>
+          scheduleVerificationTicketDeletion(
+            ticketChannelId
+          )
+        )
+        .catch((error) =>
+          logger.error(
+            { error, steamId, analysisId },
+            "Failed to finalize Vorken deny ticket asynchronously"
+          )
+        );
+    });
   } catch (error) {
     logger.error(
       { error, steamId, decision },
