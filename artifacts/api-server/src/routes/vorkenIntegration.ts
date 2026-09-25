@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { EmbedBuilder } from "discord.js";
 import crypto from "node:crypto";
-import { banPlayer, executeRconRequired } from "../core/systemActions.js";
+import { banPlayer, executeRconRequired, verifyPlayer } from "../core/systemActions.js";
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
 
@@ -270,14 +270,44 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
 
   try {
     if (decision === "approve") {
-      await executeRconRequired(`verificacao liberar ${steamId}`);
+      if (!/^\d{16,20}$/.test(discordUserId)) {
+        res.status(400).json({
+          error: "invalid_discord_user_id",
+          message:
+            "A aprovação Vorken precisa do membro do Discord para aplicar o cargo Verificado.",
+        });
+        return;
+      }
 
+      const automatic =
+        req.body?.automatic === true;
+
+      const verification =
+        await verifyPlayer({
+          steamId,
+          discordUserId,
+          actor: {
+            id: automatic
+              ? "VORKEN_AUTO"
+              : "VORKEN",
+            name: automatic
+              ? "Vorken Automático"
+              : "Painel Vorken",
+            source: "system",
+          },
+        });
+
+      // A mesma rotina do /verificar já adicionou o grupo no Rust,
+      // o cargo Verificado no Discord e registrou o log. Agora apenas
+      // encerramos a telagem ativa no plugin.
       await executeRconRequired(
-        `say <color=#2BF0C9>[VORKEN • VERIFICADO]</color> <color=#FFFFFF>O jogador</color> <color=#FFD166>${playerName}</color> <color=#FFFFFF>concluiu a verificação administrativa com sucesso e foi</color> <color=#2BF0C9>LIBERADO</color> <color=#FFFFFF>pela equipe.</color>`
+        `verificacao liberar ${steamId}`
       );
 
       const result =
-        `${playerName} concluiu a verificação administrativa e foi liberado pela equipe.`;
+        automatic
+          ? `${verification.playerName} foi verificado automaticamente no Rust e no Discord e liberado da telagem.`
+          : `${verification.playerName} foi verificado no Rust e no Discord e liberado da telagem.`;
 
       await notifyTicket({
         channelId: ticketChannelId,
@@ -293,7 +323,14 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
         ticketChannelId
       );
 
-      res.json({ ok: true, result });
+      res.json({
+        ok: true,
+        result,
+        verified: true,
+        automatic,
+        roleAssigned:
+          verification.roleAssigned,
+      });
       return;
     }
 
