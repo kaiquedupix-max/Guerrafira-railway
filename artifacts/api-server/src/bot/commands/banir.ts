@@ -98,6 +98,17 @@ export const data = new SlashCommandBuilder()
   )
   .addStringOption(opt =>
     opt
+      .setName("duracao_duo")
+      .setDescription("Duração do banimento do duo/time por associação")
+      .setRequired(false)
+      .addChoices(
+        { name: "3 Dias", value: "3d" },
+        { name: "7 Dias", value: "7d" },
+        { name: "Permanente", value: "perm" },
+      )
+  )
+  .addStringOption(opt =>
+    opt
       .setName("detalhes")
       .setDescription("Detalhes adicionais do motivo (obrigatório se escolher Outro)")
       .setRequired(false)
@@ -131,6 +142,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const reasonKey = interaction.options.getString("motivo", true);
     const details = interaction.options.getString("detalhes")?.trim() ?? "";
     const shouldBanDuo = interaction.options.getString("banir_duo", true) === "sim";
+    const associationDuration = interaction.options.getString("duracao_duo") as BanDuration | null;
+
+    if (shouldBanDuo && !associationDuration) {
+      throw new ActionError("Escolha a duração do banimento do duo/time por associação.");
+    }
+
     const reason = buildBanReason(reasonKey, details);
     const actor = await moderationActor(interaction);
 
@@ -162,7 +179,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       try {
         const associated = await banPlayer({
           steamId: member.steamId,
-          duration,
+          duration: associationDuration!,
           reason: associationReason,
           actor,
           playerName: member.name && member.name !== "Desconhecido" ? member.name : undefined,
@@ -184,7 +201,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         ? "\n⚠️ Não foi possível consultar o duo/time. O jogador principal foi banido normalmente."
         : associatedMembers.length === 0
           ? "\n👤 Nenhum duo/time foi encontrado. Somente o jogador principal foi banido."
-          : `\n👥 Banidos por associação: **${associatedBanned.length}** de **${associatedMembers.length}**.` +
+          : `\n👥 Banidos por associação: **${associatedBanned.length}** de **${associatedMembers.length}** • duração: **${associationDuration?.toUpperCase()}**.` +
             (associatedBanned.length ? `\n• ${associatedBanned.join("\n• ")}` : "") +
             (associatedFailed.length ? `\n⚠️ Falhas: ${associatedFailed.join(" | ")}` : "");
 
