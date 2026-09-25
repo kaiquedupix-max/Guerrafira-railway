@@ -469,6 +469,7 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
       "3. O bot criará uma **sala privada** para sua verificação.\n" +
       "4. Dentro da sala você receberá o **link exclusivo do Vorken**.\n" +
       "5. Baixe, execute como administrador e aguarde a análise terminar.\n" +
+      "   🎥 **Tutorial para baixar e executar o Vorken Anti-Cheat:** https://youtu.be/ByCxGKTaKoQ\n" +
       "6. Quando finalizar, **aguarde a decisão da administração** dentro do ticket.\n\n" +
       "🚫 **Recusar, desconectar do servidor ou deixar os 5 minutos expirarem resulta em banimento permanente.**\n" +
       "⚠️ Não compartilhe seu código com outra pessoa."
