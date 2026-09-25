@@ -453,11 +453,33 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
     return;
   }
 
-  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
-  const existing = recent?.find(message =>
-    message.author.id === client.user?.id &&
-    message.embeds.some(embed => embed.footer?.text === INSTRUCTIONS_MARKER)
-  );
+  let existing: Message | undefined;
+  let before: string | undefined;
+
+  // Procura a mensagem antiga em várias páginas do histórico. O canal pode ter
+  // bastante movimento e a mensagem fixa pode sair das 50 mais recentes.
+  for (let page = 0; page < 10 && !existing; page++) {
+    const batch = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {}),
+    }).catch(error => {
+      logger.error({ error, channelId }, "Failed to fetch verification instruction history");
+      return null;
+    });
+
+    if (!batch || batch.size === 0) break;
+
+    existing = batch.find(message =>
+      message.author.id === client.user?.id &&
+      (
+        message.embeds.some(embed => embed.footer?.text === INSTRUCTIONS_MARKER) ||
+        message.embeds.some(embed => embed.title === "🛡️ Verificação Vorken • Guerra Fria")
+      )
+    );
+
+    before = batch.last()?.id;
+    if (!before) break;
+  }
 
   const embed = new EmbedBuilder()
     .setColor(0x2bf0c9)
@@ -477,9 +499,34 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
     .setFooter({ text: INSTRUCTIONS_MARKER });
 
   if (existing) {
-    await existing.edit({ embeds: [embed] }).catch(() => {});
+    try {
+      await existing.edit({ embeds: [embed] });
+      logger.info(
+        {
+          channelId,
+          messageId: existing.id,
+          tutorialUrl: "https://youtu.be/ByCxGKTaKoQ",
+        },
+        "Verification instructions updated"
+      );
+    } catch (error) {
+      logger.error(
+        { error, channelId, messageId: existing.id },
+        "Failed to update verification instructions"
+      );
+      throw error;
+    }
   } else {
-    await channel.send({ embeds: [embed] });
+    const sent = await channel.send({ embeds: [embed] });
+
+    logger.info(
+      {
+        channelId,
+        messageId: sent.id,
+        tutorialUrl: "https://youtu.be/ByCxGKTaKoQ",
+      },
+      "Verification instructions published"
+    );
   }
 }
 
@@ -900,6 +947,14 @@ export function startVerificationIntegration(client: Client): void {
   ensureVerificationInstructions(client).catch(error =>
     logger.error({ error }, "Failed to publish verification instructions")
   );
+
+  // Repete após o boot para cobrir casos em que o cache/estrutura do Discord
+  // ainda não estava totalmente disponível no primeiro instante do ClientReady.
+  setTimeout(() => {
+    ensureVerificationInstructions(client).catch(error =>
+      logger.error({ error }, "Failed to resync verification instructions after startup")
+    );
+  }, 5000);
 
   client.on(Events.InteractionCreate, async interaction => {
     try {
