@@ -8,7 +8,7 @@ import {
 import { executeRconCommand } from "../utils/rcon.js";
 import { getPlayerBySteamId, searchPlayers } from "../utils/players.js";
 
-type TeamMember = {
+export type TeamMember = {
   steamId: string;
   name: string;
   online?: boolean;
@@ -112,7 +112,20 @@ function parseTextTeam(raw: string): TeamMember[] {
 }
 
 function parseTeam(raw: string): TeamMember[] {
-  return parseJsonTeam(raw).length ? parseJsonTeam(raw) : parseTextTeam(raw);
+  const jsonTeam = parseJsonTeam(raw);
+  return jsonTeam.length ? jsonTeam : parseTextTeam(raw);
+}
+
+export async function getTeamMembers(steamId: string): Promise<TeamMember[]> {
+  let raw = await executeRconCommand(`teaminfo ${steamId} --json`);
+  let members = raw ? parseTeam(raw) : [];
+
+  if (!members.length) {
+    raw = await executeRconCommand(`teaminfo ${steamId}`);
+    members = raw ? parseTeam(raw) : [];
+  }
+
+  return members;
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -132,14 +145,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     steamId = selected.steamId;
   }
 
-  let raw = await executeRconCommand(`teaminfo ${steamId} --json`);
-  let members = raw ? parseTeam(raw) : [];
-
-  if (!members.length) {
-    raw = await executeRconCommand(`teaminfo ${steamId}`);
-    members = raw ? parseTeam(raw) : [];
-  }
-
+  const members = await getTeamMembers(steamId);
   const playerName = selected?.playerName ?? members.find((m) => m.steamId === steamId)?.name ?? steamId;
 
   if (!members.length || members.length === 1) {
