@@ -9,6 +9,7 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
   type AutocompleteInteraction,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Client,
   type Message,
@@ -23,6 +24,124 @@ const EVENT_PREFIX = "[GF_VERIFICACAO]";
 const TIMEOUT_BAN_PREFIX = "verification_timeout_ban:";
 const TIMEOUT_KEEP_PREFIX = "verification_timeout_keep:";
 const INSTRUCTIONS_MARKER = "GF_VORKEN_VERIFICATION_INSTRUCTIONS_V1";
+const VERIFICATION_LANGUAGE_BUTTON_PREFIX = "gf_vorken_language:";
+type VerificationLanguage = "pt" | "en" | "es";
+
+const VERIFICATION_TEXT: Record<VerificationLanguage, { title: string; description: string }> = {
+  pt: {
+    title: "🛡️ Verificação Vorken • Guerra Fria",
+    description:
+      "**A verificação é obrigatória quando solicitada pela administração.**\n\n" +
+      "1. Veja o **código de 4 dígitos** exibido na tela do Rust.\n" +
+      "2. Você tem **5 minutos** para enviar **somente o código** neste canal.\n" +
+      "3. O bot criará uma **sala privada** para sua verificação.\n" +
+      "4. Dentro da sala você receberá o **link exclusivo do Vorken**.\n" +
+      "5. Baixe, execute como administrador e aguarde a análise terminar.\n" +
+      "   🎥 **Tutorial para baixar e executar o Vorken Anti-Cheat:** https://youtu.be/ByCxGKTaKoQ\n" +
+      "6. Quando finalizar, **aguarde a decisão da administração** dentro do ticket.\n\n" +
+      "🚫 **Recusar, desconectar do servidor ou deixar os 5 minutos expirarem resulta em banimento permanente.**\n" +
+      "⚠️ Não compartilhe seu código com outra pessoa.\n\n" +
+      "### 📋 Regras da verificação\n" +
+      "**1. PC com ambiente de verificação comprometido (\\"PC estopado\\")**\n" +
+      "Windows otimizado, limpo ou modificado a ponto de apagar, esvaziar ou impedir o acesso a registros relevantes, como **Prefetch, Recent e Temp**, será tratado como um ambiente comprometido. Dependendo dos indícios restantes, das inconsistências encontradas e do grau de anormalidade do caso, a situação **poderá resultar em banimento**.\n\n" +
+      "**2. VAC relacionado ao Rust com menos de 120 dias**\n" +
+      "Resulta em **banimento direto**, mesmo que nenhuma outra evidência de trapaça seja encontrada durante a verificação.\n\n" +
+      "**3. Conta confirmada em sites de scripts, hacks ou cheats relacionados ao Rust**\n" +
+      "Se for confirmado que o usuário possui uma conta cadastrada em qualquer site voltado à venda, distribuição ou uso de **scripts, hacks ou qualquer tipo de cheat para Rust**, o resultado será **banimento direto**."
+  },
+  en: {
+    title: "🛡️ Vorken Verification • Guerra Fria",
+    description:
+      "**Verification is mandatory when requested by the administration.**\n\n" +
+      "1. Check the **4-digit code** displayed on your Rust screen.\n" +
+      "2. You have **5 minutes** to send **only the code** in this channel.\n" +
+      "3. The bot will create a **private room** for your verification.\n" +
+      "4. Inside the room, you will receive your **exclusive Vorken link**.\n" +
+      "5. Download it, run it as administrator, and wait for the analysis to finish.\n" +
+      "   🎥 **Tutorial for downloading and running Vorken Anti-Cheat:** https://youtu.be/ByCxGKTaKoQ\n" +
+      "6. Once it finishes, **wait for the administration's decision** inside the ticket.\n\n" +
+      "🚫 **Refusing the verification, disconnecting from the server, or allowing the 5-minute limit to expire results in a permanent ban.**\n" +
+      "⚠️ Do not share your code with anyone else.\n\n" +
+      "### 📋 Verification rules\n" +
+      "**1. PC with a compromised verification environment (\\"wiped PC\\")**\n" +
+      "A Windows installation that has been optimized, cleaned, or modified to the point that relevant records such as **Prefetch, Recent, and Temp** have been erased, emptied, or made inaccessible will be treated as a compromised environment. Depending on the remaining evidence, inconsistencies found, and how abnormal the case is, the situation **may result in a ban**.\n\n" +
+      "**2. Rust-related VAC less than 120 days old**\n" +
+      "Results in an **immediate ban**, even if no other cheating evidence is found during the verification.\n\n" +
+      "**3. Confirmed account on Rust script, hack, or cheat websites**\n" +
+      "If it is confirmed that the user has a registered account on any website dedicated to selling, distributing, or providing **scripts, hacks, or any type of Rust cheat**, the result will be an **immediate ban**."
+  },
+  es: {
+    title: "🛡️ Verificación Vorken • Guerra Fria",
+    description:
+      "**La verificación es obligatoria cuando la administración la solicita.**\n\n" +
+      "1. Mira el **código de 4 dígitos** que aparece en la pantalla de Rust.\n" +
+      "2. Tienes **5 minutos** para enviar **únicamente el código** en este canal.\n" +
+      "3. El bot creará una **sala privada** para tu verificación.\n" +
+      "4. Dentro de la sala recibirás tu **enlace exclusivo de Vorken**.\n" +
+      "5. Descárgalo, ejecútalo como administrador y espera a que finalice el análisis.\n" +
+      "   🎥 **Tutorial para descargar y ejecutar Vorken Anti-Cheat:** https://youtu.be/ByCxGKTaKoQ\n" +
+      "6. Cuando termine, **espera la decisión de la administración** dentro del ticket.\n\n" +
+      "🚫 **Rechazar la verificación, desconectarse del servidor o dejar que expiren los 5 minutos resulta en un baneo permanente.**\n" +
+      "⚠️ No compartas tu código con otra persona.\n\n" +
+      "### 📋 Reglas de la verificación\n" +
+      "**1. PC con el entorno de verificación comprometido (\\"PC borrado\\")**\n" +
+      "Una instalación de Windows optimizada, limpiada o modificada hasta el punto de borrar, vaciar o impedir el acceso a registros relevantes como **Prefetch, Recent y Temp** se considerará un entorno comprometido. Dependiendo de las evidencias restantes, las inconsistencias encontradas y el nivel de anormalidad del caso, la situación **podrá resultar en un baneo**.\n\n" +
+      "**2. VAC relacionado con Rust con menos de 120 días**\n" +
+      "Resulta en un **baneo directo**, incluso si no se encuentra ninguna otra evidencia de trampas durante la verificación.\n\n" +
+      "**3. Cuenta confirmada en sitios de scripts, hacks o cheats relacionados con Rust**\n" +
+      "Si se confirma que el usuario posee una cuenta registrada en cualquier sitio dedicado a vender, distribuir o proporcionar **scripts, hacks o cualquier tipo de cheat para Rust**, el resultado será un **baneo directo**."
+  },
+};
+
+function buildVerificationInstructionsEmbed(language: VerificationLanguage): EmbedBuilder {
+  const copy = VERIFICATION_TEXT[language];
+
+  return new EmbedBuilder()
+    .setColor(0x2bf0c9)
+    .setTitle(copy.title)
+    .setDescription(copy.description)
+    .setFooter({ text: INSTRUCTIONS_MARKER });
+}
+
+function buildVerificationLanguageRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${VERIFICATION_LANGUAGE_BUTTON_PREFIX}pt`)
+      .setLabel("🇧🇷 Português")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`${VERIFICATION_LANGUAGE_BUTTON_PREFIX}en`)
+      .setLabel("🇺🇸 English")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`${VERIFICATION_LANGUAGE_BUTTON_PREFIX}es`)
+      .setLabel("🇪🇸 Español")
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export async function handleVerificationLanguageButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  if (!interaction.customId.startsWith(VERIFICATION_LANGUAGE_BUTTON_PREFIX)) return;
+
+  const language = interaction.customId
+    .slice(VERIFICATION_LANGUAGE_BUTTON_PREFIX.length) as VerificationLanguage;
+
+  if (!VERIFICATION_TEXT[language]) {
+    await interaction.reply({
+      content: "❌ Idioma inválido.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.reply({
+    embeds: [buildVerificationInstructionsEmbed(language)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 let started = false;
 let resolvedVerificationChannelId = "";
 let resolvedVerificationCategoryId = "";
@@ -481,26 +600,12 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
     if (!before) break;
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0x2bf0c9)
-    .setTitle("🛡️ Verificação Vorken • Guerra Fria")
-    .setDescription(
-      "**A verificação é obrigatória quando solicitada pela administração.**\n\n" +
-      "1. Veja o **código de 4 dígitos** exibido na tela do Rust.\n" +
-      "2. Você tem **5 minutos** para enviar **somente o código** neste canal.\n" +
-      "3. O bot criará uma **sala privada** para sua verificação.\n" +
-      "4. Dentro da sala você receberá o **link exclusivo do Vorken**.\n" +
-      "5. Baixe, execute como administrador e aguarde a análise terminar.\n" +
-      "   🎥 **Tutorial para baixar e executar o Vorken Anti-Cheat:** https://youtu.be/ByCxGKTaKoQ\n" +
-      "6. Quando finalizar, **aguarde a decisão da administração** dentro do ticket.\n\n" +
-      "🚫 **Recusar, desconectar do servidor ou deixar os 5 minutos expirarem resulta em banimento permanente.**\n" +
-      "⚠️ Não compartilhe seu código com outra pessoa."
-    )
-    .setFooter({ text: INSTRUCTIONS_MARKER });
+  const embed = buildVerificationInstructionsEmbed("pt");
+  const languageRow = buildVerificationLanguageRow();
 
   if (existing) {
     try {
-      await existing.edit({ embeds: [embed] });
+      await existing.edit({ embeds: [embed], components: [languageRow] });
       logger.info(
         {
           channelId,
@@ -517,7 +622,7 @@ async function ensureVerificationInstructions(client: Client): Promise<void> {
       throw error;
     }
   } else {
-    const sent = await channel.send({ embeds: [embed] });
+    const sent = await channel.send({ embeds: [embed], components: [languageRow] });
 
     logger.info(
       {
