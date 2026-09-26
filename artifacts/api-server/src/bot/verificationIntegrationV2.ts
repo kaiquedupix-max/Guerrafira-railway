@@ -1068,6 +1068,14 @@ export function startVerificationIntegration(client: Client): void {
 
   client.on(Events.InteractionCreate, async interaction => {
     try {
+      if (
+        interaction.isButton() &&
+        interaction.customId.startsWith(VERIFICATION_LANGUAGE_BUTTON_PREFIX)
+      ) {
+        await handleVerificationLanguageButton(interaction);
+        return;
+      }
+
       if (await handleTimeoutButton(interaction)) return;
     } catch (error) {
       logger.error({ error }, "Verification interaction failed");
