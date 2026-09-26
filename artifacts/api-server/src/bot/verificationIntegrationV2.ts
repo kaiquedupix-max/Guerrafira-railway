@@ -42,7 +42,7 @@ const VERIFICATION_TEXT: Record<VerificationLanguage, { title: string; descripti
       "🚫 **Recusar, desconectar do servidor ou deixar os 5 minutos expirarem resulta em banimento permanente.**\n" +
       "⚠️ Não compartilhe seu código com outra pessoa.\n\n" +
       "### 📋 Regras da verificação\n" +
-      "**1. PC com ambiente de verificação comprometido (\\"PC estopado\\")**\n" +
+      "**1. PC com ambiente de verificação comprometido (\"PC estopado\")**\n" +
       "Windows otimizado, limpo ou modificado a ponto de apagar, esvaziar ou impedir o acesso a registros relevantes, como **Prefetch, Recent e Temp**, será tratado como um ambiente comprometido. Dependendo dos indícios restantes, das inconsistências encontradas e do grau de anormalidade do caso, a situação **poderá resultar em banimento**.\n\n" +
       "**2. VAC relacionado ao Rust com menos de 120 dias**\n" +
       "Resulta em **banimento direto**, mesmo que nenhuma outra evidência de trapaça seja encontrada durante a verificação.\n\n" +
@@ -63,7 +63,7 @@ const VERIFICATION_TEXT: Record<VerificationLanguage, { title: string; descripti
       "🚫 **Refusing the verification, disconnecting from the server, or allowing the 5-minute limit to expire results in a permanent ban.**\n" +
       "⚠️ Do not share your code with anyone else.\n\n" +
       "### 📋 Verification rules\n" +
-      "**1. PC with a compromised verification environment (\\"wiped PC\\")**\n" +
+      "**1. PC with a compromised verification environment (\"wiped PC\")**\n" +
       "A Windows installation that has been optimized, cleaned, or modified to the point that relevant records such as **Prefetch, Recent, and Temp** have been erased, emptied, or made inaccessible will be treated as a compromised environment. Depending on the remaining evidence, inconsistencies found, and how abnormal the case is, the situation **may result in a ban**.\n\n" +
       "**2. Rust-related VAC less than 120 days old**\n" +
       "Results in an **immediate ban**, even if no other cheating evidence is found during the verification.\n\n" +
@@ -84,7 +84,7 @@ const VERIFICATION_TEXT: Record<VerificationLanguage, { title: string; descripti
       "🚫 **Rechazar la verificación, desconectarse del servidor o dejar que expiren los 5 minutos resulta en un baneo permanente.**\n" +
       "⚠️ No compartas tu código con otra persona.\n\n" +
       "### 📋 Reglas de la verificación\n" +
-      "**1. PC con el entorno de verificación comprometido (\\"PC borrado\\")**\n" +
+      "**1. PC con el entorno de verificación comprometido (\"PC borrado\")**\n" +
       "Una instalación de Windows optimizada, limpiada o modificada hasta el punto de borrar, vaciar o impedir el acceso a registros relevantes como **Prefetch, Recent y Temp** se considerará un entorno comprometido. Dependiendo de las evidencias restantes, las inconsistencias encontradas y el nivel de anormalidad del caso, la situación **podrá resultar en un baneo**.\n\n" +
       "**2. VAC relacionado con Rust con menos de 120 días**\n" +
       "Resulta en un **baneo directo**, incluso si no se encuentra ninguna otra evidencia de trampas durante la verificación.\n\n" +
