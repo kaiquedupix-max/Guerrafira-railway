@@ -124,6 +124,7 @@ export async function startBot(): Promise<void> {
     setDiscordClient(c);
     c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
     await registerSlashCommands(c);
+    telagemCommand.startVerificationIntegration(c);
     await ensureGameAnnouncementPlugin();
     startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
     await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
