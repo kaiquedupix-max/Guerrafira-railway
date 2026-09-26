@@ -673,9 +673,14 @@ export async function handleVerificationCodeMessage(message: Message): Promise<b
   if (!channelId || message.channelId !== channelId) return false;
 
   const code = normalizeCode(message.content);
-  if (!/^\d{4}$/.test(code)) return false;
 
+  // Mantém o canal #verificacao limpo: qualquer mensagem de usuário
+  // é removida automaticamente. Códigos válidos são processados antes
+  // de encerrar o fluxo; mensagens comuns apenas desaparecem.
   await message.delete().catch(() => {});
+
+  if (!/^\d{4}$/.test(code))
+    return true;
 
   try {
     const session =
