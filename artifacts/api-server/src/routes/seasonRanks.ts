@@ -66,7 +66,7 @@ export function rankForSeason(seasonNumber: number, xpValue: unknown, positionVa
   const finalOrdinary = ordinary[ordinary.length - 1];
 
   if (top && position === 1 && xp >= top.xp) return top;
-  return [...ordinary].reverse().find(rank => xp >= rank.xp) || finalOrdinary || ranks[0];
+  return [...ordinary].reverse().find(rank => xp >= rank.xp) || finalOrdinary || ranks[0]!;
 }
 
 export function rankProgressForSeason(seasonNumber: number, xpValue: unknown, positionValue: unknown) {
