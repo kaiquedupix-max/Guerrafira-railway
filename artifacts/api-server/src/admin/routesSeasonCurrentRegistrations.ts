@@ -2,19 +2,17 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { requireAdmin } from "./guard.js";
-import { SEASON_OFFICIAL_KEY } from "../routes/seasonEmailService.js";
+import { rankForSeason, seasonRegistrationKey, xpFromMmr } from "../routes/seasonRanks.js";
+
+const CURRENT_SEASON = 2;
+const CURRENT_SEASON_KEY = seasonRegistrationKey(CURRENT_SEASON);
 
 const router = Router();
 router.use(requireAdmin);
 
 function rankName(mmrValue: unknown, position = 0) {
-  const mmr = Number(mmrValue ?? 1000);
-  const xp = Math.max(0, Math.round((mmr - 1000) * 9));
-  if (position === 1 && xp >= 1800) return "General Frio";
-  if (xp >= 1800) return "Marechal";
-  if (xp >= 1200) return "Major";
-  if (xp >= 600) return "Tenente";
-  return "Soldado";
+  const xp = xpFromMmr(mmrValue, 1000);
+  return rankForSeason(CURRENT_SEASON, xp, position).name;
 }
 
 async function ensureOfficialTable() {
@@ -40,10 +38,10 @@ async function ensureOfficialTable() {
 
 async function resolveCurrentScoringSeason(): Promise<number | null> {
   // O painel oficial nunca deve procurar pontuação em seasons beta/antigas.
-  // Só a Season 1 canônica pode alimentar esta tela.
+  // A tela atual acompanha exclusivamente a Season 2 canônica.
   const result: any = await db.execute(sql`
     SELECT EXISTS(
-      SELECT 1 FROM season_players WHERE season_number=1 LIMIT 1
+      SELECT 1 FROM season_players WHERE season_number=${CURRENT_SEASON} LIMIT 1
     ) AS has_players
   `);
   return Boolean(result?.rows?.[0]?.has_players) ? 1 : null;
@@ -62,14 +60,14 @@ router.get("/registrations", async (req, res) => {
                  0::int AS raids_participated,0::int AS raids_defended,0::int AS bradley_participations,
                  0::int AS heli_participations,0::int AS crates_hacked,NULL::timestamptz AS updated_at
             FROM season_official_registrations r
-           WHERE r.season_key=${SEASON_OFFICIAL_KEY} AND r.status='active'
+           WHERE r.season_key=${CURRENT_SEASON_KEY} AND r.status='active'
            ORDER BY r.paid_at ASC NULLS LAST,r.created_at ASC
         `)
       : await db.execute(sql`
           WITH admin_delta AS (
             SELECT steam_id,COALESCE(SUM(final_value),0) AS delta
               FROM season_transactions
-             WHERE season_number=1 AND category='admin'
+             WHERE season_number=${CURRENT_SEASON} AND category='admin'
              GROUP BY steam_id
           )
           SELECT r.season_key,r.discord_id,r.discord_name,r.steam_id,r.status,r.created_at,
@@ -83,9 +81,9 @@ router.get("/registrations", async (req, res) => {
                  COALESCE(p.crates_hacked,0) AS crates_hacked,p.updated_at
             FROM season_official_registrations r
             LEFT JOIN season_players p
-              ON p.season_number=1 AND p.steam_id=NULLIF(TRIM(r.steam_id),'')
+              ON p.season_number=${CURRENT_SEASON} AND p.steam_id=NULLIF(TRIM(r.steam_id),'')
             LEFT JOIN admin_delta a ON a.steam_id=NULLIF(TRIM(r.steam_id),'')
-           WHERE r.season_key=${SEASON_OFFICIAL_KEY} AND r.status='active'
+           WHERE r.season_key=${CURRENT_SEASON_KEY} AND r.status='active'
            ORDER BY mmr DESC NULLS LAST,r.paid_at ASC NULLS LAST,r.created_at ASC
         `);
 
@@ -111,7 +109,7 @@ router.get("/registrations", async (req, res) => {
         mmr: row.mmr == null ? null : Number(row.mmr),
         rawMmr: row.raw_mmr == null ? null : Number(row.raw_mmr),
         adminDelta: Number(row.admin_delta || 0),
-        rank: steamId ? (hasSeasonData ? rankName(row.mmr, position) : "Soldado") : "Steam não vinculada",
+        rank: steamId ? rankName(row.mmr ?? 1000, hasSeasonData ? position : 0) : "Steam não vinculada",
         kills: Number(row.kills || 0),
         deaths: Number(row.deaths || 0),
         headshots: Number(row.headshots || 0),
@@ -129,8 +127,8 @@ router.get("/registrations", async (req, res) => {
     return void res.json({
       ok: true,
       beta: false,
-      season: 1,
-      seasonKey: SEASON_OFFICIAL_KEY,
+      season: CURRENT_SEASON,
+      seasonKey: CURRENT_SEASON_KEY,
       dataSourceSeason: sourceSeason,
       fallbackSource: false,
       roleId: null,
