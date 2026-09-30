@@ -44,7 +44,7 @@ async function resolveCurrentScoringSeason(): Promise<number | null> {
       SELECT 1 FROM season_players WHERE season_number=${CURRENT_SEASON} LIMIT 1
     ) AS has_players
   `);
-  return Boolean(result?.rows?.[0]?.has_players) ? 1 : null;
+  return Boolean(result?.rows?.[0]?.has_players) ? CURRENT_SEASON : null;
 }
 
 router.get("/registrations", async (req, res) => {
