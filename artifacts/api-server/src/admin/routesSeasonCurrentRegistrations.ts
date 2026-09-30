@@ -54,7 +54,7 @@ router.get("/registrations", async (req, res) => {
 
     const result: any = sourceSeason == null
       ? await db.execute(sql`
-          SELECT r.season_key,r.discord_id,r.discord_name,r.steam_id,r.status,r.created_at,
+          SELECT r.season_key,r.discord_id,r.discord_name,r.steam_id,r.status,r.created_at,r.full_name,r.contact_email,r.prize_pix_type,r.prize_pix_key,
                  NULL::text AS player_name,NULL::numeric AS raw_mmr,NULL::numeric AS mmr,
                  0::numeric AS admin_delta,0::int AS kills,0::int AS deaths,0::int AS headshots,
                  0::int AS raids_participated,0::int AS raids_defended,0::int AS bradley_participations,
@@ -70,7 +70,7 @@ router.get("/registrations", async (req, res) => {
              WHERE season_number=${CURRENT_SEASON} AND category='admin'
              GROUP BY steam_id
           )
-          SELECT r.season_key,r.discord_id,r.discord_name,r.steam_id,r.status,r.created_at,
+          SELECT r.season_key,r.discord_id,r.discord_name,r.steam_id,r.status,r.created_at,r.full_name,r.contact_email,r.prize_pix_type,r.prize_pix_key,
                  p.player_name,p.mmr AS raw_mmr,
                  CASE WHEN p.mmr IS NULL THEN NULL ELSE p.mmr+COALESCE(a.delta,0) END AS mmr,
                  COALESCE(a.delta,0) AS admin_delta,
@@ -106,6 +106,10 @@ router.get("/registrations", async (req, res) => {
         status: String(row.status || "active"),
         acceptedRulesAt: row.created_at,
         createdAt: row.created_at,
+        fullName: row.full_name ? String(row.full_name) : null,
+        contactEmail: row.contact_email ? String(row.contact_email) : null,
+        prizePixType: row.prize_pix_type ? String(row.prize_pix_type) : null,
+        prizePixKey: row.prize_pix_key ? String(row.prize_pix_key) : null,
         mmr: row.mmr == null ? null : Number(row.mmr),
         rawMmr: row.raw_mmr == null ? null : Number(row.raw_mmr),
         adminDelta: Number(row.admin_delta || 0),
