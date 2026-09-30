@@ -11,7 +11,7 @@ import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
 import { renderHome } from "./admin/homePageEnhanced.js";
 import { renderStorePage } from "./admin/storePage.js";
-import { renderPromoPage } from "./admin/promoPage.js";
+import { renderPromoPage } from "./admin/promoPage.js";\nimport { renderDonationPage } from "./routes/donations.js";
 import { withSiteChrome } from "./admin/siteChrome.js";
 import { getCommunitySession } from "./admin/communitySession.js";
 import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js";
