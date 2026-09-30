@@ -38,13 +38,11 @@ async function ensureGroups(){
   let success=true;
   for(const rank of ranksForSeason(SEASON)){
     const title=rank.name.replace(/\s+/g,"-");
-    const replies=await Promise.all([
-      cmd(`chat group add ${rank.group}`),
-      cmd(`chat group set ${rank.group} title [${title}]`),
-      cmd(`chat group set ${rank.group} titlecolor #f0b43c`),
-      cmd(`chat group set ${rank.group} titlehiddenifnotprimary false`),
-    ]);
-    if(replies.some(reply=>reply===null))success=false;
+    const created=await cmd(`chat group add ${rank.group}`);
+    const titled=await cmd(`chat group set ${rank.group} title [${title}]`);
+    const colored=await cmd(`chat group set ${rank.group} titlecolor #f0b43c`);
+    const visible=await cmd(`chat group set ${rank.group} titlehiddenifnotprimary false`);
+    if([created,titled,colored,visible].some(reply=>reply===null))success=false;
   }
   groupsEnsured=success;
   if(!success)logger.warn("Season 2 Better Chat groups were not fully confirmed; sync will retry.");
