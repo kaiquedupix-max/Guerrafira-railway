@@ -1,4 +1,4 @@
-export type SiteSection = "home" | "leaderboard" | "integrity" | "admin" | "season" | "status" | "profile";
+export type SiteSection = "home" | "store" | "donation" | "leaderboard" | "integrity" | "admin" | "season" | "status" | "profile";
 import { brandThemeCss } from "./brandTheme.js";
 import { publicMilitaryThemeCss } from "./publicMilitaryTheme.js";
 
@@ -15,13 +15,13 @@ export function withSiteChrome(html: string, section: SiteSection, opts?: { isAd
     ["home", "/", "Início"],
     ["store", "/loja", "Loja"],
     ["leaderboard", "/leaderboard", "Leaderboard"],
-    ["season", "/season1", "Season"],
+    ["season", "/season2", "Season"],\n    ["donation", "/doar", "Doar"],
     ["integrity", "/auditoria", "Auditoria"],
     ["status", "/api/status", "Status"],
   ];
   const navLinks = links.map(([id, href, label]) => `<a class="gfNavItem${effectiveSection===id?" active":""}" href="${href}">${label}</a>`).join("");
   const drawerLinks = links.map(([id, href, label],i) => `<a class="gfDrawerItem${effectiveSection===id?" active":""}" href="${href}"><span>${String(i+1).padStart(2,"0")}</span><b>${label}</b><em>›</em></a>`).join("");
-  const profileDrawer = username ? `<a class="gfDrawerItem${section==="profile"?" active":""}" href="/api/perfil"><span>07</span><b>Meu Perfil</b><em>›</em></a>` : "";
+  const profileDrawer = username ? `<a class="gfDrawerItem${section==="profile"?" active":""}" href="/api/perfil"><span>08</span><b>Meu Perfil</b><em>›</em></a>` : "";
   const userBlock = username
     ? `<div class="gfAccountWrap"><button class="gfUser" id="gfAccountButton" type="button" aria-expanded="false"><span class="gfOnline"></span><span class="gfUserName">${username}</span><span class="gfUserChevron">⌄</span></button><div class="gfAccountMenu" id="gfAccountMenu"><div class="gfAccountHead"><span class="gfAccountInitial">${esc(username.charAt(0).toUpperCase())}</span><div><b>${username}</b><small>CONTA GUERRA FRIA</small></div></div><a href="/api/perfil"><span>◎</span><b>Meu Perfil</b><em>→</em></a><a href="/loja"><span>◇</span><b>Loja VIP</b><em>→</em></a><a href="/leaderboard"><span>▥</span><b>Leaderboard</b><em>→</em></a>${isAdmin?`<a href="/admin"><span>⚙</span><b>Central de Controle</b><em>→</em></a>`:""}<div class="gfAccountDivider"></div><a class="gfAccountLogout" href="/api/admin/auth/logout"><span>↪</span><b>Deslogar</b><em>→</em></a></div></div>`
     : `<a class="gfLogin" href="/api/admin/auth/login?target=home">ENTRAR</a>`;
