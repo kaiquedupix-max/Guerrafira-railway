@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";\nimport { scoringSeasonForTime, syncSeason2LifecycleOnce } from "./season2Lifecycle.js";
+import { sql } from "drizzle-orm";
+import { scoringSeasonForTime, syncSeason2LifecycleOnce } from "./season2Lifecycle.js";
 
 export async function ensureSeasonControl() {
   await db.execute(sql`
