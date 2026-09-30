@@ -105,7 +105,8 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     await sendDiscordWebhookLog({ body, req, dataId, payment: mpData });
     if (!mpData) return;
     const handledByPromo = await processPromoPayment(mpData);
-    if (!handledByPromo) await processMpPayment(mpData);
+    const handledByDonation = handledByPromo ? false : await processDonationPayment(mpData);
+    if (!handledByPromo && !handledByDonation) await processMpPayment(mpData);
   } catch (err) {
     logger.error({ err }, "Webhook processing error");
   }
