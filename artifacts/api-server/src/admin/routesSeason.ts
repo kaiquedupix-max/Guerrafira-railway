@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { requireAdmin } from "./guard.js";
 import { getAdminSessionV3 } from "./sessionBearer.js";
+import { rankForSeason, xpFromMmr } from "../routes/seasonRanks.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -17,38 +18,15 @@ async function ensureRegistrationTable() {
   await db.execute(sql`ALTER TABLE season_registrations ADD COLUMN IF NOT EXISTS steam_id TEXT`);
 }
 
-// Official Season ranks: Soldado -> Tenente -> Major -> Marechal -> General Frio.
-// XP is derived from effective MMR exactly like the public ranking.
-function rankName(mmrValue: unknown, position = 0) {
-  const mmr = Number(mmrValue ?? 1000);
-  const xp = Math.max(0, Math.round((mmr - 1000) * 9));
-  if (position === 1 && xp >= 1800) return "General Frio";
-  if (xp >= 1800) return "Marechal";
-  if (xp >= 1200) return "Major";
-  if (xp >= 600) return "Tenente";
-  return "Soldado";
+function rankName(seasonNumber: number, mmrValue: unknown, position = 0) {
+  const xp=xpFromMmr(mmrValue,1000);
+  return rankForSeason(seasonNumber,xp,position).name;
 }
 
 const validSteam=(v:unknown)=>/^7656119\d{10}$/.test(String(v||""));
 
-// The Beta is publicly exposed as Season 1, while the Rust plugin may have
-// advanced its internal season_number. Resolve the same freshest active source
-// used by the public ranking so the admin panel never shows a fake "0 com dados".
 async function resolveSeasonDataSource(requestedSeasonNumber:number):Promise<number>{
-  const result:any=await db.execute(sql`
-    SELECT p.season_number,COUNT(*)::int player_count,MAX(p.updated_at) last_update,MAX(s.status) status
-    FROM season_players p
-    LEFT JOIN seasons s ON s.season_number=p.season_number
-    GROUP BY p.season_number
-    ORDER BY CASE WHEN MAX(s.status)='active' THEN 0 ELSE 1 END,
-             MAX(p.updated_at) DESC NULLS LAST,
-             p.season_number DESC
-  `);
-  const rows=Array.isArray(result?.rows)?result.rows:[];
-  const usable=rows.filter((r:any)=>Number(r.player_count||0)>0);
-  const active=usable.find((r:any)=>String(r.status||'')==='active');
-  const requested=usable.find((r:any)=>Number(r.season_number)===requestedSeasonNumber);
-  return Number(active?.season_number??requested?.season_number??requestedSeasonNumber);
+  return Math.max(1,Math.trunc(Number(requestedSeasonNumber)||1));
 }
 
 router.get("/registrations", async (req, res) => {
@@ -81,7 +59,7 @@ router.get("/registrations", async (req, res) => {
       const steamId=row.steam_id?String(row.steam_id).trim():null;
       const hasSeasonData=row.mmr!=null;
       if(hasSeasonData)position++;
-      return {position:hasSeasonData?position:null,discordId:String(row.discord_id||""),discordName:String(row.discord_name||""),steamId,steamConfirmed:Boolean(row.registration_steam_id),steamSource:row.registration_steam_id?"registration":row.legacy_steam_id?"legacy":null,hasSeasonData,playerName:row.player_name?String(row.player_name):null,mode:String(row.mode||"beta_free"),status:String(row.status||"active"),acceptedRulesAt:row.accepted_rules_at,createdAt:row.created_at,mmr:row.mmr==null?null:Number(row.mmr),rawMmr:row.raw_mmr==null?null:Number(row.raw_mmr),adminDelta:Number(row.admin_delta||0),rank:steamId?(hasSeasonData?rankName(row.mmr,position):"Soldado"):"Steam não vinculada",kills:Number(row.kills||0),deaths:Number(row.deaths||0),headshots:Number(row.headshots||0),raids:Number(row.raids_participated||0)+Number(row.raids_defended||0),events:Number(row.bradley_participations||0)+Number(row.heli_participations||0)+Number(row.crates_hacked||0),updatedAt:row.updated_at,testerRole:true};
+      return {position:hasSeasonData?position:null,discordId:String(row.discord_id||""),discordName:String(row.discord_name||""),steamId,steamConfirmed:Boolean(row.registration_steam_id),steamSource:row.registration_steam_id?"registration":row.legacy_steam_id?"legacy":null,hasSeasonData,playerName:row.player_name?String(row.player_name):null,mode:String(row.mode||"beta_free"),status:String(row.status||"active"),acceptedRulesAt:row.accepted_rules_at,createdAt:row.created_at,mmr:row.mmr==null?null:Number(row.mmr),rawMmr:row.raw_mmr==null?null:Number(row.raw_mmr),adminDelta:Number(row.admin_delta||0),rank:steamId?rankName(season,row.mmr??1000,hasSeasonData?position:0):"Steam não vinculada",kills:Number(row.kills||0),deaths:Number(row.deaths||0),headshots:Number(row.headshots||0),raids:Number(row.raids_participated||0)+Number(row.raids_defended||0),events:Number(row.bradley_participations||0)+Number(row.heli_participations||0)+Number(row.crates_hacked||0),updatedAt:row.updated_at,testerRole:true};
     });
     const ranked=registrations.filter((x:any)=>x.hasSeasonData);
     res.setHeader("Cache-Control","no-store");
@@ -106,7 +84,7 @@ router.get("/player/:steamId/history", async(req,res)=>{
       SELECT transaction_id,category,event_type,base_value,multiplier,final_value,resulting_mmr,details,happened_at,received_at
       FROM season_transactions WHERE season_number=${sourceSeason} AND steam_id=${steamId}
       ORDER BY happened_at DESC,received_at DESC LIMIT 300`);
-    return void res.json({ok:true,season,dataSourceSeason:sourceSeason,player:row?{steamId,playerName:row.player_name,rawMmr:Number(row.mmr||0),adminDelta:Number(row.admin_delta||0),mmr:Number(row.mmr||0)+Number(row.admin_delta||0),rank:rankName(Number(row.mmr||0)+Number(row.admin_delta||0))}:null,transactions:tx?.rows??[]});
+    return void res.json({ok:true,season,dataSourceSeason:sourceSeason,player:row?{steamId,playerName:row.player_name,rawMmr:Number(row.mmr||0),adminDelta:Number(row.admin_delta||0),mmr:Number(row.mmr||0)+Number(row.admin_delta||0),rank:rankName(season,Number(row.mmr||0)+Number(row.admin_delta||0))}:null,transactions:tx?.rows??[]});
   }catch(error){req.log?.error?.({error},"season history failed");return void res.status(500).json({error:"Falha ao carregar histórico de MMR."})}
 });
 
