@@ -38,9 +38,9 @@ import rankAssetsRouter from "./rankAssets.js";
 import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
 import { startSeason2GameRankSync } from "../bot/season2GameRankSync.js";
 import { repairWipeSchedule20260904 } from "../core/repairWipeSchedule20260904.js";
-import vorkenIntegrationRouter from "./vorkenIntegration.js";
+import vorkenIntegrationRouter from "./vorkenIntegration.js";\nimport { startSeason2Lifecycle } from "./season2Lifecycle.js";
 
-startPaymentStatusNotifier();
+startSeason2Lifecycle();\nstartPaymentStatusNotifier();
 startCardPaymentReconciler();
 startStripePaymentReconciler();
 startSeasonPaymentReconciler();
