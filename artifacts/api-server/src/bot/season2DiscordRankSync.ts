@@ -44,7 +44,6 @@ async function enrolledPlayers(): Promise<Enrolled[]> {
 }
 
 async function ensureRole(guild:Guild,name:string):Promise<Role|null>{
-  await guild.roles.fetch().catch(()=>null);
   const found=guild.roles.cache.find(role=>role.name===name);
   if(found)return found;
   return guild.roles.create({name,reason:"Guerra Fria Season 2 • progressão competitiva"}).catch(error=>{
@@ -92,6 +91,7 @@ async function syncOnce(client:Client):Promise<void>{
     const guildId=String(process.env.DISCORD_GUILD_ID||"").trim();
     if(!guildId)return;
     const guild=await client.guilds.fetch(guildId);
+    await guild.roles.fetch().catch(error=>logger.warn({error,guildId},"Could not refresh Discord roles before Season 2 sync"));
     const registered=await ensureRole(guild,REGISTERED_ROLE_NAME);
     const roles=await rankRoles(guild);
     const rows=await enrolledPlayers();
