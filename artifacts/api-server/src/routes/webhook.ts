@@ -13,7 +13,8 @@ import { EmbedBuilder } from "discord.js";
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
 import { fetchMpPayment, processMpPayment } from "./paymentReconciler.js";
-import { processPromoPayment } from "./promo.js";\nimport { processDonationPayment } from "./donations.js";
+import { processPromoPayment } from "./promo.js";
+import { processDonationPayment } from "./donations.js";
 
 const router = Router();
 
