@@ -4,7 +4,7 @@ let resetBusy=false;
 
 async function fallbackResetSeason(){
   if(resetBusy)return;
-  const typed=prompt('ATENÇÃO: isso apaga TODA a pontuação e histórico de MMR da Season 1, mas preserva os inscritos.\\n\\nDigite ZERAR para confirmar:');
+  const typed=prompt('ATENÇÃO: isso apaga TODA a pontuação e histórico de MMR da Season 2, mas preserva os inscritos.\\n\\nDigite ZERAR para confirmar:');
   if(String(typed||'').trim().toUpperCase()!=='ZERAR')return;
   const msg=document.getElementById('seasonControlMsg');
   resetBusy=true;
