@@ -94,42 +94,21 @@ type CanonicalSeason = {
 };
 
 async function resolveCanonicalSeason(incomingSeasonNumber: number, incomingSeasonId: string): Promise<CanonicalSeason | null> {
-  const byId: any = await db.execute(sql`
-    SELECT season_number, season_id, starting_mmr, status
+  const active: any = await db.execute(sql`
+    SELECT season_number,season_id,starting_mmr,status
     FROM seasons
-    WHERE season_id=${incomingSeasonId}
-    ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, season_number DESC
+    WHERE status='active'
+    ORDER BY season_number DESC
     LIMIT 1
   `);
-  const idRow = byId?.rows?.[0];
-  if (idRow) {
-    return {
-      seasonNumber: Math.max(1, i(idRow.season_number, 1)),
-      seasonId: s(idRow.season_id, 64),
-      startingMmr: n(idRow.starting_mmr, 1000),
-      status: s(idRow.status, 32),
-    };
-  }
-
-  if (incomingSeasonNumber > 0) {
-    const byNumber: any = await db.execute(sql`
-      SELECT season_number, season_id, starting_mmr, status
-      FROM seasons
-      WHERE season_number=${incomingSeasonNumber}
-      LIMIT 1
-    `);
-    const row = byNumber?.rows?.[0];
-    if (row && s(row.season_id, 64) === incomingSeasonId) {
-      return {
-        seasonNumber: Math.max(1, i(row.season_number, 1)),
-        seasonId: s(row.season_id, 64),
-        startingMmr: n(row.starting_mmr, 1000),
-        status: s(row.status, 32),
-      };
-    }
-  }
-
-  return null;
+  const row=active?.rows?.[0];
+  if(!row) return null;
+  return {
+    seasonNumber:Math.max(1,i(row.season_number,incomingSeasonNumber||1)),
+    seasonId:s(row.season_id,64),
+    startingMmr:n(row.starting_mmr,1000),
+    status:s(row.status,32),
+  };
 }
 
 function cleanPlayer(p: Record<string, unknown>) {
