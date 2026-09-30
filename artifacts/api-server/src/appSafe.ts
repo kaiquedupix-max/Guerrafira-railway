@@ -5,7 +5,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import webhookRouter from "./routes/webhook.js";
 import { leaderboardHtml } from "./routes/leaderboardV2";
-import { renderSeasonPage } from "./routes/seasonPage.js";
+import { renderSeasonPage } from "./routes/seasonPage.js";\nimport { renderSeason2Page } from "./routes/season2Page.js";
 import { renderSeasonGuide } from "./routes/seasonGuide.js";
 import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
@@ -74,7 +74,7 @@ app.get("/season:seasonNumber/guia",(req,res)=>{
 app.get("/season:seasonNumber",(req,res)=>{
   const n=Math.max(1,Math.trunc(Number(req.params.seasonNumber)||1));
   res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
-  let html=renderSeasonPage(n);
+  let html=n===2?renderSeason2Page():renderSeasonPage(n);
   const guide=`<section style="margin:22px 0;border:1px solid #7046a0;background:linear-gradient(135deg,#21122f,#0d0f13);border-radius:18px;padding:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;box-shadow:0 20px 60px #0005"><div><div style="font-size:11px;font-weight:950;letter-spacing:.15em;color:#d9bfff">📖 GUIA + FAQ</div><div style="font-size:22px;font-weight:950;margin-top:5px">Como funciona a pontuação?</div><div style="font-size:12px;color:#b5bac3;max-width:680px;line-height:1.55;margin-top:5px">Armas, headshot, distância, farm, raid, construção, eventos, anti-farm e patentes explicados passo a passo para a Season ${n}.</div></div><a href="/season${n}/guia" style="text-decoration:none;background:linear-gradient(135deg,#7c3aed,#5b21b6);border:1px solid #a78bfa;color:white;padding:12px 16px;border-radius:11px;font-size:12px;font-weight:950">ABRIR GUIA →</a></section>`;
   html=html.replace("</main>",guide+"</main>");
   const community=getCommunitySession(req);
