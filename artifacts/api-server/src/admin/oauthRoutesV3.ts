@@ -80,7 +80,8 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
   if (stored.target === "community") return void res.redirect("/integridade");
   if (stored.target === "leaderboard") return void res.redirect("/leaderboard");
   if (stored.target === "store") return void res.redirect("/loja");
-  if (stored.target === "season") return void res.redirect("/api/season/2/inscricao-oficial");\n  if (stored.target === "donation") return void res.redirect("/doar");
+  if (stored.target === "season") return void res.redirect("/api/season/2/inscricao-oficial");
+  if (stored.target === "donation") return void res.redirect("/doar");
   if (stored.target === "promo") {
     const rawReturn = String(req.cookies?.gf_promo_return ?? "");
     const safeReturn = rawReturn.startsWith("/promo") && !rawReturn.startsWith("//") ? rawReturn : "/promo";
