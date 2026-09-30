@@ -29,7 +29,7 @@ import seasonAdjustedReadRouter from "./seasonAdjustedRead.js";
 import seasonControlRouter from "./seasonControl.js";
 import seasonOfficialRegistrationRouter from "./seasonOfficialRegistration.js";
 import seasonOfficialEntryGateRouter from "./seasonOfficialEntryGate.js";
-import seasonProductionRegistrationRouter from "./seasonProductionRegistration.js";
+import seasonProductionRegistrationRouter from "./seasonProductionRegistration.js";\nimport season2RegistrationRouter from "./season2Registration.js";\nimport donationsRouter from "./donations.js";
 import { seasonProfileRankDisplayFix } from "./seasonProfileRankDisplayFix.js";
 import seasonEmergencyEmailRepairRouter from "./seasonEmergencyEmailRepair.js";
 import seasonEmergencyEmailRepairExecuteRouter from "./seasonEmergencyEmailRepairExecute.js";
