@@ -36,7 +36,7 @@ import seasonEmergencyEmailRepairExecuteRouter from "./seasonEmergencyEmailRepai
 import { runSeasonEmailRepairAutorun } from "./seasonEmailRepairAutorun.js";
 import rankAssetsRouter from "./rankAssets.js";
 import { startSeasonEmailLifecycle } from "./seasonEmailLifecycle.js";
-import { startSeasonGameRankSync } from "../bot/seasonGameRankSync.js";
+import { startSeason2GameRankSync } from "../bot/season2GameRankSync.js";
 import { repairWipeSchedule20260904 } from "../core/repairWipeSchedule20260904.js";
 import vorkenIntegrationRouter from "./vorkenIntegration.js";
 
@@ -45,7 +45,7 @@ startCardPaymentReconciler();
 startStripePaymentReconciler();
 startSeasonPaymentReconciler();
 startSeasonEmailLifecycle();
-startSeasonGameRankSync();
+startSeason2GameRankSync();
 startPromoReconciler();
 void repairWipeSchedule20260904().catch(error => console.error("Failed to repair 04/09 wipe schedule", error));
 void runSeasonEmailRepairAutorun();
