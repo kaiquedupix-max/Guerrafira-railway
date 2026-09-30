@@ -128,42 +128,25 @@ type TargetSeason = {
 };
 
 async function resolveTargetSeason(incomingSeasonNumber: number, incomingSeasonId: string): Promise<TargetSeason | null> {
-  const byId: any = await db.execute(sql`
-    SELECT season_number, season_id, starting_mmr, status
+  const active: any = await db.execute(sql`
+    SELECT season_number,season_id,starting_mmr,status
     FROM seasons
-    WHERE season_id = ${incomingSeasonId}
-    ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, season_number DESC
+    WHERE status='active'
+    ORDER BY season_number DESC
     LIMIT 1
   `);
-  const idRow = byId?.rows?.[0];
-  if (idRow) {
-    return {
-      seasonNumber: Math.max(1, i(idRow.season_number, incomingSeasonNumber || 1)),
-      seasonId: s(idRow.season_id, 64),
-      startingMmr: n(idRow.starting_mmr, 1000),
-      status: s(idRow.status, 32),
-    };
+  const row=active?.rows?.[0];
+  if(!row) return null;
+  const target={
+    seasonNumber:Math.max(1,i(row.season_number,incomingSeasonNumber||1)),
+    seasonId:s(row.season_id,64),
+    startingMmr:n(row.starting_mmr,1000),
+    status:s(row.status,32),
+  };
+  if(target.seasonNumber!==incomingSeasonNumber||target.seasonId!==incomingSeasonId){
+    logger.info({incomingSeasonNumber,incomingSeasonId,targetSeasonNumber:target.seasonNumber,targetSeasonId:target.seasonId},"Season event remapped to active canonical season");
   }
-
-  if (incomingSeasonNumber > 0) {
-    const byNumber: any = await db.execute(sql`
-      SELECT season_number, season_id, starting_mmr, status
-      FROM seasons
-      WHERE season_number = ${incomingSeasonNumber}
-      LIMIT 1
-    `);
-    const numberRow = byNumber?.rows?.[0];
-    if (numberRow && s(numberRow.season_id, 64) === incomingSeasonId) {
-      return {
-        seasonNumber: Math.max(1, i(numberRow.season_number, incomingSeasonNumber)),
-        seasonId: s(numberRow.season_id, 64),
-        startingMmr: n(numberRow.starting_mmr, 1000),
-        status: s(numberRow.status, 32),
-      };
-    }
-  }
-
-  return null;
+  return target;
 }
 
 function cleanPlayer(raw: Record<string, unknown>) {
