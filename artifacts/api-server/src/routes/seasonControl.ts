@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";\nimport { scoringSeasonForTime } from "./season2Lifecycle.js";
 
 export async function ensureSeasonControl() {
   await db.execute(sql`
@@ -65,12 +65,12 @@ router.use(async (req, res, next) => {
         blocked: true,
         accepted: 0,
         saved: 0,
-        message: "Pontuação da Season 1 está bloqueada pela administração."
+        message: `Pontuação da Season ${scoringSeason} está bloqueada pela administração.`
       });
     }
     return next();
   } catch {
-    return void res.status(503).json({ ok: false, error: "Não foi possível validar o estado da pontuação da Season 1." });
+    return void res.status(503).json({ ok: false, error: "Não foi possível validar o estado da pontuação da Season atual." });
   }
 });
 
