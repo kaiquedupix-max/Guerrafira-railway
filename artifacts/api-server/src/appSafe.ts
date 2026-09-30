@@ -89,6 +89,13 @@ app.get("/season:seasonNumber",(req,res)=>{
   return res.status(200).type("html").send(html);
 });
 
+app.get("/doar",(req,res)=>{
+  const session=getCommunitySession(req);
+  res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+  const html=renderDonationPage(session?.username||"");
+  return res.status(200).type("html").send(withSiteChrome(html,"donation",{isAdmin:Boolean(session?.isAdmin),username:session?.username||""}));
+});
+
 app.get("/loja",(req,res)=>{
   const session=getCommunitySession(req);
   if(!session)return res.redirect("/api/admin/auth/login?target=store");
