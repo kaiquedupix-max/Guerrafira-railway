@@ -52,18 +52,21 @@ router.post("/donations/pix",async(req,res)=>{
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))return void res.status(400).json({error:"Informe um e-mail válido para gerar o PIX."});
     const session=getCommunitySession(req);
     const id=randomUUID();
-    const donorRef=session?.userId||`guest-${id.slice(0,12)}`;
+    await db.execute(sql`INSERT INTO server_donations(id,discord_id,donor_name,contact_email,amount,status,updated_at)
+      VALUES(${id},${session?.userId||null},${donorName||null},${email},${amount},'creating',now())`);
     const payment=await createPixPayment({
       amount,
       description:"Doação voluntária • Guerra Fria Rust",
       email,
-      discordUserId:donorRef,
+      discordUserId:`donation:${id}`,
       steamId:"0",
       vipTier:"server_donation",
     });
-    if("error"in payment)return void res.status(502).json({error:payment.error});
-    await db.execute(sql`INSERT INTO server_donations(id,discord_id,donor_name,contact_email,amount,status,mp_payment_id,updated_at)
-      VALUES(${id},${session?.userId||null},${donorName||null},${email},${amount},'pending',${payment.paymentId},now())`);
+    if("error"in payment){
+      await db.execute(sql`UPDATE server_donations SET status='failed',updated_at=now() WHERE id=${id}`);
+      return void res.status(502).json({error:payment.error});
+    }
+    await db.execute(sql`UPDATE server_donations SET status='pending',mp_payment_id=${payment.paymentId},updated_at=now() WHERE id=${id}`);
     return void res.json({ok:true,paymentId:payment.paymentId,qrCode:payment.qrCode,qrCodeBase64:payment.qrCodeBase64,expiresAt:payment.expiresAt,amount});
   }catch(error){logger.error({error},"donation PIX failed");return void res.status(500).json({error:"Não foi possível gerar a doação agora."});}
 });
@@ -75,12 +78,14 @@ export async function processDonationPayment(payment:Record<string,unknown>):Pro
     await ensureDonationTable();
     const paymentId=String(payment.id??"").trim();
     const status=String(payment.status??"pending").trim();
-    if(!paymentId)return true;
+    const donorRef=String(metadata.discord_user_id??"").trim();
+    const donationId=donorRef.startsWith("donation:")?donorRef.slice("donation:".length):"";
+    if(!paymentId&&!donationId)return true;
     if(status==="approved"){
-      await db.execute(sql`UPDATE server_donations SET status='approved',approved_at=COALESCE(approved_at,now()),updated_at=now() WHERE mp_payment_id=${paymentId}`);
-      logger.info({paymentId,amount:payment.transaction_amount},"Server donation approved");
+      await db.execute(sql`UPDATE server_donations SET status='approved',mp_payment_id=COALESCE(mp_payment_id,${paymentId||null}),approved_at=COALESCE(approved_at,now()),updated_at=now() WHERE mp_payment_id=${paymentId} OR id=${donationId}`);
+      logger.info({paymentId,donationId,amount:payment.transaction_amount},"Server donation approved");
     }else{
-      await db.execute(sql`UPDATE server_donations SET status=${status},updated_at=now() WHERE mp_payment_id=${paymentId}`);
+      await db.execute(sql`UPDATE server_donations SET status=${status},mp_payment_id=COALESCE(mp_payment_id,${paymentId||null}),updated_at=now() WHERE mp_payment_id=${paymentId} OR id=${donationId}`);
     }
     return true;
   }catch(error){
