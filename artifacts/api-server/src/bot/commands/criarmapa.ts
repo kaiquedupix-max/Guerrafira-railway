@@ -495,6 +495,67 @@ async function savePreparedBackup(voteId:number,backupId:string,seed:number,size
 }
 async function clearPreparedBackup(voteId:number):Promise<void>{await ensurePreparationTable();await pool.query(`DELETE FROM wipe_preparations WHERE vote_id=$1`,[voteId]);}
 
+export async function executeSelectedMapVoteNow(
+  client:Client,
+  voteId:number,
+  actor:{id:string;name:string},
+):Promise<{voteId:number;winnerIndex:number;winnerName:string;mode:MapMode}>{
+  if(!Number.isInteger(voteId)||voteId<=0)throw new Error("Votação inválida.");
+  if(wipeProcessing)throw new Error("Já existe uma execução de wipe em andamento. Aguarde a conclusão e tente novamente.");
+
+  wipeProcessing=true;
+  try{
+    const rows=await db.select().from(mapVotesTable).where(and(
+      eq(mapVotesTable.id,voteId),
+      eq(mapVotesTable.status,"selected"),
+      isNull(mapVotesTable.appliedAt),
+    )).limit(1);
+    const row=rows[0];
+    if(!row)throw new Error("Esta votação não está com um mapa vencedor pendente de wipe.");
+
+    let maps:MapOption[];
+    try{maps=(JSON.parse(row.mapsJson) as any[]).map(normalizeMap)}
+    catch{throw new Error("Não foi possível carregar os mapas desta votação.");}
+
+    const winnerIndex=row.winnerIndex??0;
+    const map=maps[winnerIndex];
+    if(!map)throw new Error("O mapa vencedor desta votação não foi encontrado.");
+
+    await db.update(mapVotesTable).set({failureReason:null}).where(eq(mapVotesTable.id,row.id));
+
+    if(map.mode==="link"){
+      if(!map.mapUrl)throw new Error("O mapa vencedor não possui link .map.");
+      await executePreparedWipe("map",map.mapUrl,actor,false,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)});
+    }else{
+      const seed=Number(map.seed),size=Number(map.size);
+      if(!Number.isInteger(seed)||seed<0||seed>2147483647)throw new Error("A seed do mapa vencedor é inválida.");
+      if(!Number.isInteger(size)||size<1000||size>6000)throw new Error("O size do mapa vencedor é inválido.");
+      const backupId=preparedWipeBackups.get(row.id)||await loadPreparedBackup(row.id,seed,size)||undefined;
+      await executePreparedProceduralWipe("map",seed,size,actor,false,{onStopped:()=>sendWipeAnnouncement(client,"offline",map)},backupId);
+    }
+
+    preparedWipeBackups.delete(row.id);
+    backupRetryAt.delete(row.id);
+    await clearPreparedBackup(row.id).catch(()=>{});
+    await db.update(mapVotesTable).set({status:"applied",appliedAt:new Date(),failureReason:null}).where(eq(mapVotesTable.id,row.id));
+    try{const {refreshLeaderboardChannel}=await import("../leaderboardChannel.js");await refreshLeaderboardChannel(client)}catch{}
+    await sendWipeAnnouncement(client,"online",map);
+    await sendGameAnnouncement("GUERRA FRIA","Wipe concluido. Bom jogo!","#7CFC00").catch(()=>null);
+
+    return{voteId:row.id,winnerIndex,winnerName:map.name,mode:map.mode};
+  }catch(error){
+    const reason=error instanceof Error?error.message:"Falha desconhecida";
+    await db.update(mapVotesTable).set({failureReason:`Wipe manual agora: ${reason}`}).where(and(
+      eq(mapVotesTable.id,voteId),
+      eq(mapVotesTable.status,"selected"),
+      isNull(mapVotesTable.appliedAt),
+    )).catch(()=>{});
+    throw error;
+  }finally{
+    wipeProcessing=false;
+  }
+}
+
 async function processScheduledWipes(client:Client):Promise<void>{
   if(wipeProcessing||process.env.WIPE_EXECUTION_ENABLED!=="true"||process.env.WIPE_AUTOMATION_ENABLED!=="true")return;
   if(!(await getWipeLockState()).unlocked)return;wipeProcessing=true;
