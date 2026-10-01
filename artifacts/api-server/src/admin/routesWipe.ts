@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
 import { auditWipe, buildWipePlan, diagnoseHost, executeProceduralWipe, executeWipe, type WipeKind } from "../core/hostWipe.js";
-import { cancelActiveMapVoteRuntime, createMapVote, type MapImageUpload } from "../bot/commands/criarmapa.js";
+import { cancelActiveMapVoteRuntime, createMapVote, executeSelectedMapVoteNow, type MapImageUpload } from "../bot/commands/criarmapa.js";
 import { discordClient } from "../bot/client.js";
 import { db, pool, mapVotesTable, mapVoteBallotsTable } from "@workspace/db";
 import { desc } from "drizzle-orm";
@@ -95,6 +95,22 @@ router.post("/wipe/vote",async(req,res)=>{
     await auditWipe("MAP_VOTE_CREATED",{id:res.locals.admin.userId,name:res.locals.admin.username},`Votação ${result.id} criada pelo painel; fluxo técnico ${new Date(result.wipeAt).toISOString()}; wipe oficial ${new Date(officialWipeAt).toISOString()}.`);
     res.status(201).json({...result,flowAt:result.wipeAt,officialWipeAt,timeZone:"America/Sao_Paulo"});
   }catch(error:any){res.status(409).json({error:error?.message||"Falha ao criar votação."})}
+});
+
+router.post("/wipe/vote/:id/execute-now",async(req,res)=>{
+  try{
+    const voteId=Number(req.params.id);
+    if(!Number.isInteger(voteId)||voteId<=0)return void res.status(400).json({error:"Votação inválida."});
+    if(String(req.body?.confirmation||"")!=="WIPE GUERRA FRIA")return void res.status(400).json({error:"Confirmação inválida."});
+    const client=discordClient();
+    if(!client)return void res.status(503).json({error:"Bot do Discord ainda não está conectado."});
+    const actor={id:res.locals.admin.userId,name:res.locals.admin.username};
+    const result=await executeSelectedMapVoteNow(client,voteId,actor);
+    await auditWipe("SELECTED_MAP_WIPE_NOW",actor,`Votação ${voteId}; vencedor ${result.winnerName}; execução imediata solicitada pelo painel.`);
+    res.json(result);
+  }catch(error:any){
+    res.status(423).json({error:error?.message||"Não foi possível iniciar o wipe agora."});
+  }
 });
 
 router.post("/wipe/execute", async (req,res) => {
