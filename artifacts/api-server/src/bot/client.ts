@@ -5,12 +5,10 @@ import { restoreActiveMapVotes, startMapWipeScheduler } from "./commands/criarma
 import { logger } from "../lib/logger.js";
 import { startDailyRestartScheduler } from "./autoRestart.js";
 import { setupTicketClaimSystem } from "./ticketClaim.js";
-import { startSeasonDiscordRankSync } from "./seasonDiscordRankSync.js";
 import { startVerificationIntegration } from "./verificationIntegrationV2.js";
 
 let _client: Client | null = null;
 let notificationBridgeStarted = false;
-let seasonRankSyncStarted = false;
 
 export function setDiscordClient(client: Client): void {
   _client = client;
@@ -19,11 +17,6 @@ export function setDiscordClient(client: Client): void {
     notificationBridgeStarted = true;
     startAdminNotificationBridge(client);
   }
-  if (!seasonRankSyncStarted) {
-    seasonRankSyncStarted = true;
-    startSeasonDiscordRankSync(client);
-  }
-
   setupTicketClaimSystem(client).catch((err) => {
     logger.error({ err }, "Failed to initialize ticket claim system");
   });

@@ -28,6 +28,7 @@ import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raff
 import { openVipModal, submitVipModal } from "./vipSteamLink.js";
 import { startDiscordModeration } from "./moderation.js";
 import { startSeason2DiscordRankSync } from "./season2DiscordRankSync.js";
+import { startSeason1DiscordRankCleanup } from "./season1RankCleanup.js";
 import * as banirCommand from "./commands/banir.js";
 import * as banpreventivoCommand from "./commands/banpreventivo.js";
 import * as kickarCommand from "./commands/kickar.js";
@@ -127,6 +128,7 @@ export async function startBot(): Promise<void> {
     await registerSlashCommands(c);
     telagemCommand.startVerificationIntegration(c);
     startSeason2DiscordRankSync(c);
+    startSeason1DiscordRankCleanup(c);
     await ensureGameAnnouncementPlugin();
     startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
     await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
