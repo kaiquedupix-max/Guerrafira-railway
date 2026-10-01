@@ -26,6 +26,7 @@ if (process.env.PTERODACTYL_API_KEY) process.env.ELGAE_API_KEY = process.env.PTE
 
 function enhanceSeasonGuide(html: string, seasonNumber: number): string {
   const n = Math.max(1, Math.trunc(Number(seasonNumber) || 1));
+  if (n >= 2) return html;
   const card = (name:string, level:number, type:string, special="") => `<div class="rankcard ${type} ${special}"><div class="rankbadge"><span class="shield"></span><span class="chev c1"></span>${level>1?'<span class="chev c2"></span>':''}${level>2?'<span class="chev c3"></span>':''}<span class="rankstar">${type==='war'?'★★★★★':type==='marshal'?'★':type==='colonel'?'✦':type==='lieutenant'?'◆':type==='sergeant'?'▲':type==='soldier'?'▬':'•'}</span></div><b>${name}</b><small>MMR necessário</small><em>EM DEFINIÇÃO</em></div>`;
   const rankSection = `<section class="section ranksSection" id="patentes"><h2>🎖️ Patentes da Season</h2><div class="body"><p>Além da posição geral no ranking, cada jogador terá uma <strong>patente baseada no MMR atual</strong>. Ao alcançar a faixa necessária, a promoção acontece automaticamente.</p><div class="notice"><strong>As faixas de MMR ainda estão em definição.</strong> Nenhuma pontuação mínima exibida antes do anúncio oficial deve ser considerada definitiva.</div><div class="rankgrid">${card('Recruta',1,'recruit')}${card('Soldado I',1,'soldier')}${card('Soldado II',2,'soldier')}${card('Soldado III',3,'soldier')}${card('Sargento I',1,'sergeant')}${card('Sargento II',2,'sergeant')}${card('Sargento III',3,'sergeant')}${card('Tenente I',1,'lieutenant')}${card('Tenente II',2,'lieutenant')}${card('Tenente III',3,'lieutenant')}${card('Coronel I',1,'colonel')}${card('Coronel II',2,'colonel')}${card('Coronel III',3,'colonel')}${card('Marechal',1,'marshal','elite')}${card('General Frio',1,'war','warcard')}</div><div class="discordRank"><div class="discordLogo">◉</div><div><strong>CARGOS NO DISCORD</strong><p>Conforme sua patente sobe dentro da Season, você também recebe o <b>cargo correspondente no Discord</b>. Assim sua evolução fica visível dentro e fora do servidor.</p><small>As cores e permissões finais dos cargos serão definidas pela administração.</small></div></div><div class="drawing"><div class="drawtitle">COMO A PROMOÇÃO FUNCIONA</div><div class="flow"><div class="node"><span class="ico">🎮</span><b>Você joga</b><small>ações válidas geram ou retiram MMR</small></div><div class="arrow">→</div><div class="node"><span class="ico">📈</span><b>MMR muda</b><small>ranking atualizado</small></div><div class="arrow">→</div><div class="node"><span class="ico">🎖️</span><b>Atingiu a faixa</b><small>promoção automática</small></div><div class="arrow">→</div><div class="node result"><span class="ico">🏆</span><b>Nova patente</b><small>site + Discord</small></div></div></div><p>A patente acompanha o <strong>MMR real</strong>. Ela não depende de VIP, tempo online ou número de kills isolado. O que importa é a pontuação calculada pelo sistema da Season.</p></div></section>`;
   const faqExtra = `<details><summary>Como eu subo de patente?</summary><p>Acumulando MMR pelas ações válidas da Season. Quando seu MMR atingir a faixa exigida para a próxima patente, a promoção será automática.</p></details><details><summary>Qual MMR precisa para cada patente?</summary><p>As pontuações mínimas serão divulgadas e ajustadas pela administração conforme o balanceamento da Season.</p></details><details><summary>Qual é a patente máxima?</summary><p>A patente máxima será <strong>General Frio</strong>, representada por cinco estrelas (★★★★★), acima de Marechal.</p></details><details><summary>Vou receber cargo no Discord?</summary><p>Sim. Cada patente pode ter seu cargo correspondente no Discord, atualizado conforme sua classificação na Season.</p></details><details><summary>Posso perder uma patente?</summary><p>O sistema acompanha o MMR atual e a patente acompanha a classificação vigente.</p></details>`;
@@ -39,6 +40,30 @@ function enhanceSeasonGuide(html: string, seasonNumber: number): string {
     html=html.replace('<strong>As faixas de MMR ainda estão em definição.</strong> Nenhuma pontuação mínima exibida antes do anúncio oficial deve ser considerada definitiva.','<strong>As faixas oficiais de XP da Season 2 já estão publicadas.</strong> Consulte a página principal da Season 2 para ver os 15 níveis e seus requisitos.');
   }
   return html;
+}
+
+function season2UpdateNotice(): string {
+  return `<section style="margin:0 0 14px;border:1px solid #9a6719;background:radial-gradient(circle at 92% 0,#f59e0b2b,transparent 36%),linear-gradient(135deg,#251806,#0b1014);padding:18px 20px;color:#f8fafc"><div style="font-size:9px;font-weight:1000;letter-spacing:.16em;color:#fbbf24">⚡ SEASON 2 • INSCRIÇÕES ABERTAS • AJUSTES REALIZADOS</div><div style="font-size:21px;font-weight:1000;margin-top:7px">Novas patentes e premiação maior.</div><div style="font-size:11px;line-height:1.65;color:#c5cbd2;margin-top:5px">A Season 2 começa em <b style="color:#fff">09/10/2026 às 18:30</b>, com <b style="color:#fff">15 novas patentes</b>, General Frio a partir de <b style="color:#fff">10.000 XP + Top 1</b> e <b style="color:#fff">R$ 500 em premiação garantida</b>. Foram feitos ajustes de progressão com base nos resultados da Season 1.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a href="/api/season/2/inscricao-oficial" style="text-decoration:none;background:#f59e0b;color:#120b02;border:1px solid #fbbf24;padding:10px 13px;font-size:9px;font-weight:1000">INSCREVER-SE • R$ 20</a><a href="/season2" style="text-decoration:none;background:#11161c;color:#fff;border:1px solid #39414b;padding:10px 13px;font-size:9px;font-weight:1000">VER NOVIDADES</a></div></section>`;
+}
+
+function addSeason2UpdateNotice(html: string): string {
+  return html.replace(/(<main[^>]*>)/, `$1${season2UpdateNotice()}`);
+}
+
+function finalizeSeason1Page(html: string): string {
+  return html
+    .replace("A Season 1 oficial começa em 04/09 às 18:30.", "A Season 1 foi finalizada. Confira o pódio oficial e prepare-se para a Season 2.")
+    .replace("GARANTIR INSCRIÇÃO • R$20", "INSCREVER-SE NA SEASON 2 • R$ 20")
+    .replace(/\/api\/season\/1\/inscricao-oficial/g, "/api/season/2/inscricao-oficial")
+    .replace(/\/api\/season\/1\/regras/g, "/api/season/2/regras")
+    .replace("⚠️ PONTUAÇÃO DE TESTE", "🏁 SEASON 1 FINALIZADA")
+    .replace("Toda a pontuação atual será zerada em <b>04/09</b>, antes do início oficial da Season 1 às <b>18:30</b>. Todos começarão a Season oficial com <b>0 XP</b>.", "A classificação está encerrada e preservada como histórico oficial. As patentes da Season 1 foram retiradas do jogo e do Discord.")
+    .replace("INSCRIÇÕES ABERTAS • SEASON 1", "SEASON 1 FINALIZADA")
+    .replace("Entre na disputa oficial.", "A próxima disputa já está aberta.")
+    .replace("O beta atual serve para testes. A inscrição oficial é separada e garante sua elegibilidade para a premiação da Season 1.", "A Season 2 recebeu 15 novas patentes, ajustes de progressão e uma premiação maior de R$ 500. As inscrições já estão abertas.")
+    .replace("INSCREVER-SE AGORA", "INSCREVER-SE NA SEASON 2")
+    .replace("Pódio ao vivo", "Pódio final")
+    .replace("Patente, XP e posição dos três líderes.", "Patente, XP e posição final do Top 3 da Season 1.");
 }
 
 const app: Express = express();
@@ -71,7 +96,7 @@ app.get("/season:seasonNumber/guia",(req,res)=>{
   const n=Math.max(1,Math.trunc(Number(req.params.seasonNumber)||1));
   const community=getCommunitySession(req);
   const admin=getAdminSessionV3(req);
-  let html=enhanceSeasonGuide(renderSeasonGuide(n),n);
+  let html=addSeason2UpdateNotice(enhanceSeasonGuide(renderSeasonGuide(n),n));
   html=withSiteChrome(html,"season",{isAdmin:Boolean(community?.isAdmin||admin),username:community?.username||admin?.username||""});
   res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   return res.status(200).type("html").send(html);
@@ -80,7 +105,8 @@ app.get("/season:seasonNumber/guia",(req,res)=>{
 app.get("/season:seasonNumber",(req,res)=>{
   const n=Math.max(1,Math.trunc(Number(req.params.seasonNumber)||1));
   res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
-  let html=n===2?renderSeason2Page():renderSeasonPage(n);
+  let html=n===2?renderSeason2Page():finalizeSeason1Page(renderSeasonPage(n));
+  html=addSeason2UpdateNotice(html);
   const guide=`<section style="margin:22px 0;border:1px solid #7046a0;background:linear-gradient(135deg,#21122f,#0d0f13);border-radius:18px;padding:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;box-shadow:0 20px 60px #0005"><div><div style="font-size:11px;font-weight:950;letter-spacing:.15em;color:#d9bfff">📖 GUIA + FAQ</div><div style="font-size:22px;font-weight:950;margin-top:5px">Como funciona a pontuação?</div><div style="font-size:12px;color:#b5bac3;max-width:680px;line-height:1.55;margin-top:5px">Armas, headshot, distância, farm, raid, construção, eventos, anti-farm e patentes explicados passo a passo para a Season ${n}.</div></div><a href="/season${n}/guia" style="text-decoration:none;background:linear-gradient(135deg,#7c3aed,#5b21b6);border:1px solid #a78bfa;color:white;padding:12px 16px;border-radius:11px;font-size:12px;font-weight:950">ABRIR GUIA →</a></section>`;
   html=html.replace("</main>",guide+"</main>");
   const community=getCommunitySession(req);

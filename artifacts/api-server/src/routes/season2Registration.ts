@@ -117,7 +117,8 @@ function style(){
 }
 
 function shell(body:string,title="Inscrição Season 2"){
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#07100a"><title>${title} • Guerra Fria</title>${style()}</head><body><main class="w">${body}</main></body></html>`;
+  const update=`<section class="notice" style="margin:0 0 14px;border-color:#8a641d;background:linear-gradient(135deg,#261a08,#0d1310)"><b>⚡ SEASON 2 ATUALIZADA</b><br>Foram feitos ajustes com base na Season 1: <b>15 novas patentes</b>, General Frio a partir de <b>10.000 XP + Top 1</b> e uma <b>premiação maior de R$ 500</b>. As inscrições estão abertas e a disputa começa em <b>09/10/2026 às 18:30</b>.</section>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#07100a"><title>${title} • Guerra Fria</title>${style()}</head><body><main class="w">${update}${body}</main></body></html>`;
 }
 
 function steamGate(username:string){
@@ -128,7 +129,7 @@ function rulesPage(){
  return shell(`<a class="back" href="/season2">← VOLTAR PARA A SEASON 2</a><section class="hero"><span class="tag">📜 REGULAMENTO • SEASON 2</span><h1>Competição limpa e premiada.</h1><p>Regras essenciais da segunda temporada competitiva do Guerra Fria.</p></section>
  <section class="card"><h2>1. Período e inscrição</h2><p>A Season 2 ocorre de <b>${SEASON_2_START}</b> até <b>${SEASON_2_END}</b>. A inscrição custa <b>R$ 20</b> e fica aberta até <b>${SEASON_2_REGISTRATION_DEADLINE}</b>. É obrigatório vincular Discord e Steam. A vaga só é confirmada após aprovação do pagamento.</p></section>
  <section class="card prize"><h2>2. Premiação garantida de <strong>R$ 500</strong></h2><div class="prizeGrid"><div class="award"><span>🥇</span><b>R$ 250</b><small>50% • 1º lugar</small></div><div class="award"><span>🥈</span><b>R$ 150</b><small>30% • 2º lugar</small></div><div class="award"><span>🥉</span><b>VIP Ouro</b><small>3º lugar</small></div></div><p>O 1º lugar recebe 50% de R$ 500, o 2º recebe 30% e o 3º recebe um VIP Ouro. A premiação é garantida pelo servidor e não depende do volume de doações.</p></section>
- <section class="card"><h2>3. Ranking, XP e patentes</h2><p>Todos os inscritos disputam o mesmo ranking. A Season 2 possui 15 patentes. XP é obtido somente por ações válidas registradas pelo sistema. Ajustes administrativos podem ocorrer para corrigir abuso, erro técnico ou exploração.</p></section>
+ <section class="card"><h2>3. Ranking, XP e patentes</h2><p>Todos os inscritos disputam o mesmo ranking. A Season 2 possui 15 patentes novas. A patente máxima, General Frio, exige <b>pelo menos 10.000 XP e Top 1</b>. XP é obtido somente por ações válidas registradas pelo sistema. A progressão foi ajustada com base nos resultados da Season 1; ajustes administrativos ainda podem ocorrer para corrigir abuso, erro técnico ou exploração.</p></section>
  <section class="card"><h2>4. Integridade competitiva</h2><p>Cheat, automação proibida, exploração deliberada de falhas, manipulação artificial de pontuação, farm combinado ou tentativa de burlar o sistema pode resultar em retirada de XP, desclassificação e medidas administrativas previstas nas regras do servidor.</p></section>
  <section class="card"><h2>5. Doações</h2><p>Doações ao Guerra Fria são opcionais, ajudam na infraestrutura e não concedem XP, patente, posição, imunidade administrativa ou qualquer vantagem na Season 2.</p></section>`,"Regulamento Season 2");
 }

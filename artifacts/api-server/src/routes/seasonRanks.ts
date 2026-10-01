@@ -33,7 +33,7 @@ const SEASON_2_RANKS: SeasonRank[] = [
   { name: "Coronel II", short: "CL2", level: 12, xp: 4000, icon: "marechal", group: "season2_coronel2" },
   { name: "Coronel III", short: "CL3", level: 13, xp: 4500, icon: "marechal", group: "season2_coronel3" },
   { name: "Marechal", short: "MAR", level: 14, xp: 5200, icon: "marechal", group: "season2_marechal" },
-  { name: "General Frio", short: "GFR", level: 15, xp: 5200, icon: "general", group: "season2_generalfrio", top1_only: true },
+  { name: "General Frio", short: "GFR", level: 15, xp: 10000, icon: "general", group: "season2_generalfrio", top1_only: true },
 ];
 
 export const SEASON_2_PRIZE = {
@@ -81,9 +81,10 @@ export function rankProgressForSeason(seasonNumber: number, xpValue: unknown, po
   const top = ranks.find(item => item.top1_only);
   const isTopRank = Boolean(rank.top1_only);
   const ordinaryIndex = ordinary.findIndex(item => item.level === rank.level);
-  const next = !isTopRank && ordinaryIndex >= 0 && ordinaryIndex < ordinary.length - 1
+  const ordinaryNext = !isTopRank && ordinaryIndex >= 0 && ordinaryIndex < ordinary.length - 1
     ? ordinary[ordinaryIndex + 1]
     : null;
+  const next = ordinaryNext || (!isTopRank && top && xp < top.xp ? top : null);
 
   let progress = 100;
   if (next) {
@@ -94,7 +95,9 @@ export function rankProgressForSeason(seasonNumber: number, xpValue: unknown, po
   const nextCondition = isTopRank
     ? null
     : next
-      ? null
+      ? next.top1_only
+        ? `Para conquistar ${next.name}, alcance ${next.xp.toLocaleString("pt-BR")} XP e assuma o Top 1 do ranking.`
+        : null
       : top
         ? `Você alcançou ${rank.name}. Para conquistar ${top.name}, assuma o Top 1 do ranking.`
         : null;

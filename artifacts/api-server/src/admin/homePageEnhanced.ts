@@ -28,6 +28,7 @@ export function renderHome(req: Request): string {
     .replace('src="/api/home/banner"', `src="${heroUrl}" width="1983" height="793" fetchpriority="high" decoding="async"`)
     .replace('class="heroVisual reveal" data-tilt="soft"', 'class="heroVisual" aria-hidden="true"')
     .replace('ENTRE NA COMUNIDADE</h2>', 'ENTRE NA <em>COMUNIDADE</em></h2>')
+    .replace('R$ 500 EM PRÊMIOS • 15 PATENTES', 'R$ 500 EM PRÊMIOS • 15 NOVAS PATENTES • AJUSTES S2')
     .replace('<a href="/loja"><span>◇</span><b>Loja VIP</b><em>→</em></a>', '<a href="/api/perfil"><span>◎</span><b>Meu Perfil</b><em>→</em></a><a href="/loja"><span>◇</span><b>Loja VIP</b><em>→</em></a>');
 
   const css = `<link rel="preload" as="image" href="${heroUrl}">

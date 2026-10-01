@@ -172,7 +172,7 @@ router.get("/season/:number",async(req,res,next)=>{
       methodology:{
         metric:"Experiência",
         description:seasonNumber>=2
-          ?"A Season 2 possui 15 patentes. A progressão depende do XP da Season; General Frio exige Marechal e Top 1."
+          ?"A Season 2 possui 15 patentes. A progressão depende do XP da Season; General Frio exige 10.000 XP e Top 1."
           :"Soldado, Tenente, Major e Marechal dependem de XP. General Frio exige Marechal e Top 1."
       },
       ranks,
