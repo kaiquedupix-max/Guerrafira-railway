@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { SEASON_1_END_AT, SEASON_2_END_AT, SEASON_2_START_AT } from "./seasonRanks.js";
 
-const SEASON_2_ID = "gf-s2-20261002";
+const SEASON_2_ID = "gf-s2-20261009";
 const S1_END = new Date(SEASON_1_END_AT).getTime();
 const S2_START = new Date(SEASON_2_START_AT).getTime();
 const S2_END = new Date(SEASON_2_END_AT).getTime();

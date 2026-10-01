@@ -80,7 +80,7 @@ router.post("/control/start",async(req,res)=>{
     await setSeasonScoringBlocked(CURRENT_SEASON,false,admin);
     await logAction(admin,"scoring_started","Pontuação da Season 2 liberada manualmente.");
     const live=scoringSeasonForTime()===CURRENT_SEASON;
-    return void res.json({ok:true,scoringBlocked:false,live,message:live?"Pontuação da Season 2 liberada.":"Controle liberado; a pontuação só começa automaticamente em 02/10/2026 às 18:30."});
+    return void res.json({ok:true,scoringBlocked:false,live,message:live?"Pontuação da Season 2 liberada.":"Controle liberado; a pontuação só começa automaticamente em 09/10/2026 às 18:30."});
   }catch{
     return void res.status(500).json({ok:false,error:"Falha ao liberar pontuação da Season 2."});
   }

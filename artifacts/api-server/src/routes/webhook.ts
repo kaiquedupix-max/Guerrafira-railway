@@ -15,6 +15,7 @@ import { logger } from "../lib/logger.js";
 import { fetchMpPayment, processMpPayment } from "./paymentReconciler.js";
 import { processPromoPayment } from "./promo.js";
 import { processDonationPayment } from "./donations.js";
+import { processSeason2Payment } from "./season2Registration.js";
 
 const router = Router();
 
@@ -106,7 +107,8 @@ router.post("/mercadopago", async (req: Request, res: Response) => {
     if (!mpData) return;
     const handledByPromo = await processPromoPayment(mpData);
     const handledByDonation = handledByPromo ? false : await processDonationPayment(mpData);
-    if (!handledByPromo && !handledByDonation) await processMpPayment(mpData);
+    const handledBySeason2 = handledByPromo || handledByDonation ? false : await processSeason2Payment(mpData);
+    if (!handledByPromo && !handledByDonation && !handledBySeason2) await processMpPayment(mpData);
   } catch (err) {
     logger.error({ err }, "Webhook processing error");
   }

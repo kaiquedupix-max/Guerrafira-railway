@@ -40,13 +40,13 @@ export const SEASON_2_PRIZE = {
   total: 500,
   first: 250,
   second: 150,
-  third: 100,
+  third: "VIP Ouro",
 } as const;
 
 export const SEASON_1_END_AT = "2026-10-01T02:59:59.000Z";
-export const SEASON_2_START_AT = "2026-10-02T21:30:00.000Z";
+export const SEASON_2_START_AT = "2026-10-09T21:30:00.000Z";
 export const SEASON_2_END_AT = "2026-11-01T02:59:59.000Z";
-export const SEASON_2_START = "02/10/2026 às 18:30";
+export const SEASON_2_START = "09/10/2026 às 18:30";
 export const SEASON_2_END = "31/10/2026 às 23:59";
 export const SEASON_2_REGISTRATION_DEADLINE = "20/10/2026 às 23:59";
 
