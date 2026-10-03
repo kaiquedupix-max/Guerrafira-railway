@@ -19,6 +19,7 @@ import { getCommunitySession } from "./admin/communitySession.js";
 import { getAdminSessionV3, issueAdminSessionV3 } from "./admin/sessionBearer.js";
 import { logger } from "./lib/logger";
 import { startStoragePolicy } from "./storagePolicy.js";
+import { enhanceHomeHtml } from "./core/multiServerUi.js";
 
 if (process.env.PTERODACTYL_URL) process.env.ELGAE_PANEL_URL = process.env.PTERODACTYL_URL;
 if (process.env.PTERODACTYL_SERVER_ID) process.env.ELGAE_SERVER_ID = process.env.PTERODACTYL_SERVER_ID;
@@ -71,9 +72,6 @@ startStoragePolicy();
 app.use(pinoHttp({logger,serializers:{req(req){return{id:req.id,method:req.method,url:req.url?.split("?")[0]};},res(res){return{statusCode:res.statusCode};}}}));
 app.use(cors());
 app.use(cookieParser());
-// A votação de mapas pode enviar até 3 imagens de 5 MB em Base64.
-// Base64 adiciona ~33% ao payload, então 18 MB era insuficiente e causava HTTP 413.
-// 32 MB mantém margem para metadados sem remover o limite individual de 5 MB por imagem.
 const REQUEST_BODY_LIMIT = "32mb";
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
@@ -86,7 +84,7 @@ app.use((req,res,next)=>{
   next();
 });
 
-app.get("/",(req,res)=>res.status(200).type("html").send(renderHome(req)));
+app.get("/",(req,res)=>res.status(200).type("html").send(enhanceHomeHtml(renderHome(req),req)));
 app.get("/leaderboard",(req,res)=>{
   const session=getCommunitySession(req);
   return res.status(200).type("html").send(withSiteChrome(leaderboardHtml,"leaderboard",{isAdmin:Boolean(session?.isAdmin),username:session?.username||""}));
@@ -135,7 +133,7 @@ const renderPromo=(req:express.Request,res:express.Response)=>{
     res.cookie("gf_promo_return",target,{httpOnly:true,sameSite:"lax",secure:true,maxAge:10*60*1000,path:"/"});
     return res.redirect("/api/admin/auth/login?target=promo");
   }
-  res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Cache-Control","no-store,no-cache,must-revalidate,proxy-revalidate");
   return res.status(200).type("html").send(withSiteChrome(renderPromoPage(session.username),"season",{isAdmin:session.isAdmin,username:session.username}));
 };
 app.get("/promo",renderPromo);
