@@ -50,8 +50,9 @@ router.get("/registrations-unified", async (req, res) => {
       };
     });
     const paid = registrations.filter((x: any) => x.paid);
+    const free = registrations.filter((x: any) => x.status === "active" && x.entry_type === "free");
     const pending = registrations.filter((x: any) => x.status === "pending");
-    const legacyOrFree = registrations.filter((x: any) => !x.paid && (x.entry_type === "free" || Number(x.amount || 0) <= 0));
+    const legacy = registrations.filter((x: any) => !x.paid && x.entry_type !== "free" && Number(x.amount || 0) <= 0);
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     return void res.json({
       ok: true,
@@ -59,14 +60,15 @@ router.get("/registrations-unified", async (req, res) => {
       seasonKey,
       serverId: "solo-duo",
       seasonServerLocked: true,
-      freeRegistrationEnabled: false,
+      freeRegistrationEnabled: season === 2,
       summary: {
         total: registrations.length,
         active: registrations.filter((x: any) => x.status === "active").length,
         paid: paid.length,
+        free: free.length,
         pending: pending.length,
         cancelled: registrations.filter((x: any) => x.status === "cancelled").length,
-        legacyOrFree: legacyOrFree.length,
+        legacy: legacy.length,
         paidTotal: paid.reduce((sum: number, x: any) => sum + Number(x.amount || 0), 0),
       },
       registrations,
