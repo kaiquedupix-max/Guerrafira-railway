@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import leaderboardRouter from "./leaderboardV2";
 import publicStatusRouter from "./publicStatus.js";
+import statusMultiServerRouter from "./statusMultiServer.js";
 import profileRouter from "./profile.js";
 import homeMetaRouter from "./homeMeta.js";
 import adminRouter from "./admin";
@@ -42,6 +43,7 @@ import { startSeason1GameRankCleanup } from "../bot/season1RankCleanup.js";
 import { repairWipeSchedule20260904 } from "../core/repairWipeSchedule20260904.js";
 import vorkenIntegrationRouter from "./vorkenIntegration.js";
 import { startSeason2Lifecycle } from "./season2Lifecycle.js";
+import { enhanceStatusHtml } from "../core/multiServerUi.js";
 
 startSeason2Lifecycle();
 startPaymentStatusNotifier();
@@ -65,6 +67,7 @@ router.use((req, res, next) => {
   res.send = ((body?: any) => {
     if (typeof body === "string" && /<html/i.test(body)) {
       const session = getCommunitySession(req);
+      body = enhanceStatusHtml(body, req);
       body = withSiteChrome(body, "status", { isAdmin:Boolean(session?.isAdmin), username:session?.username || "" });
     }
     return originalSend(body);
@@ -72,6 +75,7 @@ router.use((req, res, next) => {
   next();
 });
 
+router.use(statusMultiServerRouter);
 router.use(publicStatusRouter);
 router.use(profileRouter);
 router.use(homeMetaRouter);
