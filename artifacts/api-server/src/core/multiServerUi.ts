@@ -1,8 +1,6 @@
 import type { Request } from "express";
 import { trioReady, selectedServer } from "../routes/statusMultiServer.js";
 
-const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, "");
-
 function selectorHtml(current: "solo-duo" | "trio", basePath: string) {
   const ready = trioReady();
   const trioLabel = ready ? "TRIO" : "TRIO • EM BREVE";
@@ -13,7 +11,7 @@ function selectorHtml(current: "solo-duo" | "trio", basePath: string) {
 }
 
 const selectorCss = `<style id="gf-multi-server-ui">
-.gfServerPicker{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:0 auto 18px}.gfServerPicker a{min-width:150px;padding:10px 14px;border:1px solid #2d3439;background:#090d0f;color:#a6adb2;text-decoration:none;text-align:left;transition:.2s}.gfServerPicker a span{display:block;font-size:10px;font-weight:1000;letter-spacing:.08em}.gfServerPicker a small{display:block;margin-top:4px;font-size:7px;letter-spacing:.08em;color:#6f787e}.gfServerPicker a.active{border-color:#e79a0b;background:#151007;color:#fff;box-shadow:0 0 0 1px #f5a20b22}.gfServerPicker a.active small{color:#f5b53b}.gfServerPicker a.soon:not(.active){opacity:.76}.gfServerSoon{border:1px solid #6c4a16;background:linear-gradient(135deg,#181006,#0a0d0f);padding:16px 18px;margin:0 0 14px;color:#f5c266;font-size:10px;line-height:1.55}.gfServerSoon b{color:#fff}.gfServerContext{display:inline-flex;align-items:center;gap:7px;margin-left:8px;border:1px solid #4a3517;background:#151007;color:#f1b23d;padding:4px 7px;font-size:7px;font-weight:1000;letter-spacing:.08em;vertical-align:middle}@media(max-width:700px){.gfServerPicker{display:grid;grid-template-columns:1fr 1fr}.gfServerPicker a{min-width:0}}
+.gfServerPicker{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:0 auto 18px}.gfServerPicker a{min-width:150px;padding:10px 14px;border:1px solid #2d3439;background:#090d0f;color:#a6adb2;text-decoration:none;text-align:left;transition:.2s}.gfServerPicker a span{display:block;font-size:10px;font-weight:1000;letter-spacing:.08em}.gfServerPicker a small{display:block;margin-top:4px;font-size:7px;letter-spacing:.08em;color:#6f787e}.gfServerPicker a.active{border-color:#e79a0b;background:#151007;color:#fff;box-shadow:0 0 0 1px #f5a20b22}.gfServerPicker a.active small{color:#f5b53b}.gfServerPicker a.soon:not(.active){opacity:.76}.gfServerSoon{border:1px solid #6c4a16;background:linear-gradient(135deg,#181006,#0a0d0f);padding:16px 18px;margin:0 0 14px;color:#f5c266;font-size:10px;line-height:1.55}.gfServerSoon b{color:#fff}@media(max-width:700px){.gfServerPicker{display:grid;grid-template-columns:1fr 1fr}.gfServerPicker a{min-width:0}}
 </style>`;
 
 export function enhanceStatusHtml(html: string, req: Request): string {
@@ -26,9 +24,9 @@ export function enhanceStatusHtml(html: string, req: Request): string {
   if (current === "trio") {
     out = out.replace(/Guerra Fria 2X • Duo\./g, ready ? "Dados em tempo real do Guerra Fria 2X • Trio." : "Segundo servidor Guerra Fria 2X • Trio em preparação.");
     out = out.replace(/RUST 2X • DUO/g, "RUST 2X • TRIO");
+    out = out.replace("last=d;$('state').textContent=d.online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE';$('dot').style.background=d.online?'#38cf7a':'#ef4444';", "last=d;if(d.comingSoon){$('state').textContent='TRIO • EM BREVE';$('dot').style.background='#f5ad2f';$('players').textContent='—';$('slots').textContent='—';$('queue').textContent='—';$('sleepers').textContent='—';$('map').textContent='Em breve';$('uptime').textContent='—';$('lastWipe').textContent='—';$('nextWipe').textContent='—';$('updated').textContent='Aguardando configuração do Trio';population(d);return;}$('state').textContent=d.online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE';$('dot').style.background=d.online?'#38cf7a':'#ef4444';");
     if (!ready) {
       out = out.replace('<section class="population">', `<div class="gfServerSoon"><b>TRIO • EM BREVE</b><br>Assim que as variáveis TRIO_* forem preenchidas no Coolify, esta página passará a exibir automaticamente os dados reais do segundo servidor.</div><section class="population">`);
-      out = out.replace(/CARREGANDO STATUS/g, "SERVIDOR EM PREPARAÇÃO");
     }
   }
   return out;
