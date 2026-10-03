@@ -29,7 +29,6 @@ import seasonAdjustedReadRouter from "./seasonAdjustedRead.js";
 import seasonControlRouter from "./seasonControl.js";
 import seasonOfficialRegistrationRouter from "./seasonOfficialRegistration.js";
 import seasonOfficialEntryGateRouter from "./seasonOfficialEntryGate.js";
-import seasonProductionRegistrationRouter from "./seasonProductionRegistration.js";
 import season2RegistrationRouter from "./season2Registration.js";
 import donationsRouter from "./donations.js";
 import { seasonProfileRankDisplayFix } from "./seasonProfileRankDisplayFix.js";
@@ -60,8 +59,6 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use(vorkenIntegrationRouter);
 
-// A página de status é legada e gera o próprio HTML. Interceptamos somente
-// GET /status para aplicar o mesmo chrome/tema usado no restante do portal.
 router.use((req, res, next) => {
   if (req.method !== "GET" || req.path !== "/status") return next();
   const originalSend = res.send.bind(res);
@@ -87,7 +84,8 @@ router.use(seasonSteamRegistrationRepairRouter);
 router.use(seasonOfficialEntryGateRouter);
 router.use(seasonSteamSignupRouter);
 router.use(seasonProfileRankDisplayFix);
-router.use(seasonProductionRegistrationRouter);
+// O fluxo legado seasonProductionRegistration oferecia inscrição gratuita e
+// conflitava com as inscrições pagas oficiais. Ele não é mais montado.
 router.use(season2RegistrationRouter);
 router.use(seasonOfficialRegistrationRouter);
 router.use(seasonControlRouter);
