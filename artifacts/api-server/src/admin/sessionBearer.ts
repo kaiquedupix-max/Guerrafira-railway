@@ -4,6 +4,7 @@ import type { Request, Response } from "express";
 export type AdminSession = { userId: string; username: string; expiresAt: number };
 
 const ADMIN_SESSION_MS = 180 * 24 * 60 * 60 * 1000;
+const cookieDomain = () => process.env.SESSION_COOKIE_DOMAIN?.trim() || ".guerrafriarust.com.br";
 
 function secret(): string {
   return process.env.ADMIN_SESSION_SECRET?.trim() || process.env.DISCORD_CLIENT_SECRET?.trim() || "guerra-fria-session";
@@ -40,6 +41,7 @@ export function issueAdminSessionV3(res: Response, userId: string, username: str
     sameSite: "lax",
     path: "/",
     maxAge: ADMIN_SESSION_MS,
+    domain: cookieDomain(),
   });
   return token;
 }
@@ -53,5 +55,5 @@ export function getAdminSessionV3(req: Request): AdminSession | null {
 }
 
 export function revokeAdminSessionV3(res: Response): void {
-  res.clearCookie("gf_admin", { path: "/", secure: true, sameSite: "lax" });
+  res.clearCookie("gf_admin", { path: "/", secure: true, sameSite: "lax", domain: cookieDomain() });
 }
