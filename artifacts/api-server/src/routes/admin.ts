@@ -17,6 +17,7 @@ import seasonRoutes from "../admin/routesSeason.js";
 import seasonCurrentRegistrationsRoutes from "../admin/routesSeasonCurrentRegistrations.js";
 import seasonControlRoutes from "../admin/routesSeasonControl.js";
 import seasonOfficialRoutes from "../admin/routesSeasonOfficial.js";
+import seasonUnifiedRegistrationsRoutes from "../admin/routesSeasonRegistrationsUnified.js";
 import { requireFinanceAccess } from "../admin/financeGuard.js";
 
 const router = Router();
@@ -47,6 +48,7 @@ router.use("/vip", vipRoutes);
 router.use("/leaderboard", leaderboardRoutes);
 router.use("/season", seasonControlRoutes);
 router.use("/season", seasonOfficialRoutes);
+router.use("/season", seasonUnifiedRegistrationsRoutes);
 router.use("/season", seasonCurrentRegistrationsRoutes);
 router.use("/season", seasonRoutes);
 router.use("/finance", requireFinanceAccess);
