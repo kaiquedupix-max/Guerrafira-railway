@@ -31,6 +31,7 @@ import seasonControlRouter from "./seasonControl.js";
 import seasonOfficialRegistrationRouter from "./seasonOfficialRegistration.js";
 import seasonOfficialEntryGateRouter from "./seasonOfficialEntryGate.js";
 import season2RegistrationRouter from "./season2Registration.js";
+import season2FreeRegistrationRouter, { season2FreeRegistrationUi } from "./season2FreeRegistration.js";
 import donationsRouter from "./donations.js";
 import { seasonProfileRankDisplayFix } from "./seasonProfileRankDisplayFix.js";
 import seasonEmergencyEmailRepairRouter from "./seasonEmergencyEmailRepair.js";
@@ -88,8 +89,9 @@ router.use(seasonSteamRegistrationRepairRouter);
 router.use(seasonOfficialEntryGateRouter);
 router.use(seasonSteamSignupRouter);
 router.use(seasonProfileRankDisplayFix);
-// O fluxo legado seasonProductionRegistration oferecia inscrição gratuita e
-// conflitava com as inscrições pagas oficiais. Ele não é mais montado.
+// A inscrição gratuita da Season 2 é um fluxo oficial separado do legado da Season 1.
+router.use(season2FreeRegistrationUi);
+router.use(season2FreeRegistrationRouter);
 router.use(season2RegistrationRouter);
 router.use(seasonOfficialRegistrationRouter);
 router.use(seasonControlRouter);
