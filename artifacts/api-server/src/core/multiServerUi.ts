@@ -6,7 +6,7 @@ function selectorHtml(current: "solo-duo" | "trio", basePath: string) {
   const trioLabel = ready ? "TRIO" : "TRIO • EM BREVE";
   return `<div class="gfServerPicker" role="navigation" aria-label="Selecionar servidor">
     <a class="${current === "solo-duo" ? "active" : ""}" href="${basePath}?server=solo-duo"><span>SOLO/DUO</span><small>ATIVO</small></a>
-    <a class="${current === "trio" ? "active" : ""} ${ready ? "" : "soon"}" href="${basePath}?server=trio"><span>${trioLabel}</span><small>${ready ? "ATIVO" : "AGUARDANDO CONFIGURAÇÃO"}</small></a>
+    <a class="${current === "trio" ? "active" : ""} ${ready ? "" : "soon"}" href="${basePath}?server=trio"><span>${trioLabel}</span><small>${ready ? "ATIVO" : "LANÇAMENTO EM BREVE"}</small></a>
   </div>`;
 }
 
@@ -22,11 +22,11 @@ export function enhanceStatusHtml(html: string, req: Request): string {
   out = out.replace(/fetch\('\/api\/status\/data'/g, `fetch('/api/status/data?server=${current}'`)
            .replace(/fetch\('\/api\/status\/events'/g, `fetch('/api/status/events?server=${current}'`);
   if (current === "trio") {
-    out = out.replace(/Guerra Fria 2X • Duo\./g, ready ? "Dados em tempo real do Guerra Fria 2X • Trio." : "Segundo servidor Guerra Fria 2X • Trio em preparação.");
+    out = out.replace(/Guerra Fria 2X • Duo\./g, ready ? "Dados em tempo real do Guerra Fria 2X • Trio." : "O Guerra Fria Trio está chegando.");
     out = out.replace(/RUST 2X • DUO/g, "RUST 2X • TRIO");
-    out = out.replace("last=d;$('state').textContent=d.online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE';$('dot').style.background=d.online?'#38cf7a':'#ef4444';", "last=d;if(d.comingSoon){$('state').textContent='TRIO • EM BREVE';$('dot').style.background='#f5ad2f';$('players').textContent='—';$('slots').textContent='—';$('queue').textContent='—';$('sleepers').textContent='—';$('map').textContent='Em breve';$('uptime').textContent='—';$('lastWipe').textContent='—';$('nextWipe').textContent='—';$('updated').textContent='Aguardando configuração do Trio';population(d);return;}$('state').textContent=d.online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE';$('dot').style.background=d.online?'#38cf7a':'#ef4444';");
+    out = out.replace("last=d;$('state').textContent=d.online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE';$('dot').style.background=d.online?'#38cf7a':'#ef4444';", "last=d;if(d.comingSoon){$('state').textContent='TRIO • EM BREVE';$('dot').style.background='#f5ad2f';$('players').textContent='—';$('slots').textContent='—';$('queue').textContent='—';$('sleepers').textContent='—';$('map').textContent='Em breve';$('uptime').textContent='—';$('lastWipe').textContent='—';$('nextWipe').textContent='—';$('updated').textContent='Novidades do Trio em breve';population(d);return;}$('state').textContent=d.online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE';$('dot').style.background=d.online?'#38cf7a':'#ef4444';");
     if (!ready) {
-      out = out.replace('<section class="population">', `<div class="gfServerSoon"><b>TRIO • EM BREVE</b><br>Assim que as variáveis TRIO_* forem preenchidas no Coolify, esta página passará a exibir automaticamente os dados reais do segundo servidor.</div><section class="population">`);
+      out = out.replace('<section class="population">', `<div class="gfServerSoon"><b>TRIO • EM BREVE</b><br>O novo servidor Trio do Guerra Fria está chegando. Em breve você poderá acompanhar jogadores online, status, mapa e todas as informações do servidor por aqui.</div><section class="population">`);
     }
   }
   return out;
@@ -45,7 +45,7 @@ export function enhanceHomeHtml(html: string, req: Request): string {
     if (!ready) {
       out = out.replace(/<strong id="serverState">[^<]*<\/strong>/, '<strong class="green" id="serverState" style="color:#f5ad2f">EM BREVE</strong>');
       out = out.replace(/<b id="serverPlayers">[^<]*<\/b>/, '<b id="serverPlayers">— / —</b>');
-      out = out.replace('<section class="infoStrip">', `<section class="infoStrip"><div class="wrap"><div class="gfServerSoon"><b>TRIO • EM BREVE</b><br>O segundo servidor já está preparado no portal. Ao preencher as variáveis TRIO_* no Coolify, o status e os jogadores passam a aparecer automaticamente.</div></div>`);
+      out = out.replace('<section class="infoStrip">', `<section class="infoStrip"><div class="wrap"><div class="gfServerSoon"><b>TRIO • EM BREVE</b><br>O novo servidor Trio do Guerra Fria está chegando. Em breve você poderá jogar com seu trio e acompanhar todas as novidades, jogadores online e status do servidor por aqui.</div></div>`);
       out = out.replace("const online=Boolean(d.online);state.textContent=online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE'", "const online=Boolean(d.online);if(d.comingSoon){state.textContent='EM BREVE';state.style.color='#f5ad2f';head.textContent='Trio • Em breve';dot.style.background='#f5ad2f';document.getElementById('serverPlayers').textContent='— / —';return;}state.textContent=online?'SERVIDOR ONLINE':'SERVIDOR OFFLINE'");
     }
   }
