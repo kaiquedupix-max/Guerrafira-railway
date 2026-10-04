@@ -34,7 +34,6 @@ import * as banpreventivoCommand from "./commands/banpreventivo.js";
 import * as kickarCommand from "./commands/kickar.js";
 import * as muteCommand from "./commands/mute.js";
 import * as unmuteCommand from "./commands/unmute.js";
-import * as verificarCommand from "./commands/verificar.js";
 import * as desbanirCommand from "./commands/desbanir.js";
 import * as criarsorteioCommand from "./commands/criarsorteio.js";
 import * as listvipsCommand from "./commands/listvips.js";
@@ -56,8 +55,6 @@ import * as wipeCommand from "./commands/wipe.js";
 import * as testeftpCommand from "./commands/testeftp.js";
 import * as enviarjsonCommand from "./commands/enviarjson.js";
 import * as wipedatasCommand from "./commands/wipedatas.js";
-import * as telagemCommand from "./verificationIntegrationV2.js";
-import { handleVerificationCodeMessage } from "./verificationIntegrationV2.js";
 import { handleMapVote } from "./commands/criarmapa.js";
 import { parseKillEvent, parseGatherEvent, parseCraftEvent } from "./killTracker.js";
 import { setupTicketPanel, handleTicketCreate, handleTicketTypeSelect, handleTicketClose, handleVipPayPix, handleVipPayCard, handlePixCopy } from "./tickets.js";
@@ -74,7 +71,6 @@ commands.set(banpreventivoCommand.data.name, banpreventivoCommand);
 commands.set(kickarCommand.data.name, kickarCommand);
 commands.set(muteCommand.data.name, muteCommand);
 commands.set(unmuteCommand.data.name, unmuteCommand);
-commands.set(verificarCommand.data.name, verificarCommand);
 commands.set(desbanirCommand.data.name, desbanirCommand);
 commands.set(criarsorteioCommand.data.name, criarsorteioCommand);
 commands.set(listvipsCommand.data.name, listvipsCommand);
@@ -95,7 +91,6 @@ commands.set(wipeCommand.data.name, wipeCommand);
 commands.set(testeftpCommand.data.name, testeftpCommand);
 commands.set(enviarjsonCommand.data.name, enviarjsonCommand);
 commands.set(wipedatasCommand.data.name, wipedatasCommand);
-commands.set(telagemCommand.data.name, telagemCommand);
 
 export async function startBot(): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -126,7 +121,6 @@ export async function startBot(): Promise<void> {
     setDiscordClient(c);
     c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
     await registerSlashCommands(c);
-    telagemCommand.startVerificationIntegration(c);
     startSeason2DiscordRankSync(c);
     startSeason1DiscordRankCleanup(c);
     await ensureGameAnnouncementPlugin();
@@ -233,8 +227,6 @@ export async function startBot(): Promise<void> {
 
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return;
-
-    if (await handleVerificationCodeMessage(msg)) return;
 
     const chatChannelId = process.env.DISCORD_CHAT_CHANNEL_ID;
     if (!chatChannelId || msg.channelId !== chatChannelId) return;
