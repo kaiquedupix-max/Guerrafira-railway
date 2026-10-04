@@ -92,7 +92,6 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           value: [
             "`/listaplayer` — lista jogadores online/offline registrados pelo bot.",
             "↳ Possui busca por nome/SteamID e paginação.",
-            "`/verificar` — marca o jogador como verificado, concede cargo no Discord e grupo `vr` no Rust.",
             "🛡️ Jogadores verificados são ignorados pelos alertas do anti-cheat próprio.",
           ].join("\n"),
         },
