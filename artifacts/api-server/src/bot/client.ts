@@ -5,14 +5,12 @@ import { restoreActiveMapVotes, startMapWipeScheduler } from "./commands/criarma
 import { logger } from "../lib/logger.js";
 import { startDailyRestartScheduler } from "./autoRestart.js";
 import { setupTicketClaimSystem } from "./ticketClaim.js";
-import { startVerificationIntegration } from "./verificationIntegrationV2.js";
 
 let _client: Client | null = null;
 let notificationBridgeStarted = false;
 
 export function setDiscordClient(client: Client): void {
   _client = client;
-  startVerificationIntegration(client);
   if (!notificationBridgeStarted) {
     notificationBridgeStarted = true;
     startAdminNotificationBridge(client);
