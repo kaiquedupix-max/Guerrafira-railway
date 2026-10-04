@@ -1,8 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { EmbedBuilder } from "discord.js";
 import crypto from "node:crypto";
-import { banPlayer, executeRconRequired, verifyPlayer } from "../core/systemActions.js";
-import { discordClient } from "../bot/client.js";
+import { banPlayer, verifyPlayer } from "../core/systemActions.js";
 import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
@@ -60,198 +58,45 @@ function requireVorken(req: Request, res: Response, next: NextFunction): void {
 function safeEvidenceUrl(value: unknown): string {
   try {
     const url = new URL(String(value || "").trim());
-    return ["http:", "https:"].includes(url.protocol)
-      ? url.href
-      : "";
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
   } catch {
     return "";
   }
 }
 
-async function upsertVerificationStatus(args: {
-  channelId?: string;
-  analysisId: number;
-  title: string;
-  description: string;
-  color: number;
-  evidenceUrl?: string;
-}): Promise<void> {
-  const client = discordClient();
-  const channelId = safe(args.channelId, 32);
-
-  if (!client || !/^\d{16,20}$/.test(channelId)) return;
-
-  const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel?.isTextBased() || !channel.isSendable()) return;
-
-  const marker = `GF_VORKEN_STATUS_${args.analysisId}`;
-
-  const embed = new EmbedBuilder()
-    .setColor(args.color)
-    .setTitle(args.title)
-    .setDescription(args.description)
-    .setFooter({ text: marker })
-    .setTimestamp();
-
-  if (args.evidenceUrl) {
-    embed.addFields({
-      name: "Provas da verificação",
-      value: `[Abrir evidências no Vorken](${args.evidenceUrl})`
-    });
-  }
-
-  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
-  const existing = recent?.find(message =>
-    message.author.id === client.user?.id &&
-    message.embeds.some(item => item.footer?.text === marker)
-  );
-
-  if (existing) {
-    await existing.edit({ embeds: [embed] }).catch(() => {});
-  } else {
-    await channel.send({ embeds: [embed] }).catch(() => {});
-  }
-}
-
-async function notifyTicket(args: {
-  channelId?: string;
-  discordUserId?: string;
-  analysisId: number;
-  steamId: string;
-  decision: "approve" | "deny";
-  reason: string;
-  result: string;
-  evidenceUrl?: string;
-}): Promise<void> {
-  const evidenceUrl = safeEvidenceUrl(args.evidenceUrl);
-
-  await upsertVerificationStatus({
-    channelId: args.channelId,
-    analysisId: args.analysisId,
-    title:
-      args.decision === "deny"
-        ? "🔨 Verificação encerrada · jogador banido"
-        : "✅ Verificação encerrada · jogador liberado",
-    description:
-      args.decision === "deny"
-        ? `**SteamID:** \`${args.steamId}\`\n**Motivo:** ${args.reason}\n${args.result}`
-        : `**SteamID:** \`${args.steamId}\`\nA administração concluiu a análise e liberou o jogador.`,
-    color:
-      args.decision === "deny"
-        ? 0xe74c3c
-        : 0x22c55e,
-    evidenceUrl: evidenceUrl || undefined,
-  });
-}
-
-async function scheduleVerificationTicketDeletion(
-  channelId?: string,
-  delayMs = 20_000,
-): Promise<void> {
-  const id = safe(channelId, 32);
-  const client = discordClient();
-
-  if (!client || !/^\d{16,20}$/.test(id))
-    return;
-
-  const channel =
-    await client.channels.fetch(id).catch(() => null);
-
-  if (!channel || !channel.isTextBased())
-    return;
-
-  const topic =
-    "topic" in channel
-      ? String(channel.topic || "")
-      : "";
-
-  // Segurança: nunca apaga o canal público #verificacao nem outro canal
-  // arbitrário; apenas tickets privados criados pelo fluxo Vorken.
-  if (!topic.startsWith("Vorken •"))
-    return;
-
-  setTimeout(async () => {
-    try {
-      const latest =
-        await client.channels.fetch(id).catch(() => null);
-
-      if (
-        latest &&
-        "delete" in latest &&
-        typeof latest.delete === "function"
-      ) {
-        await latest.delete(
-          "Verificação Vorken concluída"
-        );
-      }
-    } catch (error) {
-      logger.warn(
-        { error, channelId: id },
-        "Failed to delete completed Vorken verification ticket",
-      );
-    }
-  }, Math.max(5_000, delayMs));
-}
-
+// Compatibilidade com o Vorken: o progresso e toda a experiência de ticket
+// agora pertencem ao próprio Vorken. O Guerra Fria apenas confirma o webhook.
 router.post("/integrations/vorken/progress", requireVorken, async (req, res) => {
   const analysisId = Number(req.body?.analysisId);
   const stage = safe(req.body?.stage, 40).toLowerCase();
-  const ticketChannelId = safe(req.body?.ticketChannelId, 32);
 
   if (!Number.isInteger(analysisId) || analysisId <= 0) {
     res.status(400).json({ error: "invalid_analysis_id" });
     return;
   }
 
-  const stages: Record<string, { title: string; description: string; color: number }> = {
-    started: {
-      title: "🟢 Verificação iniciada",
-      description: "O Vorken foi aberto no computador do jogador e a coleta técnica foi iniciada.",
-      color: 0x2bf0c9,
-    },
-    processing: {
-      title: "🔎 Verificação em andamento",
-      description: "A coleta do computador terminou. O relatório está sendo processado e classificado.",
-      color: 0x4aa3ff,
-    },
-    completed: {
-      title: "✅ Verificação finalizada",
-      description: "A análise terminou. **Aguarde a decisão da administração.**",
-      color: 0xf0b429,
-    },
-  };
-
-  const state = stages[stage];
-
-  if (!state) {
+  if (!["started", "processing", "completed"].includes(stage)) {
     res.status(400).json({ error: "invalid_progress_stage" });
     return;
   }
 
-  await upsertVerificationStatus({
-    channelId: ticketChannelId,
-    analysisId,
-    ...state,
-  });
-
   res.json({ ok: true });
 });
 
+// O webhook é a única ponte de decisão entre o Vorken e o Guerra Fria.
+// Não existe mais /telagem, validação de código ou gerenciamento de ticket aqui.
 router.post("/integrations/vorken/decision", requireVorken, async (req, res) => {
   const steamId = safe(req.body?.steamId, 32);
-  const playerName =
-    safeRustChat(req.body?.playerName, 80) ||
-    steamId;
+  const playerName = safeRustChat(req.body?.playerName, 80) || steamId;
   const decision = safe(req.body?.decision, 20).toLowerCase() as "approve" | "deny";
-  const reason =
-    safe(req.body?.reason, 500) ||
+  const reason = safe(req.body?.reason, 500) ||
     (decision === "deny"
       ? "Resultado da verificação reprovado."
       : "Resultado da verificação aprovado.");
   const discordUserId = safe(req.body?.discordUserId, 32);
-  const ticketChannelId = safe(req.body?.ticketChannelId, 32);
   const analysisId = Number(req.body?.analysisId);
   const evidenceUrl = safeEvidenceUrl(req.body?.evidenceUrl);
+  const automatic = req.body?.automatic === true;
 
   if (!STEAM_ID_RE.test(steamId)) {
     res.status(400).json({ error: "invalid_steam_id" });
@@ -273,80 +118,30 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
       if (!/^\d{16,20}$/.test(discordUserId)) {
         res.status(400).json({
           error: "invalid_discord_user_id",
-          message:
-            "A aprovação Vorken precisa do membro do Discord para aplicar o cargo Verificado.",
+          message: "A aprovação Vorken precisa do membro do Discord para aplicar o cargo Verificado.",
         });
         return;
       }
 
-      const automatic =
-        req.body?.automatic === true;
-
-      const verification =
-        await verifyPlayer({
-          steamId,
-          discordUserId,
-          actor: {
-            id: automatic
-              ? "VORKEN_AUTO"
-              : "VORKEN",
-            name: automatic
-              ? "Vorken Automático"
-              : "Painel Vorken",
-            source: "system",
-          },
-        });
-
-      // A mesma rotina do /verificar já adicionou o grupo no Rust,
-      // o cargo Verificado no Discord e registrou o log. Agora apenas
-      // encerramos a telagem ativa no plugin.
-      await executeRconRequired(
-        `verificacao liberar ${steamId}`
-      );
-
-      const result =
-        automatic
-          ? `${verification.playerName} foi verificado automaticamente no Rust e no Discord e liberado da telagem.`
-          : `${verification.playerName} foi verificado no Rust e no Discord e liberado da telagem.`;
+      const verification = await verifyPlayer({
+        steamId,
+        discordUserId,
+        actor: {
+          id: automatic ? "VORKEN_AUTO" : "VORKEN",
+          name: automatic ? "Vorken Automático" : "Vorken",
+          source: "system",
+        },
+      });
 
       res.json({
         ok: true,
-        result,
+        result: `${verification.playerName} foi verificado no Rust e no Discord.`,
         verified: true,
         automatic,
-        roleAssigned:
-          verification.roleAssigned,
+        roleAssigned: verification.roleAssigned,
       });
-
-      setImmediate(() => {
-        notifyTicket({
-          channelId: ticketChannelId,
-          discordUserId,
-          analysisId,
-          steamId,
-          decision,
-          reason,
-          result,
-        })
-          .then(() =>
-            scheduleVerificationTicketDeletion(
-              ticketChannelId
-            )
-          )
-          .catch((error) =>
-            logger.error(
-              { error, steamId, analysisId },
-              "Failed to finalize Vorken approve ticket asynchronously"
-            )
-          );
-      });
-
       return;
     }
-
-    // Libera a sessão antes do banimento para que o kick não seja tratado
-    // como evasão/desconexão pelo plugin de verificação.
-    await executeRconRequired(`verificacao liberar ${steamId}`);
 
     const punishment = await banPlayer({
       steamId,
@@ -354,53 +149,25 @@ router.post("/integrations/vorken/decision", requireVorken, async (req, res) => 
       reason,
       actor: {
         id: "VORKEN",
-        name: "Painel Vorken",
+        name: "Vorken",
         source: "system",
       },
       evidenceUrl: evidenceUrl || undefined,
     });
 
-    const result = `Banimento permanente aplicado a ${punishment.playerName}.`;
-
-    // Responde ao Vorken assim que o ban principal foi confirmado.
-    // Atualização do ticket e exclusão do canal não precisam bloquear o painel.
-    res.json({ ok: true, result });
-
-    setImmediate(() => {
-      notifyTicket({
-        channelId: ticketChannelId,
-        discordUserId,
-        analysisId,
-        steamId,
-        decision,
-        reason,
-        result,
-        evidenceUrl: evidenceUrl || undefined,
-      })
-        .then(() =>
-          scheduleVerificationTicketDeletion(
-            ticketChannelId
-          )
-        )
-        .catch((error) =>
-          logger.error(
-            { error, steamId, analysisId },
-            "Failed to finalize Vorken deny ticket asynchronously"
-          )
-        );
+    res.json({
+      ok: true,
+      result: `Banimento permanente aplicado a ${punishment.playerName || playerName}.`,
     });
   } catch (error) {
     logger.error(
-      { error, steamId, decision },
-      "Vorken verification decision failed",
+      { error, steamId, decision, analysisId },
+      "Vorken webhook decision failed",
     );
 
     res.status(500).json({
       error: "vorken_decision_failed",
-      message:
-        error instanceof Error
-          ? error.message
-          : "Falha ao aplicar a decisão.",
+      message: error instanceof Error ? error.message : "Falha ao aplicar a decisão.",
     });
   }
 });
