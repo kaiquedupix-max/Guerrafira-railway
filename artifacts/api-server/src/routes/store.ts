@@ -5,7 +5,7 @@ import { getCommunitySession } from "../admin/communitySession.js";
 import { createCardPreference, createPixPayment } from "../bot/mp.js";
 import { createStripeCheckout, isStripeConfigured, retrieveStripeCheckout } from "../bot/stripe.js";
 import { getLinkedSteamV2, saveLinkedSteamV2, STEAM_LOCKED_NOTICE } from "../bot/utils/linkedSteamV2.js";
-import { VIP_TIERS, type VipTier } from "../bot/vip.js";
+import { VIP_PRODUCTS, isVipProduct, type VipProduct } from "../bot/vipProducts.js";
 import { GUERRA_FRIA_SERVERS, parseServerId, type GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
 import { processStripeCheckoutSession } from "./stripePayment.js";
@@ -14,9 +14,9 @@ const router = Router();
 const BASE_URL = "https://www.guerrafriarust.com.br";
 const STEAM_OPENID = "https://steamcommunity.com/openid/login";
 
-function parseTier(value: unknown): VipTier | null { return value === "bronze" || value === "prata" || value === "ouro" ? value : null; }
+function parseTier(value: unknown): VipProduct | null { return isVipProduct(value) ? value : null; }
 
-async function validate(req: Request, res: Response): Promise<{ tier: VipTier; serverId: GuerraFriaServerId; steamId: string; email: string; discordUserId: string } | null> {
+async function validate(req: Request, res: Response): Promise<{ tier: VipProduct; serverId: GuerraFriaServerId; steamId: string; email: string; discordUserId: string } | null> {
   const session = getCommunitySession(req);
   if (!session) { res.status(401).json({ error: "Sua sessão expirou. Entre novamente com o Discord." }); return null; }
   const tier = parseTier(req.body?.tier);
@@ -89,7 +89,7 @@ router.get("/me", async (req, res) => {
 
 router.post("/pix", async (req, res) => {
   const input = await validate(req, res); if (!input) return;
-  const vip = VIP_TIERS[input.tier];
+  const vip = VIP_PRODUCTS[input.tier];
   const server = GUERRA_FRIA_SERVERS[input.serverId];
   try {
     const payment = await createPixPayment({ amount: vip.price, description: `${vip.name} Guerra Fria ${server.shortName} - 30 dias`, email: input.email, discordUserId: input.discordUserId, steamId: input.steamId, vipTier: input.tier });
@@ -101,7 +101,7 @@ router.post("/pix", async (req, res) => {
 
 router.post("/card", async (req, res) => {
   const input = await validate(req, res); if (!input) return;
-  const vip = VIP_TIERS[input.tier];
+  const vip = VIP_PRODUCTS[input.tier];
   const server = GUERRA_FRIA_SERVERS[input.serverId];
   try {
     const preference = await createCardPreference({ amount: vip.price, title: `${vip.name} Guerra Fria ${server.shortName} - 30 dias`, discordUserId: input.discordUserId, steamId: input.steamId, vipTier: input.tier });
@@ -114,7 +114,7 @@ router.post("/card", async (req, res) => {
 router.post("/stripe/card", async (req, res) => {
   const input = await validate(req, res); if (!input) return;
   if (!isStripeConfigured()) return res.status(503).json({ error: "Pagamento por Stripe ainda não está configurado." });
-  const vip = VIP_TIERS[input.tier];
+  const vip = VIP_PRODUCTS[input.tier];
   const server = GUERRA_FRIA_SERVERS[input.serverId];
   try {
     const [row] = await db.insert(paymentsTable).values({

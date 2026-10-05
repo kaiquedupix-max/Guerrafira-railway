@@ -1,7 +1,7 @@
 import { and, desc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db, paymentsTable, vipSubscriptionsTable } from "@workspace/db";
 import { discordClient } from "../bot/client.js";
-import { grantVip, type VipTier } from "../bot/vip.js";
+import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "../bot/vipProducts.js";
 import { retrieveStripeCheckout, type StripeCheckoutSession } from "../bot/stripe.js";
 import { logger } from "../lib/logger.js";
 
@@ -78,10 +78,10 @@ async function fulfillStripePayment(row: PaymentRow, session: StripeCheckoutSess
 
   const steamId = row.steamId ?? "";
   const discordUserId = row.discordUserId;
-  const vipTier = row.vipTier as VipTier;
+  const vipTier = row.vipTier as VipProduct;
   const client = discordClient();
 
-  if (!client || !steamId || !discordUserId || !["bronze", "prata", "ouro"].includes(vipTier)) {
+  if (!client || !steamId || !discordUserId || !isVipProduct(vipTier)) {
     await db.update(paymentsTable).set({ vipGrantedAt: null, updatedAt: new Date() })
       .where(eq(paymentsTable.id, row.id));
     logger.error({ rowId: row.id, client: Boolean(client), steamId, discordUserId, vipTier },
@@ -90,7 +90,8 @@ async function fulfillStripePayment(row: PaymentRow, session: StripeCheckoutSess
   }
 
   try {
-    await grantVip({
+    await grantVipProduct({
+      paymentId: row.id,
       discordUserId,
       steamId,
       tier: vipTier,
@@ -99,7 +100,7 @@ async function fulfillStripePayment(row: PaymentRow, session: StripeCheckoutSess
       client,
     });
     await notifyTicket(row,
-      `✅ **Pagamento Stripe aprovado!** Seu **VIP ${vipTier}** foi ativado.\n🎮 [Abrir perfil Steam](https://steamcommunity.com/profiles/${steamId}) • 📅 Válido por **30 dias**. Obrigado! 🙌`,
+      `✅ **Pagamento Stripe aprovado!** Seu **${VIP_PRODUCTS[vipTier].name}** foi ativado.\n🎮 [Abrir perfil Steam](https://steamcommunity.com/profiles/${steamId}) • 📅 Válido por **30 dias**. Obrigado! 🙌`,
     );
     logger.info({ sessionId: session.id, rowId: row.id, vipTier, steamId }, "Approved Stripe payment fulfilled");
     return true;

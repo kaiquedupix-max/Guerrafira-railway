@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import { db, paymentsTable, vipSubscriptionsTable } from "@workspace/db";
-import { grantVip, type VipTier } from "../bot/vip.js";
+import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "../bot/vipProducts.js";
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
 
@@ -154,10 +154,10 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
   const metadata = (payment.metadata ?? {}) as Record<string, unknown>;
   const steamId = row.steamId || String(metadata.steam_id ?? "");
   const discordUserId = row.discordUserId || String(metadata.discord_user_id ?? "");
-  const vipTier = (row.vipTier || String(metadata.vip_tier ?? "")) as VipTier;
+  const vipTier = (row.vipTier || String(metadata.vip_tier ?? "")) as VipProduct;
   const client = discordClient();
 
-  if (!client || !steamId || !discordUserId || !["bronze", "prata", "ouro"].includes(vipTier)) {
+  if (!client || !steamId || !discordUserId || !isVipProduct(vipTier)) {
     await db.update(paymentsTable).set({ vipGrantedAt: null, updatedAt: new Date() })
       .where(eq(paymentsTable.id, row.id));
     logger.error({ rowId: row.id, client: Boolean(client), steamId, discordUserId, vipTier },
@@ -166,7 +166,8 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
   }
 
   try {
-    await grantVip({
+    await grantVipProduct({
+      paymentId: row.id,
       discordUserId,
       steamId,
       tier: vipTier,
@@ -175,7 +176,7 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
       client,
     });
     await notifyTicket(row,
-      `✅ **Pagamento aprovado!** Seu **VIP ${vipTier}** foi ativado.\n🎮 [Abrir perfil Steam](https://steamcommunity.com/profiles/${steamId}) • 📅 Válido por **30 dias**. Obrigado! 🙌`,
+      `✅ **Pagamento aprovado!** Seu **${VIP_PRODUCTS[vipTier].name}** foi ativado.\n🎮 [Abrir perfil Steam](https://steamcommunity.com/profiles/${steamId}) • 📅 Válido por **30 dias**. Obrigado! 🙌`,
     );
     logger.info({ paymentId, rowId: row.id, vipTier, steamId }, "Approved payment fulfilled");
     return true;

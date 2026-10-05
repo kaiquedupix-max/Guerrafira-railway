@@ -79,7 +79,7 @@ export async function grantVip(opts: {
   steamId: string;
   tier: VipTier;
   durationDays: number;
-  source: "purchase" | "raffle";
+  source: "purchase" | "raffle" | `purchase:${number}`;
   client: Client;
 }): Promise<void> {
   const { discordUserId, steamId, tier, durationDays, source, client } = opts;

@@ -25,6 +25,7 @@ import { startLeaderboardChannel } from "./leaderboardChannel.js";
 import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raffle.js";
 import * as banirCommand from "./commands/banir.js";
 import * as kickarCommand from "./commands/kickar.js";
+import * as verificarCommand from "./commands/verificar.js";
 import * as desbanirCommand from "./commands/desbanir.js";
 import * as criarsorteioCommand from "./commands/criarsorteio.js";
 import * as listvipsCommand from "./commands/listvips.js";
@@ -62,6 +63,7 @@ interface BotCommand {
 const commands = new Collection<string, BotCommand>();
 commands.set(banirCommand.data.name, banirCommand);
 commands.set(kickarCommand.data.name, kickarCommand);
+commands.set(verificarCommand.data.name, verificarCommand);
 commands.set(desbanirCommand.data.name, desbanirCommand);
 commands.set(criarsorteioCommand.data.name, criarsorteioCommand);
 commands.set(listvipsCommand.data.name, listvipsCommand);
@@ -175,7 +177,7 @@ async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID;
   const guildId = process.env.DISCORD_GUILD_ID;
   if (!clientId) return;
-  const commandData = [banirCommand, kickarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand].map(c => c.data.toJSON());
+  const commandData = [banirCommand, kickarCommand, verificarCommand, desbanirCommand, criarsorteioCommand, listvipsCommand, meuvipCommand, ajudaCommand, ticketlogsCommand, darvipCommand, removervipCommand, removerboosterCommand, leaderboardCommand, listaplayerCommand, resetleaderboardCommand, criarmapaCommand].map(c => c.data.toJSON());
   try {
     if (guildId) {
       const guild = await client.guilds.fetch(guildId);

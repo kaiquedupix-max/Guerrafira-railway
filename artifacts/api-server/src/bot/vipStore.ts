@@ -7,7 +7,7 @@ import {
   type Client,
   type TextChannel,
 } from "discord.js";
-import { VIP_TIERS, type VipTier } from "./vip.js";
+import { VIP_PRODUCTS, type VipProduct } from "./vipProducts.js";
 import { handleVipStoreBuy } from "./vipStorePurchase.js";
 import { handleVipPayStripe } from "./ticketsLinked.js";
 import { startBoosterSystem } from "./booster.js";
@@ -22,7 +22,7 @@ let storeInteractionHandlerRegistered = false;
 let moderationStarted = false;
 
 const VIP_CARDS: Array<{
-  tier: VipTier;
+  tier: VipProduct;
   title: string;
   description: string;
   imageEnv: string;
@@ -59,6 +59,7 @@ const VIP_CARDS: Array<{
       "📦 **Importante:** os kits e benefícios podem ser ajustados ao longo do tempo para manter o equilíbrio do servidor.",
     imageEnv: "VIP_OURO_IMAGE_URL",
   },
+  { tier: "combo", title: "🎁 Pacote VIP Bronze + Prata + Ouro", description: "Os três VIPs para a mesma conta Steam por **30 dias**, em um único pacote de **R$ 70,00**.\n\nFinalize a compra na loja oficial com PIX ou cartão. A ativação é automática após a confirmação do pagamento.", imageEnv: "VIP_COMBO_IMAGE_URL" },
 ];
 
 function safeImageUrl(envKey: string): string | null {
@@ -76,7 +77,7 @@ function safeImageUrl(envKey: string): string | null {
 }
 
 function buildCard(card: (typeof VIP_CARDS)[number], includeImage = true) {
-  const vip = VIP_TIERS[card.tier];
+  const vip = VIP_PRODUCTS[card.tier];
   const embed = new EmbedBuilder()
     .setColor(vip.color)
     .setTitle(card.title)
