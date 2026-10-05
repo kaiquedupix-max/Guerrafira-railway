@@ -9,7 +9,7 @@ import { executeRconCommand } from "./utils/rcon.js";
 import { logger } from "../lib/logger.js";
 
 export const VIP_TIERS = {
-  bronze: { id: "bronze", name: "VIP Bronze", emoji: "🥉", price: parseFloat(process.env.VIP_BRONZE_PRICE ?? "29.90"), color: 0xcd7f32, benefits: [] as string[] },
+  bronze: { id: "bronze", name: "VIP Bronze", emoji: "🥉", price: 15, color: 0xcd7f32, benefits: [] as string[] },
   prata: { id: "prata", name: "VIP Prata", emoji: "🥈", price: parseFloat(process.env.VIP_PRATA_PRICE ?? "49.90"), color: 0xc0c0c0, benefits: [] as string[] },
   ouro: { id: "ouro", name: "VIP Ouro", emoji: "🥇", price: parseFloat(process.env.VIP_OURO_PRICE ?? "79.90"), color: 0xffd700, benefits: [] as string[] },
 } as const;

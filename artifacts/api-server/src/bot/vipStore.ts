@@ -1,4 +1,4 @@
-import { VIP_COMBO_IMAGE_URL, VIP_STORE_URL } from "./vipArtwork.js";
+import { VIP_COMBO_IMAGE_URL } from "./vipArtwork.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -60,7 +60,7 @@ const VIP_CARDS: Array<{
       "📦 **Importante:** os kits e benefícios podem ser ajustados ao longo do tempo para manter o equilíbrio do servidor.",
     imageEnv: "VIP_OURO_IMAGE_URL",
   },
-  { tier: "combo", title: "🎁 Pacote VIP Bronze + Prata + Ouro", description: "Os três VIPs para a mesma conta Steam por **30 dias**, em um único pacote de **R$ 70,00**.\n\nFinalize a compra na loja oficial com PIX ou cartão. A ativação é automática após a confirmação do pagamento.", imageEnv: "VIP_COMBO_IMAGE_URL" },
+  { tier: "combo", title: "🎁 Pacote VIP Bronze + Prata + Ouro", description: "Os três VIPs para a mesma conta Steam por **30 dias**, em um único pacote de **R$ 70,00**.\n\nFinalize a compra neste bot com PIX ou cartão. A ativação é automática após a confirmação do pagamento.", imageEnv: "VIP_COMBO_IMAGE_URL" },
 ];
 
 function safeImageUrl(envKey: string): string | null {
@@ -95,13 +95,11 @@ function buildCard(card: (typeof VIP_CARDS)[number], includeImage = true) {
     if (imageUrl) embed.setImage(imageUrl);
   }
 
-  const button = card.tier === "combo"
-    ? new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(VIP_STORE_URL).setLabel("Comprar pacote • R$ 70,00").setEmoji("🎁")
-    : new ButtonBuilder()
-      .setCustomId(`vip_store_buy_${card.tier}`)
-      .setLabel(`Comprar ${vip.name}`)
-      .setEmoji(vip.emoji)
-      .setStyle(card.tier === "ouro" ? ButtonStyle.Success : card.tier === "prata" ? ButtonStyle.Primary : ButtonStyle.Secondary);
+  const button = new ButtonBuilder()
+    .setCustomId(`vip_store_buy_${card.tier}`)
+    .setLabel(`Comprar ${vip.name}`)
+    .setEmoji(vip.emoji)
+    .setStyle(card.tier === "ouro" || card.tier === "combo" ? ButtonStyle.Success : card.tier === "prata" ? ButtonStyle.Primary : ButtonStyle.Secondary);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
 
   return { embed, row };

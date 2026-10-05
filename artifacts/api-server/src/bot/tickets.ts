@@ -19,7 +19,7 @@ import {
   type TextChannel,
 } from "discord.js";
 import { db, paymentsTable, ticketLogsTable } from "@workspace/db";
-import { VIP_TIERS, type VipTier } from "./vip.js";
+import { VIP_PRODUCTS, type VipProduct } from "./vipProducts.js";
 import { createPixPayment, createCardPreference } from "./mp.js";
 import { generateQrCodeBuffer } from "./utils/qrcode.js";
 import { logger } from "../lib/logger.js";
@@ -29,7 +29,7 @@ const pixCodeStore = new Map<string, string>();
 
 // ─── In-memory purchase context ───────────────────────────────────────────────
 interface PendingPurchase {
-  tier:          VipTier;
+  tier:          VipProduct;
   steamId:       string;
   email:         string;
   discordUserId: string;
@@ -192,9 +192,9 @@ async function sendVipCart(channel: TextChannel, userId: string): Promise<void> 
     `Olá, <@${userId}>! 👋\n\n` +
     `Selecione abaixo o plano de VIP que deseja adquirir.\n` +
     `Todos os planos têm duração de **30 dias** e são renováveis.\n\n` +
-    `🥉 **VIP Bronze** — R$ ${VIP_TIERS.bronze.price.toFixed(2)}\n` +
-    `🥈 **VIP Prata** — R$ ${VIP_TIERS.prata.price.toFixed(2)}\n` +
-    `🥇 **VIP Ouro** — R$ ${VIP_TIERS.ouro.price.toFixed(2)}\n`;
+    `🥉 **VIP Bronze** — R$ ${VIP_PRODUCTS.bronze.price.toFixed(2)}\n` +
+    `🥈 **VIP Prata** — R$ ${VIP_PRODUCTS.prata.price.toFixed(2)}\n` +
+    `🥇 **VIP Ouro** — R$ ${VIP_PRODUCTS.ouro.price.toFixed(2)}\n`;
 
   if (testPrice) {
     desc += `\n🧪 **VIP Prata (Teste Real)** — R$ ${testPrice.toFixed(2)} *(pagamento real — apenas para testes)*\n`;
@@ -228,7 +228,7 @@ export async function handleVipSelect(interaction: ButtonInteraction): Promise<v
   const rawTier = interaction.customId.replace("vip_select_", "");
 
   // Pacote teste: usa prata como base com preço customizado
-  let tier: VipTier = "prata";
+  let tier: VipProduct = "prata";
   let modalTitle: string;
   let modalId: string;
 
@@ -237,16 +237,16 @@ export async function handleVipSelect(interaction: ButtonInteraction): Promise<v
     modalTitle = `🧪 VIP Prata (Teste) — R$ ${testPrice.toFixed(2)}`;
     modalId    = "vip_modal_teste";
   } else {
-    tier       = rawTier as VipTier;
-    const vip  = VIP_TIERS[tier];
+    tier       = rawTier as VipProduct;
+    const vip  = VIP_PRODUCTS[tier];
     if (!vip) return;
-    modalTitle = `${vip.emoji} ${vip.name} — R$ ${vip.price.toFixed(2)}`;
+    modalTitle = tier === "combo" ? `🎁 Pacote 3 VIPs — R$ ${vip.price.toFixed(2)}` : `${vip.emoji} ${vip.name} — R$ ${vip.price.toFixed(2)}`;
     modalId    = `vip_modal_${tier}`;
   }
 
   const modal = new ModalBuilder()
     .setCustomId(modalId)
-    .setTitle(modalTitle)
+    .setTitle(modalTitle.slice(0, 45))
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -275,8 +275,8 @@ export async function handleVipSelect(interaction: ButtonInteraction): Promise<v
 export async function handleVipModal(interaction: ModalSubmitInteraction): Promise<void> {
   const rawId   = interaction.customId.replace("vip_modal_", "");
   const isTeste = rawId === "teste";
-  const tier    = (isTeste ? "prata" : rawId) as VipTier;
-  const vip     = VIP_TIERS[tier];
+  const tier    = (isTeste ? "prata" : rawId) as VipProduct;
+  const vip     = VIP_PRODUCTS[tier];
   if (!vip) return;
 
   const steamId = interaction.fields.getTextInputValue("steam_id").trim();
@@ -337,7 +337,7 @@ export async function handleVipPayPix(interaction: ButtonInteraction): Promise<v
     return;
   }
 
-  const vip    = VIP_TIERS[ctx.tier];
+  const vip    = VIP_PRODUCTS[ctx.tier];
   const amount = ctx.customPrice ?? vip.price;
   const label  = ctx.customLabel ?? `${vip.name} 30 dias`;
 
@@ -394,7 +394,7 @@ export async function handleVipPayCard(interaction: ButtonInteraction): Promise<
     return;
   }
 
-  const vip    = VIP_TIERS[ctx.tier];
+  const vip    = VIP_PRODUCTS[ctx.tier];
   const amount = ctx.customPrice ?? vip.price;
   const label  = ctx.customLabel ?? `${vip.name} 30 dias`;
 

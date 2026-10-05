@@ -12,7 +12,7 @@ import {
 } from "discord.js";
 import { eq } from "drizzle-orm";
 import { db, paymentsTable } from "@workspace/db";
-import { VIP_TIERS, type VipTier } from "./vip.js";
+import { VIP_PRODUCTS, type VipProduct } from "./vipProducts.js";
 import { createPixPayment, createCardPreference } from "./mp.js";
 import { createStripeCheckout, isStripeConfigured } from "./stripe.js";
 import { generateQrCodeBuffer } from "./utils/qrcode.js";
@@ -26,7 +26,7 @@ export const handleTicketTypeSelect = legacy.handleTicketTypeSelect;
 export const handleTicketClose = legacy.handleTicketClose;
 
 interface PendingPurchase {
-  tier: VipTier;
+  tier: VipProduct;
   steamId: string;
   email: string;
   discordUserId: string;
@@ -41,17 +41,17 @@ function tierInfo(rawTier: string) {
   if (rawTier === "teste") {
     const price = parseFloat(process.env.VIP_PRATA_TEST_PRICE ?? "1.00");
     return {
-      tier: "prata" as VipTier,
+      tier: "prata" as VipProduct,
       title: `🧪 VIP Prata (Teste) — R$ ${price.toFixed(2)}`,
       modalId: "vip_modal_teste",
       customPrice: price,
       customLabel: `🧪 VIP Prata (Teste) — R$ ${price.toFixed(2)}`,
     };
   }
-  const tier = rawTier as VipTier;
-  const vip = VIP_TIERS[tier];
+  const tier = rawTier as VipProduct;
+  const vip = VIP_PRODUCTS[tier];
   if (!vip) return null;
-  return { tier, title: `${vip.emoji} ${vip.name} — R$ ${vip.price.toFixed(2)}`, modalId: `vip_modal_${tier}` };
+  return { tier, title: tier === "combo" ? `🎁 Pacote 3 VIPs — R$ ${vip.price.toFixed(2)}` : `${vip.emoji} ${vip.name} — R$ ${vip.price.toFixed(2)}`, modalId: `vip_modal_${tier}` };
 }
 
 export async function handleVipSelect(interaction: ButtonInteraction): Promise<void> {
@@ -59,7 +59,7 @@ export async function handleVipSelect(interaction: ButtonInteraction): Promise<v
   if (!info) return;
 
   const linked = await getLinkedSteamV2(interaction.user.id);
-  const modal = new ModalBuilder().setCustomId(info.modalId).setTitle(info.title);
+  const modal = new ModalBuilder().setCustomId(info.modalId).setTitle(info.title.slice(0, 45));
 
   if (!linked) {
     modal.addComponents(
@@ -116,7 +116,7 @@ export async function handleVipModal(interaction: ModalSubmitInteraction): Promi
   }
 
   const email = interaction.fields.getTextInputValue("email").trim();
-  const vip = VIP_TIERS[info.tier];
+  const vip = VIP_PRODUCTS[info.tier];
   const channelId = interaction.channelId;
   if (!channelId) return;
 
@@ -159,7 +159,7 @@ export async function handleVipPayPix(interaction: ButtonInteraction): Promise<v
   const ctx = channelId ? pending.get(channelId) : undefined;
   if (!ctx) { await interaction.editReply("❌ Sessão expirada. Clique no plano VIP novamente."); return; }
 
-  const vip = VIP_TIERS[ctx.tier];
+  const vip = VIP_PRODUCTS[ctx.tier];
   const amount = ctx.customPrice ?? vip.price;
   const label = ctx.customLabel ?? `${vip.name} 30 dias`;
   const pix = await createPixPayment({ amount, description: `${label} — Guerra Fria`, email: ctx.email, discordUserId: ctx.discordUserId, steamId: ctx.steamId, vipTier: ctx.tier });
@@ -185,7 +185,7 @@ export async function handleVipPayCard(interaction: ButtonInteraction): Promise<
   const ctx = channelId ? pending.get(channelId) : undefined;
   if (!ctx) { await interaction.editReply("❌ Sessão expirada. Clique no plano VIP novamente."); return; }
 
-  const vip = VIP_TIERS[ctx.tier];
+  const vip = VIP_PRODUCTS[ctx.tier];
   const amount = ctx.customPrice ?? vip.price;
   const label = ctx.customLabel ?? `${vip.name} 30 dias`;
   const pref = await createCardPreference({ amount, title: `${label} — Guerra Fria`, discordUserId: ctx.discordUserId, steamId: ctx.steamId, vipTier: ctx.tier });
@@ -208,7 +208,7 @@ export async function handleVipPayStripe(interaction: ButtonInteraction): Promis
   if (!ctx) { await interaction.editReply("❌ Sessão expirada. Clique no plano VIP novamente."); return; }
   if (!isStripeConfigured()) { await interaction.editReply("❌ Stripe ainda não está configurado no Railway. Use PIX ou Mercado Pago."); return; }
 
-  const vip = VIP_TIERS[ctx.tier];
+  const vip = VIP_PRODUCTS[ctx.tier];
   const amount = ctx.customPrice ?? vip.price;
   const label = ctx.customLabel ?? `${vip.name} 30 dias`;
 
