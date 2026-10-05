@@ -1,9 +1,10 @@
+import { VIP_COMBO_IMAGE_URL } from "../bot/vipArtwork.js";
 import { VIP_PRODUCTS } from "../bot/vipProducts.js";
 import { GUERRA_FRIA_SERVERS } from "../core/servers.js";
 
 function esc(value: string): string { return String(value).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]||c)); }
 function money(value:number):string{return value.toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
-function imageFor(tier:"bronze"|"prata"|"ouro"|"combo"):string{return process.env[`VIP_${tier.toUpperCase()}_IMAGE_URL`]?.trim()||""}
+function imageFor(tier:"bronze"|"prata"|"ouro"|"combo"):string{return process.env[`VIP_${tier.toUpperCase()}_IMAGE_URL`]?.trim()||(tier==="combo"?VIP_COMBO_IMAGE_URL:"")}
 
 export function renderStorePage(username:string):string{
   const cards=(["bronze","prata","ouro","combo"] as const).map(tier=>{const vip=VIP_PRODUCTS[tier],image=imageFor(tier);return `<article class="vipCard ${tier}"><div class="accent"></div><div class="visual">${image?`<img src="${esc(image)}" alt="${vip.name}">`:`<div class="fallback"><span>${vip.emoji}</span><b>${vip.name}</b></div>`}</div><div class="vipBody"><div class="head"><h2>${vip.emoji} ${vip.name}</h2><span>30 DIAS</span></div><div class="price">${money(vip.price)}</div><p>${tier==="combo"?"Inclui VIP Bronze, VIP Prata e VIP Ouro por 30 dias para a mesma conta Steam. ":""}Ativação automática no servidor selecionado e cargo no Discord após a confirmação.</p><div class="benefits"><b>✓ Prioridade e benefícios VIP</b><b>✓ PIX + cartão Mercado Pago ou Stripe</b><b>✓ Steam autenticada oficialmente</b></div><button class="buy" data-tier="${tier}" data-name="${vip.name}" data-price="${vip.price}">COMPRAR AGORA →</button></div></article>`}).join("");

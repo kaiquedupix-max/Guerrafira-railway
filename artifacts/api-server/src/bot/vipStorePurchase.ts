@@ -1,3 +1,4 @@
+import { VIP_STORE_URL } from "./vipArtwork.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -25,6 +26,17 @@ function parsePurchaseId(customId: string): { tier: VipTier; serverId?: GuerraFr
 }
 
 export async function handleVipStoreBuy(interaction: ButtonInteraction): Promise<void> {
+  // Acknowledge old combo buttons immediately while existing panels refresh.
+  if (["vip_store_buy_combo", "vip_store_buy_combo_solo-duo", "vip_store_buy_combo_trio"].includes(interaction.customId)) {
+    await interaction.reply({
+      ephemeral: true,
+      content: "🎁 O pacote VIP Bronze + Prata + Ouro custa R$ 70,00 por 30 dias. Finalize sua compra na loja oficial:",
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(VIP_STORE_URL).setLabel("Comprar pacote • R$ 70,00"),
+      )],
+    });
+    return;
+  }
   const parsed = parsePurchaseId(interaction.customId);
   if (!parsed) return;
 

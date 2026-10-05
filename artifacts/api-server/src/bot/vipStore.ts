@@ -1,3 +1,4 @@
+import { VIP_COMBO_IMAGE_URL, VIP_STORE_URL } from "./vipArtwork.js";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -63,7 +64,7 @@ const VIP_CARDS: Array<{
 ];
 
 function safeImageUrl(envKey: string): string | null {
-  const value = process.env[envKey]?.trim();
+  const value = process.env[envKey]?.trim() || (envKey === "VIP_COMBO_IMAGE_URL" ? VIP_COMBO_IMAGE_URL : "");
   if (!value) return null;
 
   try {
@@ -94,13 +95,14 @@ function buildCard(card: (typeof VIP_CARDS)[number], includeImage = true) {
     if (imageUrl) embed.setImage(imageUrl);
   }
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
+  const button = card.tier === "combo"
+    ? new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(VIP_STORE_URL).setLabel("Comprar pacote • R$ 70,00").setEmoji("🎁")
+    : new ButtonBuilder()
       .setCustomId(`vip_store_buy_${card.tier}`)
       .setLabel(`Comprar ${vip.name}`)
       .setEmoji(vip.emoji)
-      .setStyle(card.tier === "ouro" ? ButtonStyle.Success : card.tier === "prata" ? ButtonStyle.Primary : ButtonStyle.Secondary),
-  );
+      .setStyle(card.tier === "ouro" ? ButtonStyle.Success : card.tier === "prata" ? ButtonStyle.Primary : ButtonStyle.Secondary);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
 
   return { embed, row };
 }
