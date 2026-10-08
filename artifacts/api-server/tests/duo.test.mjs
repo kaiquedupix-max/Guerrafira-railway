@@ -68,6 +68,7 @@ async function bundle(file, mocks = true) {
 await query(`CREATE TABLE payments(id INTEGER PRIMARY KEY,discord_user_id TEXT,steam_id TEXT,status TEXT,
   vip_tier TEXT, vip_granted_at TIMESTAMPTZ,updated_at TIMESTAMPTZ,created_at TIMESTAMPTZ DEFAULT now());`);
 await query('CREATE TABLE vip_subscriptions(steam_id TEXT,vip_tier TEXT,source VARCHAR(16));');
+await query('CREATE TABLE booster_links(discord_user_id TEXT PRIMARY KEY,steam_id TEXT);');
 const service = await bundle('src/routes/duoService.ts');
 const policy = await bundle('src/routes/duoPolicy.ts',false);
 after(async()=>{delete globalThis.__duoTest;await database.close();});
@@ -127,6 +128,7 @@ test('official Steam state is signed, user-bound and recorded separately',async(
   assert.equal(auth.readSteamState(s,'duoA').duo,true);assert.equal(auth.readSteamState(s,'wrong'),null);
   assert.equal(auth.readSteamState(s+'x','duoA'),null);
   assert.equal(await auth.officialSteam('duoA','76561190000000002'),false);
+  await query("INSERT INTO booster_links(discord_user_id,steam_id) VALUES('duoA','76561190000000002')");
   await auth.recordOfficialSteam('duoA','76561190000000002');
   assert.equal(await auth.officialSteam('duoA','76561190000000002'),true);
 });

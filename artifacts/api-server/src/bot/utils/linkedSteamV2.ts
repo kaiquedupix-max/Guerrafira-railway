@@ -1,37 +1,39 @@
-import { db, boosterLinksTable, paymentsTable, vipSubscriptionsTable } from "@workspace/db";
-import { desc, eq } from "drizzle-orm";
-
-function isSteamId(value: unknown): value is string {
-  return typeof value === "string" && /^\d{17}$/.test(value);
-}
+import { db, boosterLinksTable } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
 
 export async function getLinkedSteamV2(discordUserId: string) {
   const [direct] = await db.select().from(boosterLinksTable)
     .where(eq(boosterLinksTable.discordUserId, discordUserId)).limit(1);
-  if (direct) return direct;
+  // Payment/VIP history describes past deliveries, never the current login identity.
+  // Reading the site must not recreate a link explicitly removed by an administrator.
+  return direct ?? null;
+}
 
-  const [payment] = await db.select({ steamId: paymentsTable.steamId }).from(paymentsTable)
-    .where(eq(paymentsTable.discordUserId, discordUserId)).orderBy(desc(paymentsTable.createdAt)).limit(1);
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+async function clearOfficialSteam(tx: Transaction, discordUserId: string) {
+  await tx.execute(sql`CREATE TABLE IF NOT EXISTS store_steam_auth (
+    discord_id TEXT PRIMARY KEY, steam_id TEXT NOT NULL, verified_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await tx.execute(sql`DELETE FROM store_steam_auth WHERE discord_id=${discordUserId}`);
+}
 
-  let steamId = isSteamId(payment?.steamId) ? payment.steamId : null;
-  if (!steamId) {
-    const [vip] = await db.select({ steamId: vipSubscriptionsTable.steamId }).from(vipSubscriptionsTable)
-      .where(eq(vipSubscriptionsTable.discordUserId, discordUserId)).orderBy(desc(vipSubscriptionsTable.createdAt)).limit(1);
-    steamId = isSteamId(vip?.steamId) ? vip.steamId : null;
-  }
-  if (!steamId) return null;
+export async function unlinkSteamV2(discordUserId: string) {
+  return db.transaction(async tx => {
+    await clearOfficialSteam(tx, discordUserId);
+    const [removed] = await tx.delete(boosterLinksTable)
+      .where(eq(boosterLinksTable.discordUserId, discordUserId)).returning();
+    return removed ?? null;
+  });
+}
 
-  const [owner] = await db.select().from(boosterLinksTable)
-    .where(eq(boosterLinksTable.steamId, steamId)).limit(1);
-  if (owner && owner.discordUserId !== discordUserId) return null;
-
-  await db.insert(boosterLinksTable)
-    .values({ discordUserId, steamId, active: false, updatedAt: new Date() })
-    .onConflictDoNothing();
-
-  const [linked] = await db.select().from(boosterLinksTable)
-    .where(eq(boosterLinksTable.discordUserId, discordUserId)).limit(1);
-  return linked ?? null;
+export async function replaceLinkedSteamV2(discordUserId: string, steamId: string) {
+  return db.transaction(async tx => {
+    await clearOfficialSteam(tx, discordUserId);
+    const [row] = await tx.insert(boosterLinksTable)
+      .values({discordUserId,steamId,active:false,updatedAt:new Date()})
+      .onConflictDoUpdate({target:boosterLinksTable.discordUserId,set:{steamId,updatedAt:new Date()}}).returning();
+    return row;
+  });
 }
 
 export async function saveLinkedSteamV2(discordUserId: string, steamId: string) {

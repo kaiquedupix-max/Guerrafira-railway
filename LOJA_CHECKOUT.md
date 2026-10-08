@@ -5,8 +5,8 @@ inclui Bronze, Prata e Ouro para o comprador e para um duo. A arte está em
 `artifacts/api-server/assets/vip-super-combo-duo.png` e é servida por
 `/api/store/art/duo`. O build copia a arte para `dist/assets`; preserve essa
 pasta ao publicar o artefato de produção.
-Os embeds do Discord usam uma versão horizontal em
-`vip-super-combo-duo-banner.png`, servida por `/api/store/art/duo-banner`.
+Os embeds do Discord usam uma arte geral da loja em `vip-store-banner.png`,
+servida por `/api/store/art/store-banner`, com “Loja VIP — Acesse a loja”.
 
 ## Pagamentos dentro do site
 
@@ -67,14 +67,30 @@ contas distintas para conferir comprador/duo antes de liberar pagamentos reais.
 
 ## Verificação
 
-`pnpm --filter @workspace/api-server test:store`: 14 testes cobrem resgate único,
+`pnpm --filter @workspace/api-server test:store`: 16 testes cobrem resgate único,
 expiração, estorno, entrega parcial, validação Steam, snapshot da tentativa,
 repetição após falha de rede, contratos dos provedores, montagem dos SDKs sem
 navegar para fora e migração idempotente do Discord com mais de 100 cards.
+Também reproduzem a desvinculação Steam com histórico de pagamentos/VIPs,
+confirmando ausência de recriação do vínculo, remoção da confirmação oficial,
+rollback atômico e atualização de um checkout já aberto.
 SDKs/pagamentos/Discord são simulados nos testes; não houve cobrança real.
 O build completo do backend passou ao normalizar LF para o hook de wipe existente
 (o checkout Windows usa CRLF). Não alteramos as regras de wipe. A checagem geral
 de tipos mantém os 39 erros preexistentes; as bibliotecas passam.
+
+## Desvinculação Steam
+
+O vínculo atual tem uma única fonte: `booster_links`. Consultar o site não
+importa identidades de pagamentos nem de VIPs antigos. `/steam desvincular`
+e o painel administrativo removem o vínculo e `store_steam_auth` na mesma
+transação. Trocas administrativas invalidam a confirmação oficial anterior.
+O histórico e os VIPs já entregues são preservados.
+
+Uma loja já aberta atualiza a conta a cada 10 segundos, remove o SteamID antigo
+e bloqueia novos pagamentos enquanto a Steam estiver desconectada. Se a versão
+antiga já recriou um vínculo após o comando, execute `/steam desvincular`
+novamente após atualizar o bot; a nova versão não o recriará.
 
 Documentação dos provedores:
 - https://docs.stripe.com/payments/checkout/custom-success-page?payment-ui=embedded-form

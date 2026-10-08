@@ -1,3 +1,4 @@
+import { unlinkSteamV2, replaceLinkedSteamV2 } from "../utils/linkedSteamV2.js";
 import {
   SlashCommandBuilder,
   PermissionFlagsBits,
@@ -119,19 +120,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const oldSteamId = current?.steamId ?? null;
     const boosterActive = current?.active ?? false;
 
-    if (current) {
-      await db
-        .update(boosterLinksTable)
-        .set({ steamId: newSteamId, updatedAt: new Date() })
-        .where(eq(boosterLinksTable.discordUserId, user.id));
-    } else {
-      await db.insert(boosterLinksTable).values({
-        discordUserId: user.id,
-        steamId: newSteamId,
-        active: false,
-        updatedAt: new Date(),
-      });
-    }
+    await replaceLinkedSteamV2(user.id, newSteamId);
 
     if (boosterActive && oldSteamId) {
       await executeRconCommand(`c.usergroup remove ${oldSteamId} bs`).catch((err) =>
@@ -166,32 +155,31 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === "desvincular") {
     const reason = interaction.options.getString("motivo")?.trim() || "Não informado";
 
-    if (!current) {
-      await interaction.editReply(`ℹ️ <@${user.id}> não possui Steam vinculada.`);
+    const removed = await unlinkSteamV2(user.id);
+    if (!removed) {
+      await interaction.editReply(`ℹ️ <@${user.id}> não possui Steam vinculada. A confirmação Steam do site também foi removida.`);
       return;
     }
 
-    if (current.active) {
-      await executeRconCommand(`c.usergroup remove ${current.steamId} bs`).catch((err) =>
-        logger.error({ err, steamId: current.steamId, userId: user.id }, "Failed to remove Booster group before unlink"),
+    if (removed.active) {
+      await executeRconCommand(`c.usergroup remove ${removed.steamId} bs`).catch((err) =>
+        logger.error({ err, steamId: removed.steamId, userId: user.id }, "Failed to remove Booster group after Steam unlink"),
       );
     }
-
-    await db.delete(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, user.id));
 
     logger.info({
       admin: interaction.user.tag,
       userId: user.id,
-      steamId: current.steamId,
+      steamId: removed.steamId,
       reason,
     }, "Steam link removed by admin");
 
     await interaction.editReply(
       `✅ **Steam desvinculada pela administração.**\n\n` +
       `👤 Usuário: <@${user.id}>\n` +
-      `🎮 Steam removida: \`${current.steamId}\`\n` +
+      `🎮 Steam removida: \`${removed.steamId}\`\n` +
       `📝 Motivo: ${reason}\n\n` +
-      `Na próxima ação que exigir SteamID, o usuário poderá vincular uma nova Steam.`,
+      `Vínculo removido do Discord e do site. O usuário poderá entrar com Steam novamente para vincular outra conta.`,
     );
   }
 }

@@ -1,3 +1,4 @@
+import { replaceLinkedSteamV2 } from "../bot/utils/linkedSteamV2.js";
 import { Router } from "express";
 import { db, boosterLinksTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -21,8 +22,7 @@ router.post("/change", async (req, res) => {
     await executeRconRequired(`c.usergroup remove ${current.steamId} bs`);
     try { await executeRconRequired(`c.usergroup add ${steamId} bs`); } catch (error) { await executeRconRequired(`c.usergroup add ${current.steamId} bs`).catch(() => {}); throw error; }
   }
-  if (current) await db.update(boosterLinksTable).set({ steamId, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
-  else await db.insert(boosterLinksTable).values({ discordUserId, steamId, active: false, updatedAt: new Date() });
+  await replaceLinkedSteamV2(discordUserId, steamId);
   res.json({ ok: true });
 });
 

@@ -21,7 +21,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const router = Router();
-for (const [slug, filename] of [["duo", "vip-super-combo-duo.png"], ["duo-banner", "vip-super-combo-duo-banner.png"]] as const) router.get(`/art/${slug}`, (_req,res) => {
+for (const [slug, filename] of [["duo", "vip-super-combo-duo.png"], ["duo-banner", "vip-super-combo-duo-banner.png"], ["store-banner", "vip-store-banner.png"]] as const) router.get(`/art/${slug}`, (_req,res) => {
   res.setHeader("Cache-Control","public, max-age=86400");
   const built=fileURLToPath(new URL(`./assets/${filename}`,import.meta.url));
   const local=resolve(process.cwd(),"assets",filename);

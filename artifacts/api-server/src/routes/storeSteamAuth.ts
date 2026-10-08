@@ -9,11 +9,14 @@ function schema() {
 }
 export async function officialSteam(discord: string, steam: string): Promise<boolean> {
   await schema();
-  return Boolean((await pool.query("SELECT 1 FROM store_steam_auth WHERE discord_id=$1 AND steam_id=$2", [discord, steam])).rowCount);
+  return Boolean((await pool.query(`SELECT 1 FROM store_steam_auth a
+    JOIN booster_links b ON b.discord_user_id=a.discord_id AND b.steam_id=a.steam_id
+    WHERE a.discord_id=$1 AND a.steam_id=$2`, [discord, steam])).rowCount);
 }
 export async function recordOfficialSteam(discord: string, steam: string): Promise<void> {
   await schema();
-  await pool.query(`INSERT INTO store_steam_auth(discord_id,steam_id) VALUES($1,$2)
+  await pool.query(`INSERT INTO store_steam_auth(discord_id,steam_id)
+    SELECT $1,$2 WHERE EXISTS (SELECT 1 FROM booster_links WHERE discord_user_id=$1 AND steam_id=$2)
     ON CONFLICT(discord_id) DO UPDATE SET steam_id=$2,verified_at=now()`, [discord, steam]);
 }
 function signature(payload: string) { return createHmac("sha256", duoSecret()).update(`steam:${payload}`).digest("base64url"); }

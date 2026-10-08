@@ -5,9 +5,10 @@ import {PGlite} from '@electric-sql/pglite';
 import {JSDOM} from 'jsdom';
 import {resolve} from 'node:path';
 import {Collection} from 'discord.js';
+import {drizzle} from 'drizzle-orm/pglite';
 
 const pg=new PGlite();
-const pool={query:(s,p)=>pg.query(s,p),connect:async()=>({
+const pool={query:async(s,p)=>{const r=await pg.query(s,p);return{...r,rowCount:r.rows.length}},connect:async()=>({
   query:(s,p)=>s.includes('pg_advisory_xact_lock')?Promise.resolve({rows:[]}):pg.query(s,p),release(){}
 })};
 const products={bronze:{name:'VIP Bronze',price:15,emoji:'🥉'},prata:{name:'VIP Prata',price:49.9,emoji:'🥈'},ouro:{name:'VIP Ouro',price:79.9,emoji:'🥇'},combo:{name:'Pacote 3 VIPs',price:70,emoji:'🎁'},duo:{name:'Super Combo Duo',price:120,emoji:'👥'}};
@@ -128,7 +129,66 @@ test('Discord migration preserves humans, paginates old cards, replaces with two
   assert.equal(messages.filter(m=>m.author.id==='human').length,1);
   for(const m of messages.filter(m=>m.author.id==='bot')){
     const button=m.components[0].components[0];assert.equal(button.style,5);assert.match(button.url,/\/loja\?server=(solo-duo|trio)$/);assert.equal(button.custom_id,undefined);
-    assert.match(m.embeds[0].image.url,/\/api\/store\/art\/duo-banner$/);
+    assert.match(m.embeds[0].image.url,/\/api\/store\/art\/store-banner$/);
   }
   await vip.setupVipStore(client);assert.equal(messages.length,3);assert.equal(deleted.length,105);
+});
+
+test('Steam unlink removes website proof atomically and never recreates identity from purchase/VIP history',async()=>{
+  const {boosterLinksTable}=await bundle('../../lib/db/src/schema/boosterLinks.ts');
+  const db=drizzle(pg);Object.assign(globalThis.__storeTests,{db,boosterLinksTable});
+  await pg.exec(`CREATE TABLE booster_links(id SERIAL PRIMARY KEY,discord_user_id VARCHAR(64) NOT NULL UNIQUE,
+    steam_id VARCHAR(32) NOT NULL,active BOOLEAN NOT NULL DEFAULT false,manually_disabled BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),updated_at TIMESTAMP NOT NULL DEFAULT now());
+    CREATE TABLE vip_subscriptions(discord_user_id TEXT,steam_id TEXT);`);
+  const adapter='export const db=globalThis.__storeTests.db;export const boosterLinksTable=globalThis.__storeTests.boosterLinksTable;export const pool=globalThis.__storeTests.pool;';
+  const links=await bundle('src/bot/utils/linkedSteamV2.ts',{'@workspace/db':adapter});
+  const auth=await bundle('src/routes/storeSteamAuth.ts',{'@workspace/db':adapter});
+  process.env.DUO_TOKEN_SECRET='test-only-stable-secret';
+  const steam='76561190000000008';
+  await pg.query("INSERT INTO payments(discord_user_id,steam_id) VALUES('unlink-user',$1)",[steam]);
+  await pg.query("INSERT INTO vip_subscriptions(discord_user_id,steam_id) VALUES('unlink-user',$1)",[steam]);
+  await links.saveLinkedSteamV2('unlink-user',steam);await auth.recordOfficialSteam('unlink-user',steam);
+  assert.equal(await auth.officialSteam('unlink-user',steam),true);
+  globalThis.__storeTests.links=links;
+  const cmd=await bundle('src/bot/commands/steam.ts',{'@workspace/db':adapter,'logger.js':log,
+    'rcon.js':'export async function executeRconCommand(){}',
+    'linkedSteamV2.js':'export const unlinkSteamV2=globalThis.__storeTests.links.unlinkSteamV2;export const replaceLinkedSteamV2=globalThis.__storeTests.links.replaceLinkedSteamV2;'});
+  const replies=[];
+  await cmd.execute({deferReply:async()=>{},editReply:async text=>replies.push(text),user:{tag:'admin'},options:{getSubcommand:()=> 'desvincular',getUser:()=>({id:'unlink-user'}),getString:()=>null}});
+  assert.match(replies[0],/Discord e do site/);
+  for(let i=0;i<3;i++)assert.equal(await links.getLinkedSteamV2('unlink-user'),null);
+  assert.equal(await auth.officialSteam('unlink-user',steam),false);
+  assert.equal((await pg.query("SELECT * FROM store_steam_auth WHERE discord_id='unlink-user'")).rows.length,0);
+  assert.equal((await pg.query("SELECT * FROM payments WHERE discord_user_id='unlink-user'")).rows.length,1);
+  assert.equal((await pg.query("SELECT * FROM vip_subscriptions WHERE discord_user_id='unlink-user'")).rows.length,1);
+  // A delayed callback cannot certify an account after its canonical link was removed.
+  await auth.recordOfficialSteam('unlink-user',steam);assert.equal(await auth.officialSteam('unlink-user',steam),false);
+  const fresh='76561190000000009';assert.equal((await links.saveLinkedSteamV2('unlink-user',fresh)).ok,true);
+  await auth.recordOfficialSteam('unlink-user',fresh);assert.equal(await auth.officialSteam('unlink-user',fresh),true);
+  await links.replaceLinkedSteamV2('unlink-user',steam);assert.equal(await auth.officialSteam('unlink-user',fresh),false);
+  assert.equal((await links.getLinkedSteamV2('unlink-user')).steamId,steam);
+  await auth.recordOfficialSteam('unlink-user',steam);
+  await pg.exec(`CREATE FUNCTION block_test_unlink() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated failure'; END $$;
+    CREATE TRIGGER block_test_unlink BEFORE DELETE ON booster_links FOR EACH ROW EXECUTE FUNCTION block_test_unlink();`);
+  await assert.rejects(links.unlinkSteamV2('unlink-user'));
+  assert.equal((await links.getLinkedSteamV2('unlink-user')).steamId,steam);
+  assert.equal(await auth.officialSteam('unlink-user',steam),true);
+  await pg.exec('DROP TRIGGER block_test_unlink ON booster_links;');
+  await links.unlinkSteamV2('unlink-user');assert.equal(await links.unlinkSteamV2('unlink-user'),null);
+});
+
+test('an open checkout clears its displayed Steam and disables payment when the admin unlinks it',async()=>{
+  const {renderStorePage}=await bundle('src/admin/storePage.ts',{'vipProducts.js':'export const VIP_PRODUCTS=globalThis.__storeTests.products;'});
+  let refresh,linked=true;
+  const dom=new JSDOM(renderStorePage('Buyer'),{url:'https://www.guerrafriarust.com.br/loja',runScripts:'dangerously',beforeParse(w){
+    const interval=w.setInterval.bind(w);w.setInterval=(fn,ms)=>{if(fn.name==='refreshAccount')refresh=fn;return interval(fn,ms)};
+    w.fetch=async url=>({ok:true,json:async()=>url==='/api/store/me'?{steamId:linked?'76561190000000008':null,steamVerified:linked,mpEnabled:true}:[]});
+  }});
+  const pause=()=>new Promise(r=>setTimeout(r,30));await pause();const doc=dom.window.document;
+  doc.querySelector('[data-tier=duo]').click();await pause();assert.equal(doc.getElementById('pix').disabled,false);
+  linked=false;await refresh();assert.equal(doc.getElementById('steamLabel').textContent,'Steam não conectada');
+  assert.equal(doc.getElementById('pix').disabled,true);assert.equal(doc.getElementById('card').disabled,true);
+  assert.equal(doc.getElementById('steamLogin').style.display,'flex');assert.match(doc.getElementById('status').textContent,/administração/);
+  dom.window.close();
 });

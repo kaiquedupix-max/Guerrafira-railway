@@ -33,20 +33,25 @@ export const storeCheckoutScript = String.raw`
   }
   el('serverSolo').onclick=()=>selectServer('solo-duo');el('serverTrio').onclick=()=>selectServer('trio');
   selectServer(new URLSearchParams(location.search).get('server')==='trio'?'trio':'solo-duo');
-  fetch('/api/store/me',{cache:'no-store'}).then(async r=>{
-    if(!r.ok)throw Error('Sua sessão expirou. Entre novamente com Discord.');
-    account=await r.json();
-    if(account.steamId){
-      el('steamLabel').textContent='Steam '+account.steamId;
-      el('steamState').textContent=account.steamVerified?'Steam ✓ autenticada':'Steam vinculada • confirme o login';
-      el('steamDetail').textContent='SteamID64 '+account.steamId+' receberá os VIPs.';
-      el('steamLogin').style.display=account.steamVerified?'none':'flex';
-      el('steamBox').classList.toggle('ok',Boolean(account.steamVerified));
-    }
-    if(!account.mpEnabled){el('card').title='Cartão Mercado Pago indisponível';el('card').innerHTML='💳 CARTÃO<br>Mercado Pago indisponível'}
-    if(!account.stripeEnabled){el('stripe').title='Stripe indisponível';el('stripe').innerHTML='💳 CARTÃO<br>Stripe indisponível'}
-    buttons();
-  }).catch(e=>flash(e.message,'error'));
+  let accountLoading=false;
+  async function refreshAccount(){
+    if(accountLoading)return;accountLoading=true;
+    try{
+      const r=await fetch('/api/store/me',{cache:'no-store'});
+      if(!r.ok)throw Error('Sua sessão expirou. Entre novamente com Discord.');
+      const next=await r.json(),previousSteam=account.steamId;account=next;
+      if(previousSteam&&previousSteam!==account.steamId){await dispose();status('O vínculo Steam foi atualizado pela administração. Entre com Steam novamente antes de comprar.');}
+      el('steamLabel').textContent=account.steamId?'Steam '+account.steamId:'Steam não conectada';
+      el('steamState').textContent=account.steamId?(account.steamVerified?'Steam ✓ autenticada':'Steam vinculada • confirme o login'):'Conectar conta Steam';
+      el('steamDetail').textContent=account.steamId?'SteamID64 '+account.steamId+' receberá os VIPs.':'Entre com Steam para escolher a conta que receberá seus VIPs.';
+      el('steamLogin').style.display=account.steamId&&account.steamVerified?'none':'flex';
+      el('steamBox').classList.toggle('ok',Boolean(account.steamId&&account.steamVerified));
+      el('card').innerHTML=account.mpEnabled?'💳 CARTÃO<br>Mercado Pago':'💳 CARTÃO<br>Mercado Pago indisponível';
+      el('stripe').innerHTML=account.stripeEnabled?'💳 CARTÃO<br>Stripe':'💳 CARTÃO<br>Stripe indisponível';
+      buttons();
+    }catch(e){flash(e.message,'error')}finally{accountLoading=false;}
+  }
+  refreshAccount();setInterval(refreshAccount,10000);
   document.querySelectorAll('.buy').forEach(b=>b.onclick=async()=>{
     if(serverId==='trio')return;
     await dispose();tier=b.dataset.tier;amount=Number(b.dataset.price);
