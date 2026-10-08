@@ -9,7 +9,7 @@ const b=await build({entryPoints:[resolve('src/routes/storeCatalog.ts')],bundle:
 const catalog=await import('data:text/javascript;base64,'+Buffer.from(b.outputFiles[0].text).toString('base64'));
 test('catalog exposes configured quantities and safe shortname icon URLs',()=>{
  const kits=catalog.parseKitCatalog(raw);assert.equal(kits[0].items[0].amount,1000);
- assert.equal(kits[0].items[0].icon,'https://raw.githubusercontent.com/JustinJAG/RustIcons/main/icons/wood.png');
+ assert.equal(kits[0].items[0].icon,'https://cdn.rusthelp.com/images/256/wood.png');
  const invalid=JSON.parse(raw);invalid.kits[0].items[0].shortname='../../secret';assert.throws(()=>catalog.parseKitCatalog(JSON.stringify(invalid)),/Item inválido/);
  invalid.kits[0].items[0].shortname='wood';invalid.kits[0].items[0].amount=-1;assert.throws(()=>catalog.parseKitCatalog(JSON.stringify(invalid)),/Item inválido/);
  assert.throws(()=>catalog.parseKitCatalog('{"version":1,"kits":[]}'),/incompatível/);

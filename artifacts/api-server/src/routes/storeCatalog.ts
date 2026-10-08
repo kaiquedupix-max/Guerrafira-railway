@@ -3,7 +3,7 @@ import { isVipProduct, type VipProduct } from "../bot/vipProducts.js";
 
 export type KitItem = {shortname:string;name:string;amount:number;skin:string;itemId:number;icon:string};
 export type StoreKit = {id:string;name:string;tier:string;cooldownSeconds:number;wipeDelaySeconds:number;items:KitItem[]};
-const iconBase="https://raw.githubusercontent.com/JustinJAG/RustIcons/main/icons/";
+const iconBase="https://cdn.rusthelp.com/images/256/";
 export function parseKitCatalog(raw:string):StoreKit[]{
   if(raw.length>2_000_000)throw Error("Catálogo muito grande");
   const data=JSON.parse(raw);if(data.version!==2||!Array.isArray(data.kits)||data.kits.length>150)throw Error("Plugin incompatível");
