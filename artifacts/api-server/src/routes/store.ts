@@ -6,7 +6,7 @@ import { createPixPayment } from "../bot/mp.js";
 import { createStripeCheckout, isStripeConfigured, retrieveStripeCheckout } from "../bot/stripe.js";
 import { receiptState } from "./storeReceipts.js";
 import { getLinkedSteamV2, saveLinkedSteamV2, STEAM_LOCKED_NOTICE } from "../bot/utils/linkedSteamV2.js";
-import { VIP_PRODUCTS, isVipProduct, type VipProduct } from "../bot/vipProducts.js";
+import { VIP_PRODUCTS, isVipProduct, vipPriceForServer, type VipProduct } from "../bot/vipProducts.js";
 import { GUERRA_FRIA_SERVERS, parseServerId, type GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
 import { processStripeCheckoutSession } from "./stripePayment.js";
@@ -25,6 +25,7 @@ import { fetchMpPayment, processMpPayment } from "./paymentReconciler.js";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
 const router = Router();
 for (const [slug, filename] of [["duo", "vip-super-combo-duo.png"], ["duo-banner", "vip-super-combo-duo-banner.png"], ["store-banner", "vip-store-banner.png"], ...["bronze", "prata", "ouro", "combo", "duo"].map(tier => [`vip-${tier}`, `vip-rank-${tier}.png`])] ) router.get(`/art/${slug}`, (_req,res) => {
   res.setHeader("Cache-Control","public, max-age=86400");
@@ -35,36 +36,14 @@ for (const [slug, filename] of [["duo", "vip-super-combo-duo.png"], ["duo-banner
 router.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
 router.use("/duo", duoRouter);
 router.use("/gift", giftRouter);
-router.get('/servers',(_req,res)=>res.json(Object.values(GUERRA_FRIA_SERVERS).map(s=>({id:s.id,name:s.name,enabled:s.enabled&&!s.comingSoon}))));
-router.get('/catalog/:tier',async(req,res)=>{const tier=parseTier(req.params.tier),server=parseServerId(req.query.server??'solo-duo');if(!tier||!server)return res.status(400).json({error:'VIP ou servidor inválido.'});return res.json(await storeKitCatalog(tier,server));});
+
 const BASE_URL = "https://www.guerrafriarust.com.br";
 const STEAM_OPENID = "https://steamcommunity.com/openid/login";
 
 function parseTier(value: unknown): VipProduct | null { return isVipProduct(value) ? value : null; }
-
-async function validate(req: Request, res: Response): Promise<{ tier: VipProduct; serverId: GuerraFriaServerId; steamId: string; email: string; discordUserId: string; gift:boolean } | null> {
-  const session = getCommunitySession(req);
-  if (!session) { res.status(401).json({ error: "Sua sessão expirou. Entre novamente com o Discord." }); return null; }
-  const tier = parseTier(req.body?.tier);
-  const serverId = parseServerId(req.body?.serverId ?? "solo-duo");
-  const email = String(req.body?.email ?? "").trim();
-  if (!tier) { res.status(400).json({ error: "Plano VIP inválido." }); return null; }
-  if(req.body?.gift!==undefined&&typeof req.body.gift!=='boolean'){res.status(400).json({error:'Tipo de compra inválido.'});return null;}
-  const gift=req.body?.gift===true;
-  if(gift&&tier==='duo'){res.status(400).json({error:'O Super Combo Duo já inclui você e um amigo. Para presentear só o amigo, escolha um VIP ou o Pacote 3 VIPs.'});return null;}
-  await ensureStoreOrders();if(gift){duoSecret();await ensureGifts();}
-  if (!serverId) { res.status(400).json({ error: "Servidor inválido." }); return null; }
-  const server = GUERRA_FRIA_SERVERS[serverId];
-  if (!server.enabled || server.comingSoon) { res.status(409).json({ error: `${server.name} ainda está em preparação. As compras serão liberadas em breve.` }); return null; }
-  if (email.length > 128 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { res.status(400).json({ error: "E-mail inválido." }); return null; }
-  const linked = await getLinkedSteamV2(session.userId);
-  if (!linked?.steamId) { res.status(409).json({ error: "Conecte sua Steam pelo login oficial antes de finalizar a compra." }); return null; }
-  if (!(await officialSteam(session.userId, linked.steamId))) { res.status(409).json({ error: "Entre com Steam pelo botão oficial para comprar seu VIP." }); return null; }
-  if (tier === "duo") {
-    duoSecret();
-    await ensureDuoSchema();
-  }
-  return { tier, serverId, steamId: linked.steamId, email, discordUserId: session.userId, gift };
+function storeProductName(tier: VipProduct, serverId: GuerraFriaServerId): string {
+  if (tier === "duo") return serverId === "trio" ? "Super Combo Trio" : "Super Combo Duo";
+  return VIP_PRODUCTS[tier].name;
 }
 
 router.get("/servers", (_req, res) => {
@@ -73,10 +52,56 @@ router.get("/servers", (_req, res) => {
     name: server.name,
     shortName: server.shortName,
     teamSize: server.teamSize,
-    enabled: server.enabled,
+    enabled: server.enabled && !server.comingSoon,
     comingSoon: server.comingSoon,
   })));
 });
+
+router.get("/price/:tier", (req, res) => {
+  const tier = parseTier(req.params.tier);
+  const serverId = parseServerId(req.query.server ?? "");
+  if (!tier || !serverId) return res.status(400).json({ error: "Selecione um VIP e um servidor válidos." });
+  const server = GUERRA_FRIA_SERVERS[serverId];
+  const price = vipPriceForServer(tier, serverId);
+  return res.json({
+    tier,
+    serverId,
+    serverName: server.name,
+    price,
+    enabled: server.enabled && !server.comingSoon,
+    comingSoon: server.comingSoon,
+    purchasable: Boolean(server.enabled && !server.comingSoon && price !== null),
+  });
+});
+
+router.get('/catalog/:tier',async(req,res)=>{const tier=parseTier(req.params.tier),server=parseServerId(req.query.server??'solo-duo');if(!tier||!server)return res.status(400).json({error:'VIP ou servidor inválido.'});return res.json(await storeKitCatalog(tier,server));});
+
+async function validate(req: Request, res: Response): Promise<{ tier: VipProduct; serverId: GuerraFriaServerId; steamId: string; email: string; discordUserId: string; gift:boolean; price:number } | null> {
+  const session = getCommunitySession(req);
+  if (!session) { res.status(401).json({ error: "Sua sessão expirou. Entre novamente com o Discord." }); return null; }
+  const tier = parseTier(req.body?.tier);
+  const serverId = parseServerId(req.body?.serverId);
+  const email = String(req.body?.email ?? "").trim();
+  if (!tier) { res.status(400).json({ error: "Plano VIP inválido." }); return null; }
+  if(req.body?.gift!==undefined&&typeof req.body.gift!=='boolean'){res.status(400).json({error:'Tipo de compra inválido.'});return null;}
+  const gift=req.body?.gift===true;
+  if(gift&&tier==='duo'){res.status(400).json({error:'O Super Combo já inclui toda a equipe do servidor escolhido. Para presentear somente um amigo, escolha um VIP ou o Pacote 3 VIPs.'});return null;}
+  await ensureStoreOrders();if(gift){duoSecret();await ensureGifts();}
+  if (!serverId) { res.status(400).json({ error: "Selecione o servidor antes de comprar." }); return null; }
+  const server = GUERRA_FRIA_SERVERS[serverId];
+  if (!server.enabled || server.comingSoon) { res.status(409).json({ error: `${server.name} ainda não foi lançado. As compras continuam bloqueadas.` }); return null; }
+  const price = vipPriceForServer(tier, serverId);
+  if (price === null) { res.status(409).json({ error: `O preço deste VIP para ${server.shortName} ainda não foi configurado.` }); return null; }
+  if (email.length > 128 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { res.status(400).json({ error: "E-mail inválido." }); return null; }
+  const linked = await getLinkedSteamV2(session.userId);
+  if (!linked?.steamId) { res.status(409).json({ error: "Conecte sua Steam pelo login oficial antes de finalizar a compra." }); return null; }
+  if (!(await officialSteam(session.userId, linked.steamId))) { res.status(409).json({ error: "Entre com Steam pelo botão oficial para comprar seu VIP." }); return null; }
+  if (tier === "duo") {
+    duoSecret();
+    await ensureDuoSchema();
+  }
+  return { tier, serverId, steamId: linked.steamId, email, discordUserId: session.userId, gift, price };
+}
 
 router.get("/steam/login", (req, res) => {
   const session = getCommunitySession(req);
@@ -142,14 +167,14 @@ router.get("/duo-purchases", async (req, res) => {
 
 router.post("/pix", async (req, res) => {
   const input = await validate(req, res); if (!input) return;
-  const vip = VIP_PRODUCTS[input.tier];
+  const productName = storeProductName(input.tier, input.serverId);
   const server = GUERRA_FRIA_SERVERS[input.serverId];
   try {
-    const payment = await createPixPayment({ amount: vip.price, description: `${vip.name} Guerra Fria ${server.shortName} - 30 dias`, email: input.email, discordUserId: input.discordUserId, steamId: input.steamId, vipTier: input.tier });
+    const payment = await createPixPayment({ amount: input.price, description: `${productName} Guerra Fria ${server.shortName} - 30 dias`, email: input.email, discordUserId: input.discordUserId, steamId: input.steamId, vipTier: input.tier });
     if ("error" in payment) return res.status(502).json({ error: payment.error });
-    const [row] = await db.insert(paymentsTable).values({ mpPaymentId: payment.paymentId, discordUserId: input.discordUserId, steamId: input.steamId, email: input.email, vipTier: input.tier, amount: vip.price.toFixed(2), method: "pix", status: "pending" }).returning({ id: paymentsTable.id });
+    const [row] = await db.insert(paymentsTable).values({ mpPaymentId: payment.paymentId, discordUserId: input.discordUserId, steamId: input.steamId, email: input.email, vipTier: input.tier, amount: input.price.toFixed(2), method: "pix", status: "pending" }).returning({ id: paymentsTable.id });
     if(!row)throw Error('Compra não registrada');await recordStoreOrder(row.id,input.gift,input.serverId);
-    return res.json({ rowId: row?.id, paymentId: payment.paymentId, qrCode: payment.qrCode, qrCodeBase64: payment.qrCodeBase64, expiresAt: payment.expiresAt, steamId: input.steamId, serverId: input.serverId });
+    return res.json({ rowId: row?.id, paymentId: payment.paymentId, qrCode: payment.qrCode, qrCodeBase64: payment.qrCodeBase64, expiresAt: payment.expiresAt, steamId: input.steamId, serverId: input.serverId, amount:input.price });
   } catch (err) { logger.error({ err, tier: input.tier, serverId: input.serverId, discordUserId: input.discordUserId }, "Web store PIX error"); return res.status(500).json({ error: "Não foi possível gerar o PIX agora. Tente novamente." }); }
 });
 
@@ -158,17 +183,18 @@ router.post("/card", async (req,res) => {
   if(!isEmbeddedMpConfigured()) return res.status(503).json({error:"Cartão Mercado Pago indisponível. Use PIX ou Stripe."});
   const card = parseCardData(req.body?.card);
   if(!card || !isAttemptId(req.body?.attemptId)) return res.status(400).json({error:"Dados do cartão inválidos. Preencha o formulário seguro."});
-  const vip=VIP_PRODUCTS[input.tier];
+  const productName=storeProductName(input.tier,input.serverId);
+  const server=GUERRA_FRIA_SERVERS[input.serverId];
   try {
-    const row=await cardAttempt(req.body.attemptId,input,vip.price);
+    const row=await cardAttempt(req.body.attemptId,input,input.price);
     const payment=row.mp_payment_id ? await fetchMpPayment(row.mp_payment_id) : await createEmbeddedMpPayment({
-      id:row.id,key:req.body.attemptId,amount:vip.price,email:input.email,tier:input.tier,
-      discord:input.discordUserId,steam:input.steamId,description:vip.name+" Guerra Fria - 30 dias",card});
+      id:row.id,key:req.body.attemptId,amount:input.price,email:input.email,tier:input.tier,
+      discord:input.discordUserId,steam:input.steamId,description:`${productName} Guerra Fria ${server.shortName} - 30 dias`,card});
     if(!payment) return res.status(502).json({error:"Não foi possível confirmar a tentativa. Tente novamente neste formulário; a mesma tentativa não gera cobrança duplicada."});
     await db.update(paymentsTable).set({mpPaymentId:String(payment.id),updatedAt:new Date()}).where(eq(paymentsTable.id,row.id));
     await processMpPayment(payment).catch(() => logger.warn({paymentRowId:row.id},"Delivery will be retried by reconciler"));
     const info=payment.three_ds_info as {external_resource_url?:string;creq?:string}|undefined;
-    return res.json({rowId:row.id,paymentId:String(payment.id),status:payment.status,
+    return res.json({rowId:row.id,paymentId:String(payment.id),status:payment.status,amount:input.price,
       threeDSInfo:info ? {externalResourceURL:info.external_resource_url,creq:info.creq} : undefined});
   } catch { return res.status(500).json({error:"Não foi possível concluir esta tentativa. Tente novamente no mesmo formulário."}); }
 });
@@ -183,9 +209,10 @@ router.get("/payments/:id", async(req,res) => {
   const receipt = await receiptState(row.id);
   const order=await storeOrder(row.id);const gift=order?.gift&&(await listGifts(session.userId)).find(p=>p.id===row.id);
   const duo = row.vipTier === "duo" && row.status === "approved" ? (await listDuoPurchases(session.userId)).find(p => p.id === row.id) : null;
+  const orderServerId:GuerraFriaServerId=order?.server_id==='trio'?'trio':'solo-duo';
   return res.json({id:row.id,status:row.status,delivered:Boolean(receipt?.completed_at)&&!order?.gift,gift:Boolean(order?.gift),giftReady:Boolean(gift),
-    product: isVipProduct(row.vipTier) ? VIP_PRODUCTS[row.vipTier].name : "VIP", amount:row.amount,
-    serverName:GUERRA_FRIA_SERVERS[order?.server_id==='trio'?'trio':'solo-duo'].name,
+    product: isVipProduct(row.vipTier) ? storeProductName(row.vipTier,orderServerId) : "VIP", amount:row.amount,
+    serverName:GUERRA_FRIA_SERVERS[orderServerId].name,
     steamId:row.steamId, claimUrl:gift?.claimUrl??duo?.claimUrl??null, claimStatus:gift?.status??duo?.claimStatus, expiresAt:gift?.expiresAt??duo?.expiresAt,
     dmStatus:receipt?.sent_at ? "sent" : receipt?.attempts ? "retrying" : "pending"});
 });
@@ -206,7 +233,7 @@ router.post("/payments/:id/confirm", async(req,res) => {
 router.post("/stripe/card", async (req, res) => {
   const input = await validate(req, res); if (!input) return;
   if (!isStripeConfigured()) return res.status(503).json({ error: "Pagamento por Stripe ainda não está configurado." });
-  const vip = VIP_PRODUCTS[input.tier];
+  const productName = storeProductName(input.tier, input.serverId);
   const server = GUERRA_FRIA_SERVERS[input.serverId];
   try {
     const [row] = await db.insert(paymentsTable).values({
@@ -214,7 +241,7 @@ router.post("/stripe/card", async (req, res) => {
       steamId: input.steamId,
       email: input.email,
       vipTier: input.tier,
-      amount: vip.price.toFixed(2),
+      amount: input.price.toFixed(2),
       method: "stripe_card",
       status: "pending",
     }).returning({ id: paymentsTable.id });
@@ -224,8 +251,8 @@ router.post("/stripe/card", async (req, res) => {
     const checkout = await createStripeCheckout({
       paymentRowId: row.id,
       embedded: false,
-      amount: vip.price,
-      title: `${vip.name} Guerra Fria ${server.shortName} - 30 dias`,
+      amount: input.price,
+      title: `${productName} Guerra Fria ${server.shortName} - 30 dias`,
       email: input.email,
       discordUserId: input.discordUserId,
       steamId: input.steamId,
@@ -238,7 +265,7 @@ router.post("/stripe/card", async (req, res) => {
 
     await db.update(paymentsTable).set({ stripeSessionId: checkout.sessionId, updatedAt: new Date() })
       .where(eq(paymentsTable.id, row.id));
-    return res.json({ rowId: row.id, checkoutUrl: checkout.checkoutUrl, sessionId: checkout.sessionId, steamId: input.steamId, serverId: input.serverId });
+    return res.json({ rowId: row.id, checkoutUrl: checkout.checkoutUrl, sessionId: checkout.sessionId, steamId: input.steamId, serverId: input.serverId, amount:input.price });
   } catch (err) {
     logger.error({ err, tier: input.tier, serverId: input.serverId, discordUserId: input.discordUserId }, "Web store Stripe card error");
     return res.status(500).json({ error: "Não foi possível abrir o checkout da Stripe agora. Tente novamente." });
