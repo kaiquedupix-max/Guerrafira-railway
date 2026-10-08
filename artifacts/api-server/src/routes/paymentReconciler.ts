@@ -4,6 +4,7 @@ import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "..
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
 import { fulfillDuoPayment } from "./duoService.js";
+import { fulfillGiftPayment } from "./giftService.js";
 import { recordStoreDelivery } from "./storeReceipts.js";
 
 type PaymentRow = typeof paymentsTable.$inferSelect;
@@ -131,6 +132,7 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
     return true;
   }
 
+  try { const giftResult=await fulfillGiftPayment(row.id);if(giftResult!==undefined)return giftResult; } catch { logger.warn("Paid gift issuance will retry"); return false; }
   if (row.vipTier === "duo") {
     try { return await fulfillDuoPayment(row.id); }
     catch (error) { logger.error({ error, rowId: row.id }, "Duo purchase delivery will retry"); return false; }

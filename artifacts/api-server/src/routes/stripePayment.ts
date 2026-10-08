@@ -5,6 +5,7 @@ import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "..
 import { retrieveStripeCheckout, type StripeCheckoutSession } from "../bot/stripe.js";
 import { logger } from "../lib/logger.js";
 import { fulfillDuoPayment } from "./duoService.js";
+import { fulfillGiftPayment } from "./giftService.js";
 import { recordStoreDelivery } from "./storeReceipts.js";
 
 type PaymentRow = typeof paymentsTable.$inferSelect;
@@ -54,6 +55,7 @@ async function notifyTicket(row: PaymentRow, content: string): Promise<void> {
 }
 
 async function fulfillStripePayment(row: PaymentRow, session: StripeCheckoutSession): Promise<boolean> {
+  try { const giftResult=await fulfillGiftPayment(row.id);if(giftResult!==undefined)return giftResult; } catch { logger.warn("Paid gift issuance will retry"); return false; }
   if (row.vipTier === "duo") {
     try { return await fulfillDuoPayment(row.id); }
     catch (error) { logger.error({ error, rowId: row.id }, "Duo Stripe delivery will retry"); return false; }

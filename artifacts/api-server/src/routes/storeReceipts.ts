@@ -3,6 +3,9 @@ import { discordClient } from "../bot/client.js";
 import { VIP_PRODUCTS, isVipProduct } from "../bot/vipProducts.js";
 import { duoToken } from "./duoPolicy.js";
 import { logger } from "../lib/logger.js";
+import { storeOrder } from "./storeOrders.js";
+import { createHmac } from "node:crypto";
+import { duoSecret } from "./duoPolicy.js";
 
 let ready: Promise<void> | undefined;
 export function ensureReceiptSchema(): Promise<void> {
@@ -36,15 +39,19 @@ export async function sendStoreReceipts(): Promise<void> {
       const productId: unknown = payment?.vip_tier;
       if (!payment || !isVipProduct(productId)) throw Error("Receipt unavailable");
       let claimUrl: string | null = null;
-      if (productId === "duo") {
+      const order=await storeOrder(payment.id);
+      if(order?.gift){
+        const gift=(await pool.query('SELECT * FROM store_gifts WHERE payment_id=$1',[payment.id])).rows[0];
+        if(gift?.status==='available'&&new Date(gift.expires_at).getTime()>Date.now())claimUrl=`https://www.guerrafriarust.com.br/api/store/gift/redeem#${createHmac('sha256',duoSecret()).update(`gift:${payment.id}:${gift.nonce}`).digest('base64url')}`;
+      }else if (productId === "duo") {
         const claim = (await pool.query("SELECT * FROM duo_redemptions WHERE payment_id=$1", [payment.id])).rows[0];
         if (claim?.status === "available" && new Date(claim.expires_at).getTime() > Date.now())
           claimUrl = `https://www.guerrafriarust.com.br/api/store/duo/redeem#${duoToken(payment.id, claim.nonce)}`;
       }
       const user = await client.users.fetch(payment.discord_user_id);
-      const description = `Seu pagamento foi confirmado automaticamente.\n**${VIP_PRODUCTS[productId].name}**\n✅ Seus benefícios já estão ativos no **Guerra Fria Solo/Duo**, por **30 dias**.\nSteam: **${payment.steam_id}**\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
+      const description = `Seu pagamento foi confirmado automaticamente.\n**${VIP_PRODUCTS[productId].name}**\n${order?.gift?'🎁 Seu presente está pronto! O VIP será ativado na conta do amigo após o resgate.':'✅ Seus benefícios já estão ativos no **Guerra Fria Solo/Duo**, por **30 dias**.\nSteam: **'+payment.steam_id+'**'}\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
       await user.send({ embeds: [{ title: "✅ Pagamento concluído com sucesso", color: 0xffb800,
-        description: description + (claimUrl ? `\n\n👥 **Envie este link ao seu amigo:**\n${claimUrl}\nUm único resgate, válido por 30 dias após a compra. Ele deve entrar com Discord e Steam para receber Bronze + Prata + Ouro.` : ""),
+        description: description + (claimUrl ? `\n\n🎁 **Envie este link ao seu amigo:**\n${claimUrl}\nUm único resgate, válido por 30 dias após a compra. Ele deve entrar com Discord e Steam para receber ${order?.gift?'o presente':'Bronze + Prata + Ouro'}.` : ""),
         footer: { text: "Guerra Fria • Loja VIP" } }], allowedMentions: { parse: [] } });
       await pool.query("UPDATE store_receipts SET sent_at=now(),lease_until=NULL WHERE payment_id=$1", [payment.id]);
     } catch {

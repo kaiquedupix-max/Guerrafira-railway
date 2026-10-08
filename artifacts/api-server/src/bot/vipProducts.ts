@@ -13,8 +13,7 @@ export function isVipProduct(value: unknown): value is VipProduct {
 }
 
 export async function grantVipProduct(opts: Omit<Parameters<typeof grantVip>[0], "tier"> & { tier: VipProduct; paymentId: number }): Promise<void> {
-  if (opts.tier !== "combo" && opts.tier !== "duo") return grantVip({ ...opts, tier: opts.tier });
-  const tiers: VipTier[] = ["bronze", "prata", "ouro"];
+  const tiers: VipTier[] = opts.tier === "combo" || opts.tier === "duo" ? ["bronze", "prata", "ouro"] : [opts.tier];
   for (const tier of tiers) {
     // Each component is tied to its payment so retries and repeat purchases stay independent.
     const [delivered] = await db.select().from(vipSubscriptionsTable).where(and(

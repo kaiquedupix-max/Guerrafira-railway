@@ -164,6 +164,43 @@ test('real VIP product expansion retries components per recipient and preserves 
   await exports.grantVipProduct({...opts,tier:'bronze',paymentId:101});assert.equal(rows.length,7);
   await exports.grantVipProduct({...opts,tier:'combo',paymentId:102});assert.equal(rows.length,10);
 });
+test('paid gifts issue an owned link without granting the buyer, then bind a single recipient',async()=>{
+  const gifts=await bundle('src/routes/giftService.ts');
+  const orders=await bundle('src/routes/storeOrders.ts');
+  await query("INSERT INTO payments(id,discord_user_id,steam_id,status,vip_tier) VALUES(40,'buyer','76561190000000001','pending','combo')");
+  await orders.recordStoreOrder(40,true,'solo-duo');
+  await assert.rejects(gifts.fulfillGiftPayment(40),/não aprovado/);
+  await query("UPDATE payments SET status='approved' WHERE id=40");
+  await gifts.fulfillGiftPayment(40);await gifts.fulfillGiftPayment(40);
+  const links=await gifts.listGifts('buyer');assert.equal(links.length,1);
+  assert.equal((await gifts.listGifts('stranger')).length,0);
+  assert.equal((await query("SELECT * FROM vip_subscriptions WHERE source='purchase:40'")).rows.length,0);
+  const token=links[0].claimUrl.split('#')[1];
+  await assert.rejects(gifts.claimGift(token,'buyer','otherSteam'),/comprador/);
+  await assert.rejects(gifts.claimGift(token,'friend','76561190000000001'),/comprador/);
+  await gifts.inspectGift(token);assert.equal((await gifts.inspectGift(token)).status,'available');
+  const results=await Promise.allSettled([gifts.claimGift(token,'friendA','steamA'),gifts.claimGift(token,'friendB','steamB')]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal((await query("SELECT * FROM vip_subscriptions WHERE source='purchase:40'")).rows.length,3);
+  await assert.rejects(gifts.claimGift(token,'friendC','steamC'),/outro amigo/);
+  assert.equal((await gifts.listGifts('buyer'))[0].claimUrl,null);
+  await query("UPDATE payments SET status='refunded' WHERE id=40");
+  await assert.rejects(gifts.inspectGift(token),/indisponível/);
+});
+
+test('gift partial delivery remains bound and unused gifts expire',async()=>{
+  const gifts=await bundle('src/routes/giftService.ts');const orders=await bundle('src/routes/storeOrders.ts');
+  for(const id of [41,42]){await query("INSERT INTO payments(id,discord_user_id,steam_id,status,vip_tier) VALUES($1,'buyer','76561190000000001','approved','combo')",[id]);await orders.recordStoreOrder(id,true,'solo-duo');await gifts.fulfillGiftPayment(id);}
+  const links=await gifts.listGifts('buyer'),token=id=>links.find(r=>r.id===id).claimUrl.split('#')[1];
+  await query("UPDATE store_gifts SET expires_at=now()-interval '1 day' WHERE payment_id=42");
+  await assert.rejects(gifts.claimGift(token(42),'friend','steam'),/expirou/);
+  failTier='prata';await assert.rejects(gifts.claimGift(token(41),'friend','steam'),/outage/);failTier='';
+  await assert.rejects(gifts.claimGift(token(41),'thief','different'),/outro amigo/);
+  await query("UPDATE store_gifts SET expires_at=now()-interval '1 day' WHERE payment_id=41");
+  await gifts.claimGift(token(41),'friend','steam');
+  assert.equal((await query("SELECT * FROM vip_subscriptions WHERE source='purchase:41'")).rows.length,3);
+});
+
 test('store offers five products, validates checkout and recovers from network failure',async()=>{
   const {renderStorePage}=await bundle('src/admin/storePage.ts');const requests=[],errors=[];
   const dom=new JSDOM(renderStorePage('<Buyer>'),{url:'https://www.guerrafriarust.com.br/loja',runScripts:'dangerously',beforeParse(w){
@@ -175,7 +212,7 @@ test('store offers five products, validates checkout and recovers from network f
   const doc=dom.window.document;assert.equal(doc.querySelectorAll('.vipCard').length,5);
   assert.equal(doc.querySelector('[data-tier=duo]').dataset.price,'120');assert.equal(errors.length,0);
   assert.match(doc.getElementById('duoPurchases').textContent,/COPIAR LINK DO DUO/);
-  doc.querySelector('[data-tier=duo]').click();doc.getElementById('email').value='invalid';doc.getElementById('pix').click();
+  doc.querySelector('[data-tier=duo]').click();doc.getElementById('detailBuy').click();doc.getElementById('email').value='invalid';doc.getElementById('pix').click();
   await new Promise(resolve=>setTimeout(resolve,10));assert.match(doc.getElementById('status').textContent,/e-mail válido/);
   doc.getElementById('email').value='buyer@example.com';doc.getElementById('pix').click();
   await new Promise(resolve=>setTimeout(resolve,20));assert.match(doc.getElementById('status').textContent,/Falha de conexão/);

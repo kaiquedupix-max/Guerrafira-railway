@@ -2,7 +2,7 @@
 export const storeCheckoutScript = String.raw`
 (function(){
   const el=id=>document.getElementById(id), modal=el('modal');
-  let account={}, tier='', serverId='solo-duo', amount=0, busy=false, generation=0;
+  let account={}, tier='', serverId='solo-duo', amount=0, gift=false,busy=false, generation=0;
   let checkout=null, brick=null, paymentTimer=null, pixTimer=null;
   const sdkPromises=new Map();
   const paymentStyle={theme:'dark',customVariables:{baseColor:'#ffb800',baseColorFirstVariant:'#e5a400',baseColorSecondVariant:'#ffd368',buttonTextColor:'#080b0d',textPrimaryColor:'#f8fafc',textSecondaryColor:'#b5c1ca',inputBackgroundColor:'#10191e',formBackgroundColor:'#0b1115',outlinePrimaryColor:'#455760',outlineSecondaryColor:'#ffb800',inputFocusedBoxShadow:'0 0 0 3px #ffb80033',inputVerticalPadding:'14px',inputHorizontalPadding:'14px',borderRadiusSmall:'8px',borderRadiusMedium:'10px',borderRadiusLarge:'12px',formPadding:'20px'}};
@@ -31,7 +31,7 @@ export const storeCheckoutScript = String.raw`
     el('serverSolo').classList.toggle('active',id==='solo-duo');
     el('serverTrio').classList.toggle('active',id==='trio');
     el('serverInfo').textContent=id==='trio'?'Guerra Fria Trio está em preparação. Compras serão liberadas em breve.':'Compras liberadas para Guerra Fria Solo/Duo.';
-    document.querySelectorAll('.vipCard .buy').forEach(b=>{b.disabled=id==='trio';b.textContent=id==='trio'?'EM BREVE':'COMPRAR AGORA →'});
+    el('detailBuy').disabled=id==='trio';el('detailGift').disabled=id==='trio';document.dispatchEvent(new Event('gf:server'));
   }
   el('serverSolo').onclick=()=>selectServer('solo-duo');el('serverTrio').onclick=()=>selectServer('trio');
   selectServer(new URLSearchParams(location.search).get('server')==='trio'?'trio':'solo-duo');
@@ -54,12 +54,13 @@ export const storeCheckoutScript = String.raw`
     }catch(e){flash(e.message,'error')}finally{accountLoading=false;}
   }
   refreshAccount();setInterval(refreshAccount,10000);
-  document.querySelectorAll('.vipCard .buy').forEach(b=>b.onclick=async()=>{
+  document.addEventListener('gf:checkout',async e=>{const b={dataset:e.detail};
     if(serverId==='trio')return;
-    await dispose();tier=b.dataset.tier;amount=Number(b.dataset.price);
+    await dispose();tier=b.dataset.tier;amount=Number(b.dataset.price);gift=b.dataset.gift===true;
     el('modalTitle').textContent=b.dataset.name;
     el('modalPrice').textContent=amount.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})+' • 30 dias';
     el('chosenServer').textContent='Servidor: Guerra Fria Solo/Duo';
+    el('paymentNote').textContent=gift?'Você está comprando um presente. Após o pagamento, envie o link ao amigo; ele entra com Steam e Discord para ativar o VIP.':'O VIP será ativado somente no servidor escolhido.';
     el('status').className='status';modal.classList.add('open');buttons();
     if(tier==='duo'&&!account.steamVerified)status('Confirme o login oficial com Steam para comprar o combo para duas pessoas.');
     el('email').focus();
@@ -70,7 +71,7 @@ export const storeCheckoutScript = String.raw`
     const email=el('email').value.trim();
     if(!el('email').checkValidity()||!email)throw Error('Informe um e-mail válido.');
     if(serverId==='trio')throw Error('Servidor Trio em preparação.');
-    return {tier,email,serverId};
+    return {tier,email,serverId,gift};
   }
   async function post(path,data){
     let response;try{response=await fetch('/api/store'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}catch{throw Error('Falha de conexão. Tente novamente neste formulário.')}
@@ -89,9 +90,9 @@ export const storeCheckoutScript = String.raw`
   function showSuccess(d){
     el('modalTitle').textContent=d.product||'Sua compra';el('modalPrice').textContent=d.amount?Number(d.amount).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})+' • 30 dias':'Compra confirmada';el('status').className='status';
     el('checkoutFields').hidden=true;el('embedded').replaceChildren();el('paymentSuccess').hidden=false;
-    el('successTitle').textContent=d.delivered?'Pagamento concluído com sucesso!':'Pagamento confirmado!';
-    el('successDetail').textContent=d.delivered?'Seus benefícios já estão ativos no Guerra Fria Solo/Duo por 30 dias.':'Estamos ativando seus benefícios. Esta tela atualizará automaticamente.';
-    el('successPurchase').textContent=(d.product||'VIP')+' • Compra #'+d.id+(d.steamId?' • Steam '+d.steamId:'');
+    el('successTitle').textContent=d.gift?(d.giftReady?'Presente pronto para enviar!':'Pagamento confirmado! Preparando presente…'):d.delivered?'Pagamento concluído com sucesso!':'Pagamento confirmado!';
+    el('successDetail').textContent=d.gift?'Pagamento confirmado! O VIP será ativado na conta do seu amigo quando ele resgatar o presente.':d.delivered?'Seus benefícios já estão ativos no Guerra Fria Solo/Duo por 30 dias.':'Estamos ativando seus benefícios. Esta tela atualizará automaticamente.';
+    el('successPurchase').textContent=(d.product||'VIP')+' • Compra #'+d.id+(!d.gift&&d.steamId?' • Steam '+d.steamId:'');
     el('successDuo').hidden=!d.claimUrl;
     if(d.claimUrl){el('successLink').value=d.claimUrl;el('successExpiry').textContent='Um único resgate • válido até '+new Date(d.expiresAt).toLocaleString('pt-BR');}
     el('successDm').textContent=d.dmStatus==='sent'?'✓ A confirmação também foi enviada no seu privado do Discord.':d.dmStatus==='retrying'?'Não conseguimos enviar no Discord. Libere mensagens privadas do servidor; tentaremos novamente.':'A confirmação será enviada automaticamente no seu privado do Discord.';
@@ -108,7 +109,7 @@ export const storeCheckoutScript = String.raw`
           status(d.delivered?'Pagamento aprovado ✓ VIPs ativados.':'Pagamento aprovado ✓ A ativação está sendo processada.');
           showSuccess(d);
           refreshPurchases();
-          if(d.delivered&&d.dmStatus==='sent')clearInterval(paymentTimer);
+          if((d.delivered||d.giftReady)&&d.dmStatus==='sent')clearInterval(paymentTimer);
         }else if(['rejected','cancelled','failed','refunded','charged_back','expired'].includes(d.status)){
           clearInterval(paymentTimer);el('paymentSuccess').hidden=true;
           const labels={rejected:'recusado',cancelled:'cancelado',failed:'não concluído',refunded:'reembolsado',charged_back:'contestado',expired:'expirado'};

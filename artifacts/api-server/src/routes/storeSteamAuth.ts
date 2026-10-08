@@ -20,11 +20,11 @@ export async function recordOfficialSteam(discord: string, steam: string): Promi
     ON CONFLICT(discord_id) DO UPDATE SET steam_id=$2,verified_at=now()`, [discord, steam]);
 }
 function signature(payload: string) { return createHmac("sha256", duoSecret()).update(`steam:${payload}`).digest("base64url"); }
-export function steamState(user: string, duo: boolean) {
-  const payload = Buffer.from(JSON.stringify({ user, duo, nonce: randomBytes(24).toString("hex"), exp: Date.now() + 600_000 })).toString("base64url");
+export function steamState(user: string, duo: boolean,gift=false) {
+  const payload = Buffer.from(JSON.stringify({ user, duo,gift, nonce: randomBytes(24).toString("hex"), exp: Date.now() + 600_000 })).toString("base64url");
   return `${payload}.${signature(payload)}`;
 }
-export function readSteamState(value: string, user: string): { nonce: string; duo: boolean } | null {
+export function readSteamState(value: string, user: string): { nonce: string; duo: boolean;gift?:boolean } | null {
   const [payload, sig] = value.split(".");
   if (!payload || !sig) return null;
   const expected = signature(payload);

@@ -105,7 +105,7 @@ test('checkout opens hosted Stripe, retains card retry id and PIX displays its c
     };
   }});
   const pause=()=>new Promise(r=>setTimeout(r,30));
-  const doc=dom.window.document;await pause();doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('email').value='buyer@example.com';
+  const doc=dom.window.document;await pause();doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('detailBuy').click();await pause();doc.getElementById('email').value='buyer@example.com';
   doc.getElementById('stripe').click();await pause();assert.ok(requests.some(r=>r.url==='/api/store/stripe/card'));assert.equal(mounted.includes('#stripeCheckout'),false);
   doc.getElementById('card').click();await pause();assert.ok(mounted.includes('cardPayment'));
   const card={token:'valid-token',payment_method_id:'visa',installments:1};
@@ -192,7 +192,7 @@ test('an open checkout clears its displayed Steam and disables payment when the 
     w.fetch=async url=>({ok:true,json:async()=>url==='/api/store/me'?{steamId:linked?'76561190000000008':null,steamVerified:linked,mpEnabled:true}:[]});
   }});
   const pause=()=>new Promise(r=>setTimeout(r,30));await pause();const doc=dom.window.document;
-  doc.querySelector('[data-tier=duo]').click();await pause();assert.equal(doc.getElementById('pix').disabled,false);
+  doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('detailBuy').click();await pause();assert.equal(doc.getElementById('pix').disabled,false);
   linked=false;await refresh();assert.equal(doc.getElementById('steamLabel').textContent,'Steam não conectada');
   assert.equal(doc.getElementById('pix').disabled,true);assert.equal(doc.getElementById('card').disabled,true);
   assert.equal(doc.getElementById('steamLogin').style.display,'flex');assert.match(doc.getElementById('status').textContent,/administração/);
