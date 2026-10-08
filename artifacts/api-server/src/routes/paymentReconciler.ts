@@ -110,7 +110,7 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
     return false;
   }
 
-  if (row.vipTier === "duo" && (String(payment.currency_id) !== "BRL" ||
+  if ((row.vipTier === "duo" || row.mpExternalReference?.startsWith("site-card-")) && (String(payment.currency_id) !== "BRL" ||
     Math.round(Number(payment.transaction_amount) * 100) !== Math.round(Number(row.amount) * 100))) return false;
 
   await db.update(paymentsTable).set({

@@ -122,7 +122,7 @@ app.get("/doar",(req,res)=>{
 
 app.get("/loja",(req,res)=>{
   const session=getCommunitySession(req);
-  if(!session)return res.redirect("/api/admin/auth/login?target=store");
+  if(!session)return res.redirect("/api/admin/auth/login?target=store&server="+(req.query.server === "trio" ? "trio" : "solo-duo"));
   return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username),"home",{isAdmin:session.isAdmin,username:session.username}));
 });
 

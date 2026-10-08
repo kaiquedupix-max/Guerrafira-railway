@@ -1,3 +1,4 @@
+<!-- Atualização da loja, checkout e publicação no dedicado: veja LOJA_CHECKOUT.md. -->
 # Super Combo Duo
 
 Produto da loja `/loja`: R$ 120,00, Bronze + Prata + Ouro por 30 dias
@@ -49,14 +50,15 @@ Drizzle também as descreve. `vip_subscriptions.source` é ampliado para 64
 caracteres para comportar IDs de pagamento. O usuário do banco precisa dessas
 permissões DDL. Nenhum dado existente é apagado.
 
-Configure um segredo estável `DUO_TOKEN_SECRET` no Railway. Se ausente, usa
+Configure um segredo estável `DUO_TOKEN_SECRET` no serviço do dedicado/Coolify. Se ausente, usa
 `ADMIN_SESSION_SECRET` ou `DISCORD_CLIENT_SECRET`, sem fallback público.
 Alterar esse segredo invalida links existentes; mantenha-o estável e faça uma
 migração deliberada se precisar rotacionar. Checkout Duo falha sem um segredo.
 
 Mantêm-se as configurações atuais de Discord, Mercado Pago, Stripe e RCON.
 O domínio/callback do fluxo é `https://www.guerrafriarust.com.br`, seguindo o
-checkout atual. `VIP_DUO_IMAGE_URL` é opcional; o padrão usa uma ilustração simples para não exibir o preço da arte do combo individual.
+checkout atual. `VIP_DUO_IMAGE_URL` é opcional; a arte padrão do Super Combo Duo
+está em `artifacts/api-server/assets/vip-super-combo-duo.png`.
 Os comandos RCON devem conceder grupos VIP de forma idempotente. Como no fluxo
 atual, não há transação distribuída entre Rust, Discord e PostgreSQL: uma queda
 após um comando externo e antes do registro pode exigir repetição desse comando.

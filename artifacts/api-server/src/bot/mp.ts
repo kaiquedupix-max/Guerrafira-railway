@@ -12,11 +12,13 @@ function getToken(): string | null {
 }
 
 function getWebhookUrl(): string {
+  if (process.env.MP_WEBHOOK_URL?.trim()) return process.env.MP_WEBHOOK_URL.trim();
+  if (process.env.APP_URL?.trim()) return `${process.env.APP_URL.trim().replace(/\/$/, "")}/webhook/mercadopago`;
   const rawDomain =
     process.env.RAILWAY_PUBLIC_DOMAIN ??
     process.env.APP_DOMAIN ??
     process.env.REPLIT_DEV_DOMAIN ??
-    "";
+    "www.guerrafriarust.com.br";
 
   const domain = rawDomain.trim().replace(/^https?:\/\//i, "").replace(/\/$/, "");
   if (!domain) {

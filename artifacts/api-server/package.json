@@ -8,7 +8,8 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:duo": "node --test tests/duo.test.mjs"
+    "test:duo": "node --test tests/duo.test.mjs",
+    "test:store": "node --test tests/duo.test.mjs tests/storeCheckout.test.mjs"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",

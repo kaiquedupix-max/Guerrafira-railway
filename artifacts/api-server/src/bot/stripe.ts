@@ -12,6 +12,7 @@ export type StripeCheckoutSession = {
   amount_total?: number | null;
   currency?: string | null;
   url?: string | null;
+  client_secret?: string | null;
   metadata?: Record<string, string> | null;
 };
 
@@ -23,6 +24,14 @@ function secretKey(): string | null {
 
 export function isStripeConfigured(): boolean {
   return Boolean(process.env.STRIPE_SECRET_KEY?.trim());
+}
+
+export function stripePublishableKey(): string {
+  const key = (process.env.STRIPE_PUBLISHABLE_KEY || process.env.STRIPE_PUBLIC_KEY || "").trim();
+  return /^pk_(test|live)_/.test(key) ? key : "";
+}
+export function isEmbeddedStripeConfigured(): boolean {
+  return isStripeConfigured() && Boolean(stripePublishableKey());
 }
 
 function publicBaseUrl(): string {
@@ -62,14 +71,20 @@ export async function createStripeCheckout(opts: {
   discordUserId: string;
   steamId: string;
   vipTier: string;
-}): Promise<{ sessionId: string; checkoutUrl: string } | { error: string }> {
+  embedded?: boolean;
+}): Promise<{ sessionId: string; checkoutUrl: string; clientSecret?: string } | { error: string }> {
   if (!isStripeConfigured()) return { error: "Pagamento por Stripe ainda não está configurado." };
 
   const baseUrl = publicBaseUrl();
   const body = new URLSearchParams();
   body.set("mode", "payment");
-  body.set("success_url", `${baseUrl}/api/store/stripe/success?session_id={CHECKOUT_SESSION_ID}`);
-  body.set("cancel_url", `${baseUrl}/loja?stripe=cancelled`);
+  if (opts.embedded) {
+    body.set("ui_mode", "embedded");
+    body.set("redirect_on_completion", "never");
+  } else {
+    body.set("success_url", `${baseUrl}/api/store/stripe/success?session_id={CHECKOUT_SESSION_ID}`);
+    body.set("cancel_url", `${baseUrl}/loja?stripe=cancelled`);
+  }
   body.set("client_reference_id", String(opts.paymentRowId));
   body.set("customer_email", opts.email);
   body.set("payment_method_types[0]", "card");
@@ -103,12 +118,12 @@ export async function createStripeCheckout(opts: {
       return { error: providerError };
     }
     const session = JSON.parse(rawText) as StripeCheckoutSession;
-    if (!session.id || !session.url) {
-      logger.error({ session }, "Stripe checkout response missing id or url");
+    if (!session.id || (opts.embedded ? !session.client_secret : !session.url)) {
+      logger.error({ sessionId: session.id }, "Stripe checkout response missing checkout credentials");
       return { error: "A Stripe criou a sessão sem uma URL válida de checkout." };
     }
     logger.info({ sessionId: session.id, paymentRowId: opts.paymentRowId, vipTier: opts.vipTier }, "Stripe checkout created");
-    return { sessionId: session.id, checkoutUrl: session.url };
+    return { sessionId: session.id, checkoutUrl: session.url || "", clientSecret: opts.embedded ? session.client_secret! : undefined };
   } catch (err) {
     logger.error({ err, paymentRowId: opts.paymentRowId }, "Stripe checkout exception");
     return { error: "Falha de comunicação com a Stripe. Tente novamente." };

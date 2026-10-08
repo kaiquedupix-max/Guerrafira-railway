@@ -1,3 +1,4 @@
+import { redirectVipToWebsite } from "./vipWebLinks.js";
 import {
   ActionRowBuilder,
   ActivityType,
@@ -47,11 +48,6 @@ import {
   handleTicketCreate,
   handleTicketTypeSelect,
   handleTicketClose,
-  handleVipSelect,
-  handleVipModal,
-  handleVipPayPix,
-  handleVipPayCard,
-  handlePixCopy,
 } from "./ticketsLinked.js";
 
 interface BotCommand {
@@ -114,14 +110,11 @@ export async function startBot(): Promise<void> {
       }
       if (interaction.isButton()) {
         const id = interaction.customId;
+        if (id.startsWith("vip_") || id === "pix_copy") { await redirectVipToWebsite(interaction); return; }
         if (id === "status_connect") { await handleConnectButton(interaction); return; }
         if (id === "ticket_create") { await handleTicketCreate(interaction); return; }
         if (id === "ticket_close") { await handleTicketClose(interaction); return; }
         if (id === "raffle_join") { await handleRaffleJoin(interaction); return; }
-        if (id === "vip_pay_pix") { await handleVipPayPix(interaction); return; }
-        if (id === "vip_pay_card") { await handleVipPayCard(interaction); return; }
-        if (id === "pix_copy") { await handlePixCopy(interaction); return; }
-        if (id.startsWith("vip_select_")) { await handleVipSelect(interaction); return; }
         if (id.startsWith("mapvote:")) { await handleMapVote(interaction); return; }
         if (id.startsWith("lp_nav:")) { await listaplayerCommand.handleNav(interaction); return; }
         if (id.startsWith("lp_copy:")) { await listaplayerCommand.handleCopy(interaction); return; }
@@ -136,8 +129,8 @@ export async function startBot(): Promise<void> {
       }
       if (interaction.isModalSubmit()) {
         const id = interaction.customId;
+        if (id.startsWith("vip_") || id === "pix_copy") { await redirectVipToWebsite(interaction); return; }
         if (id.startsWith("raffle_modal_")) { await handleRaffleModal(interaction); return; }
-        if (id.startsWith("vip_modal_")) { await handleVipModal(interaction); return; }
       }
     } catch (err) {
       logger.error({ err }, "Interaction error");

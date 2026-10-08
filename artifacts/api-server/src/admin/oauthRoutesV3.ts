@@ -7,7 +7,7 @@ import { issueAdminSessionV3, revokeAdminSessionV3 } from "./sessionBearer.js";
 import { issueCommunitySession, revokeCommunitySession } from "./communitySession.js";
 
 type Target = "admin" | "community" | "home" | "leaderboard" | "store" | "duo" | "season" | "donation" | "promo";
-type LoginState = { expires: number; target: Target; pwaDevice?: string };
+type LoginState = { expires: number; target: Target; pwaDevice?: string; storeServer?: "solo-duo" | "trio" };
 type PwaGrant = { token: string; expires: number };
 
 const states = new Map<string, LoginState>();
@@ -45,7 +45,7 @@ export function adminLoginV3(req: Request, res: Response): void {
   const target: Target = raw === "community" ? "community" : raw === "home" ? "home" : raw === "leaderboard" ? "leaderboard" : raw === "store" ? "store" : raw === "season" ? "season" : raw === "donation" ? "donation" : raw === "promo" ? "promo" : "admin";
   const state = randomUUID();
   const pwaDevice = validPwaDevice(req.query.device);
-  states.set(state, { expires: Date.now() + 10 * 60 * 1000, target: raw === "duo" ? "duo" : target, pwaDevice });
+  states.set(state, { expires: Date.now() + 10 * 60 * 1000, target: raw === "duo" ? "duo" : target, pwaDevice, storeServer:req.query.server === "trio" ? "trio" : "solo-duo" });
   res.setHeader("Cache-Control", "no-store");
   const q = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri(), scope: "identify", state });
   res.redirect(`https://discord.com/oauth2/authorize?${q.toString()}`);
@@ -79,7 +79,7 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
 
   if (stored.target === "community") return void res.redirect("/integridade");
   if (stored.target === "leaderboard") return void res.redirect("/leaderboard");
-  if (stored.target === "store") return void res.redirect("/loja");
+  if (stored.target === "store") return void res.redirect("/loja?server="+(stored.storeServer || "solo-duo"));
   if (stored.target === "duo") return void res.redirect("/api/store/duo/redeem");
   if (stored.target === "season") return void res.redirect("/api/season/2/inscricao-oficial");
   if (stored.target === "donation") return void res.redirect("/doar");
