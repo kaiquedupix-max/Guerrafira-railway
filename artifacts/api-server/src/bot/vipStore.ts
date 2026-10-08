@@ -4,6 +4,7 @@ import { startBoosterSystem } from "./booster.js";
 import { startDiscordModeration } from "./moderation.js";
 import { logger } from "../lib/logger.js";
 const VIP_KIT_UPDATE_MARKER="Guerra Fria • Kit VIP • cooldown 8h";
+const VIP_STORE_MARKER="Guerra Fria • Loja VIP oficial";
 const VIP_KIT_COOLDOWN_HOURS=8;
 let moderationStarted=false;
 async function announceVipKitCooldown(client: Client): Promise<void> {
@@ -41,7 +42,6 @@ async function announceVipKitCooldown(client: Client): Promise<void> {
   logger.info({ channelId }, "VIP Kit cooldown update announced");
 }
 
-
 export async function setupVipStore(client:Client):Promise<void> {
   if(!moderationStarted){startDiscordModeration(client);moderationStarted=true;}
   await startBoosterSystem(client).catch(err=>logger.error({err},"Booster initialization failed"));
@@ -50,9 +50,10 @@ export async function setupVipStore(client:Client):Promise<void> {
   const channel=await client.channels.fetch(channelId).catch(()=>null) as TextChannel|null;
   if(!channel?.isTextBased() || !channel.isSendable()) return;
   if(process.env.DISCORD_GUILD_ID && channel.guildId!==process.env.DISCORD_GUILD_ID) {logger.error({channelId},"VIP channel belongs to unexpected guild");return;}
+
   const previous:Message[]=[];
   let before:string|undefined;
-  // Discord returns at most 100 messages; walk the complete channel before deleting.
+  // Discord returns at most 100 messages; walk the complete channel before deleting old store cards.
   for(;;){
     const page=await channel.messages.fetch({limit:100,...(before?{before}:{})});
     if(!page.size) break;
@@ -60,19 +61,28 @@ export async function setupVipStore(client:Client):Promise<void> {
     before=page.last()!.id;
     if(page.size<100) break;
   }
-  const keep=new Set<string>();
-  for(const [server,label,emoji] of [["solo-duo","Solo/Duo","🛡️"],["trio","Trio","👥"]] as const){
-    const marker="Guerra Fria • Loja no site • "+server;
-    const embed=new EmbedBuilder().setColor(0xffb000).setTitle(emoji+" Loja VIP • Servidor "+label)
-      .setDescription("Acesse a loja oficial, veja os kits e escolha seu VIP. **Bronze • Prata • Ouro • Pacote 3 VIPs • Super Combo Duo**\n\n🔐 Login com Discord e Steam\n💳 PIX e cartão dentro do site\n🛒 Confira planos, benefícios e preços atualizados na loja."+(server==="trio"?"\n\n⏳ Servidor Trio em preparação. A loja informa a disponibilidade.":""))
-      .setFooter({text:marker});
-    const base=new URL(VIP_STORE_URL);base.pathname="/api/store/art/store-banner";base.search="";embed.setImage(base.toString());
-    const row=new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Ver kits • "+label).setEmoji(emoji).setURL(VIP_STORE_URL+"?server="+server));
-    const existing=previous.find(m=>m.embeds.some(e=>e.footer?.text===marker));
-    const message=existing ? await existing.edit({embeds:[embed],components:[row]}) : await channel.send({embeds:[embed],components:[row]});
-    keep.add(message.id);
-  }
-  // Only remove this bot's old cards, and only after both replacement cards exist.
-  for(const message of previous) if(!keep.has(message.id)) await message.delete().catch(err=>logger.warn({err,messageId:message.id},"Old VIP card could not be removed"));
-  logger.info({channelId},"VIP website links synchronized");
+
+  const embed=new EmbedBuilder()
+    .setColor(0xffb000)
+    .setTitle("🛒 LOJA OFICIAL • GUERRA FRIA")
+    .setDescription(
+      "Garanta seu **VIP Guerra Fria** pela loja oficial. Confira benefícios, kits, preços e finalize com segurança pelo site.\n\n"+
+      "🥉 **VIP Bronze** • 🥈 **VIP Prata** • 🥇 **VIP Ouro**\n"+
+      "🎁 **Pacote 3 VIPs** • 👥 **Super Combo**\n\n"+
+      "✅ **Solo/Duo:** compras liberadas\n"+
+      "⏳ **Trio:** servidor ainda não lançado — vendas bloqueadas por enquanto\n\n"+
+      "🔐 Login com Discord + Steam\n💳 PIX e cartão"
+    )
+    .setFooter({text:VIP_STORE_MARKER});
+  const art=new URL(VIP_STORE_URL);art.pathname="/api/store/art/store-banner";art.search="";embed.setImage(art.toString());
+  const row=new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("COMPRAR VIP NA LOJA").setEmoji("🛒").setURL(VIP_STORE_URL)
+  );
+
+  const existing=previous.find(m=>m.embeds.some(e=>e.footer?.text===VIP_STORE_MARKER));
+  const message=existing ? await existing.edit({embeds:[embed],components:[row]}) : await channel.send({embeds:[embed],components:[row]});
+
+  // Keep one store advertisement only. This removes both legacy Solo/Duo and Trio cards.
+  for(const old of previous) if(old.id!==message.id) await old.delete().catch(err=>logger.warn({err,messageId:old.id},"Old VIP card could not be removed"));
+  logger.info({channelId},"Single VIP store advertisement synchronized");
 }
