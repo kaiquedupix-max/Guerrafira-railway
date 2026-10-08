@@ -12,7 +12,7 @@ router.post("/inspect", async (req, res) => {
   try {
     const row = await inspectDuoToken(String(req.body?.token || ""));
     return res.json({ status: row.status === "available" && new Date(row.expires_at).getTime() <= Date.now() ? "expired" : row.status,
-      expiresAt: row.expires_at });
+      expiresAt: row.expires_at, slot: row.slot });
   } catch { return res.status(404).json({ error: "Link inválido ou pagamento indisponível." }); }
 });
 router.post("/claim", async (req, res) => {
@@ -25,10 +25,10 @@ router.post("/claim", async (req, res) => {
     await redeemDuo(String(req.body?.token || ""), session.userId, linked.steamId);
     return res.json({ status: "redeemed" });
   } catch (error) {
-    logger.error({ error, discordUserId: session.userId }, "Duo claim failed");
+    logger.error({ error, discordUserId: session.userId }, "Super Combo claim failed");
     const message = error instanceof Error ? error.message : "Entrega pendente. Tente novamente em instantes.";
     // Never include token or provider responses in feedback.
-    const safe = ["comprador", "outro duo", "já foi resgatado", "expirou", "inválido", "não aprovado", "indisponível"].some(word => message.includes(word));
+    const safe = ["comprador", "outro duo", "já foi resgatado", "já resgatou uma vaga", "expirou", "inválido", "não aprovado", "indisponível"].some(word => message.includes(word));
     return res.status(409).json({ error: safe ? message : "Entrega em processamento. A vaga fica vinculada à sua conta e será tentada novamente automaticamente." });
   }
 });
