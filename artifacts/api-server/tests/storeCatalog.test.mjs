@@ -25,3 +25,16 @@ test('server catalogs have isolated caches',async()=>{
  const solo=await catalog.storeKitCatalog('bronze','solo-duo');
  assert.equal(trio.serverId,'trio');assert.equal(solo.serverId,'solo-duo');assert.equal(calls,2);
 });
+test('Duo aliases appear once without hiding different tiers, quantities, skins or cooldowns',()=>{
+ const [kit]=catalog.parseKitCatalog(raw);
+ const primary={...kit,id:'gr1',name:'GR1',wipeDelaySeconds:1200};
+ const alias={...kit,id:'vip1',name:'VIP1',wipeDelaySeconds:0};
+ const differentTier={...kit,id:'prata',tier:'prata'};
+ const differentItems={...kit,id:'extra',items:[{...kit.items[0],amount:2000}]};
+ const differentSkin={...kit,id:'skin',items:[{...kit.items[0],skin:'123'}]};
+ const differentCooldown={...kit,id:'daily',cooldownSeconds:43200};
+ const source=[alias,primary,differentTier,differentItems,differentSkin,differentCooldown];
+ const unique=catalog.uniqueStoreKits(source);
+ assert.deepEqual(unique.map(k=>k.id),['gr1','prata','extra','skin','daily']);
+ assert.equal(source.length,6);assert.equal(alias.name,'VIP1');
+});

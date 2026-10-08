@@ -5,6 +5,18 @@ import { isVipProduct, type VipProduct } from "../bot/vipProducts.js";
 export type KitItem = {shortname:string;name:string;amount:number;skin:string;itemId:number;icon:string;inventory:string;includedIn:string;loadedAmmo:number;ammoType:string};
 export type StoreKit = {id:string;name:string;tier:string;cooldownSeconds:number;wipeDelaySeconds:number;items:KitItem[]};
 const iconBase="https://cdn.rusthelp.com/images/256/";
+/** Legacy Duo kit aliases remain usable in-game; display their contents only once. */
+export function uniqueStoreKits(kits:StoreKit[]):StoreKit[]{
+ const unique=new Map<string,StoreKit>();
+ for(const kit of kits){
+  const items=kit.items.map(i=>JSON.stringify([i.shortname,i.amount,i.skin,i.inventory,i.includedIn,i.loadedAmmo,i.ammoType])).sort();
+  const key=JSON.stringify([kit.tier,kit.cooldownSeconds,items]);
+  const existing=unique.get(key);
+  // Prefer the primary kit's conservative post-wipe wait over an older alias.
+  if(!existing||kit.wipeDelaySeconds>existing.wipeDelaySeconds)unique.set(key,kit);
+ }
+ return [...unique.values()];
+}
 export function parseKitCatalog(raw:string):StoreKit[]{
   if(raw.length>2_000_000)throw Error("Catálogo muito grande");
   const data=JSON.parse(raw);if(data.version!==2||!Array.isArray(data.kits)||data.kits.length>150)throw Error("Plugin incompatível");
@@ -28,7 +40,8 @@ export async function storeKitCatalog(tier:VipProduct,server:GuerraFriaServerId=
  })().catch(()=>{}).finally(()=>{entry.pending=undefined});}
  await entry.pending;
  const wanted=tier==="combo"||tier==="duo"?["bronze","prata","ouro"]:[tier];
- const kits=entry.kits.filter(k=>wanted.includes(k.tier));
+ const matching=entry.kits.filter(k=>wanted.includes(k.tier));
+ const kits=server==='solo-duo'?uniqueStoreKits(matching):matching;
  return {kits,serverId:server,updatedAt:entry.updated?new Date(entry.updated).toISOString():null,stale:entry.updated>0&&Date.now()-entry.updated>60_000,
  available:entry.updated>0,complete:wanted.every(t=>kits.some(k=>k.tier===t)),
  message:entry.updated?null:"O catálogo do servidor está temporariamente indisponível. Não exibimos itens estimados."};
