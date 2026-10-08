@@ -5,6 +5,8 @@ inclui Bronze, Prata e Ouro para o comprador e para um duo. A arte está em
 `artifacts/api-server/assets/vip-super-combo-duo.png` e é servida por
 `/api/store/art/duo`. O build copia a arte para `dist/assets`; preserve essa
 pasta ao publicar o artefato de produção.
+Os embeds do Discord usam uma versão horizontal em
+`vip-super-combo-duo-banner.png`, servida por `/api/store/art/duo-banner`.
 
 ## Pagamentos dentro do site
 

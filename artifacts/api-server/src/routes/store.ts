@@ -21,11 +21,11 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const router = Router();
-router.get("/art/duo", (_req,res) => {
+for (const [slug, filename] of [["duo", "vip-super-combo-duo.png"], ["duo-banner", "vip-super-combo-duo-banner.png"]] as const) router.get(`/art/${slug}`, (_req,res) => {
   res.setHeader("Cache-Control","public, max-age=86400");
-  const built=fileURLToPath(new URL("./assets/vip-super-combo-duo.png",import.meta.url));
-  const local=resolve(process.cwd(),"assets/vip-super-combo-duo.png");
-  res.sendFile(existsSync(built)?built:existsSync(local)?local:resolve(process.cwd(),"artifacts/api-server/assets/vip-super-combo-duo.png"));
+  const built=fileURLToPath(new URL(`./assets/${filename}`,import.meta.url));
+  const local=resolve(process.cwd(),"assets",filename);
+  res.sendFile(existsSync(built)?built:existsSync(local)?local:resolve(process.cwd(),"artifacts/api-server/assets",filename));
 });
 router.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
 router.use("/duo", duoRouter);

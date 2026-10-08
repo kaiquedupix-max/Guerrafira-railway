@@ -66,7 +66,7 @@ export async function setupVipStore(client:Client):Promise<void> {
     const embed=new EmbedBuilder().setColor(0xffb000).setTitle(emoji+" VIP • Servidor "+label)
       .setDescription("Veja os kits e escolha seu VIP na loja oficial. **Bronze • Prata • Ouro • Pacote 3 VIPs • Super Combo Duo**\n\n🔐 Login com Discord e Steam\n💳 PIX e cartão dentro do site\n🎁 Super Combo Duo: os três VIPs para você e seu duo por **R$ 120,00**"+(server==="trio"?"\n\n⏳ Servidor Trio em preparação. A loja informa a disponibilidade.":""))
       .setFooter({text:marker});
-    const base=new URL(VIP_STORE_URL);base.pathname="/api/store/art/duo";base.search="";embed.setImage(base.toString());
+    const base=new URL(VIP_STORE_URL);base.pathname="/api/store/art/duo-banner";base.search="";embed.setImage(base.toString());
     const row=new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Ver kits • "+label).setEmoji(emoji).setURL(VIP_STORE_URL+"?server="+server));
     const existing=previous.find(m=>m.embeds.some(e=>e.footer?.text===marker));
     const message=existing ? await existing.edit({embeds:[embed],components:[row]}) : await channel.send({embeds:[embed],components:[row]});

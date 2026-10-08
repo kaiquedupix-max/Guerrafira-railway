@@ -128,6 +128,7 @@ test('Discord migration preserves humans, paginates old cards, replaces with two
   assert.equal(messages.filter(m=>m.author.id==='human').length,1);
   for(const m of messages.filter(m=>m.author.id==='bot')){
     const button=m.components[0].components[0];assert.equal(button.style,5);assert.match(button.url,/\/loja\?server=(solo-duo|trio)$/);assert.equal(button.custom_id,undefined);
+    assert.match(m.embeds[0].image.url,/\/api\/store\/art\/duo-banner$/);
   }
   await vip.setupVipStore(client);assert.equal(messages.length,3);assert.equal(deleted.length,105);
 });
