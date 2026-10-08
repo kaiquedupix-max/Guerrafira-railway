@@ -37,8 +37,10 @@ export const GUERRA_FRIA_SERVERS: Record<GuerraFriaServerId, GuerraFriaServerCon
     name: "Guerra Fria Trio",
     shortName: "Trio",
     teamSize: "Máximo 3 jogadores",
-    enabled: process.env.STORE_TRIO_ENABLED === "true" && Boolean(process.env.TRIO_RCON_HOST && process.env.TRIO_RCON_PORT && process.env.TRIO_RCON_PASSWORD) && ["BRONZE","PRATA","OURO"].every(t => Boolean(process.env[`TRIO_VIP_${t}_GRANT_CMD`] && process.env[`TRIO_VIP_${t}_REVOKE_CMD`])),
-    comingSoon: process.env.STORE_TRIO_ENABLED !== "true",
+    // O Trio ainda não foi lançado. Mantemos a configuração pronta, mas as
+    // vendas ficam bloqueadas no backend independentemente das variáveis de ambiente.
+    enabled: false,
+    comingSoon: true,
     hostEnv: "TRIO_RUST_SERVER_HOST",
     portEnv: "TRIO_RUST_SERVER_PORT",
     rconHostEnv: "TRIO_RCON_HOST",
