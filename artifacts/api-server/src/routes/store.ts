@@ -9,8 +9,14 @@ import { VIP_PRODUCTS, isVipProduct, type VipProduct } from "../bot/vipProducts.
 import { GUERRA_FRIA_SERVERS, parseServerId, type GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
 import { processStripeCheckoutSession } from "./stripePayment.js";
+import { duoSecret } from "./duoPolicy.js";
+import { ensureDuoSchema, listDuoPurchases } from "./duoService.js";
+import duoRouter from "./duoRoutes.js";
+import { officialSteam, recordOfficialSteam, steamState, readSteamState } from "./storeSteamAuth.js";
 
 const router = Router();
+router.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
+router.use("/duo", duoRouter);
 const BASE_URL = "https://www.guerrafriarust.com.br";
 const STEAM_OPENID = "https://steamcommunity.com/openid/login";
 
@@ -29,6 +35,11 @@ async function validate(req: Request, res: Response): Promise<{ tier: VipProduct
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { res.status(400).json({ error: "E-mail inválido." }); return null; }
   const linked = await getLinkedSteamV2(session.userId);
   if (!linked?.steamId) { res.status(409).json({ error: "Conecte sua Steam pelo login oficial antes de finalizar a compra." }); return null; }
+  if (tier === "duo") {
+    if (!(await officialSteam(session.userId, linked.steamId))) { res.status(409).json({ error: "Entre com Steam pelo botão oficial para comprar o Super Combo Duo." }); return null; }
+    duoSecret();
+    await ensureDuoSchema();
+  }
   return { tier, serverId, steamId: linked.steamId, email, discordUserId: session.userId };
 }
 
@@ -46,7 +57,10 @@ router.get("/servers", (_req, res) => {
 router.get("/steam/login", (req, res) => {
   const session = getCommunitySession(req);
   if (!session) return void res.redirect("/api/admin/auth/login?target=store");
-  const returnTo = `${BASE_URL}/api/store/steam/callback`;
+  const state = steamState(session.userId, req.query.duo === "1");
+  res.cookie("gf_store_steam_state", state, { httpOnly:true, secure:true, sameSite:"lax", path:"/api/store/steam", maxAge:600_000 });
+  const decoded = readSteamState(state, session.userId)!;
+  const returnTo = `${BASE_URL}/api/store/steam/callback?state=${decoded.nonce}`;
   const q = new URLSearchParams({
     "openid.ns":"http://specs.openid.net/auth/2.0",
     "openid.mode":"checkid_setup",
@@ -62,6 +76,13 @@ router.get("/steam/callback", async(req,res)=>{
   const session=getCommunitySession(req);
   if(!session)return void res.redirect("/api/admin/auth/login?target=store");
   try{
+    const state = readSteamState(String(req.cookies?.gf_store_steam_state || ""), session.userId);
+    res.clearCookie("gf_store_steam_state", { path:"/api/store/steam", secure:true, sameSite:"lax" });
+    if (!state || req.query.state !== state.nonce ||
+      req.query["openid.return_to"] !== `${BASE_URL}/api/store/steam/callback?state=${state.nonce}` ||
+      req.query["openid.op_endpoint"] !== STEAM_OPENID) throw new Error("Estado Steam inválido.");
+    const signed = String(req.query["openid.signed"] || "").split(",");
+    if (!["op_endpoint","claimed_id","identity","return_to","response_nonce"].every(field => signed.includes(field))) throw new Error("Resposta Steam incompleta.");
     const params=new URLSearchParams();
     for(const [key,value] of Object.entries(req.query))if(key.startsWith("openid.")&&typeof value==="string")params.set(key,value);
     params.set("openid.mode","check_authentication");
@@ -76,7 +97,8 @@ router.get("/steam/callback", async(req,res)=>{
       const message=saved.reason==="discord-linked"?STEAM_LOCKED_NOTICE:"Esta Steam já está vinculada a outra conta do Discord.";
       return void res.status(409).type("html").send(`<meta name="viewport" content="width=device-width"><body style="background:#08070a;color:white;font-family:system-ui;padding:30px"><h1>Não foi possível vincular</h1><p>${message}</p><a style="color:#66c0f4" href="/loja">Voltar à loja</a></body>`);
     }
-    return void res.redirect("/loja?steam=ok");
+    await recordOfficialSteam(session.userId, match[1]);
+    return void res.redirect(state.duo ? "/api/store/duo/redeem" : "/loja?steam=ok");
   }catch(error){logger.error({error,discordUserId:session.userId},"store steam callback failed");return void res.status(401).type("html").send(`<meta name="viewport" content="width=device-width"><body style="background:#08070a;color:white;font-family:system-ui;padding:30px"><h1>Falha ao confirmar Steam</h1><p>Tente novamente pelo botão Entrar com Steam.</p><a style="color:#66c0f4" href="/loja">Voltar à loja</a></body>`)}
 });
 
@@ -84,7 +106,14 @@ router.get("/me", async (req, res) => {
   const session = getCommunitySession(req);
   if (!session) return res.status(401).json({ error: "Sua sessão expirou. Entre novamente com o Discord." });
   const linked = await getLinkedSteamV2(session.userId);
-  return res.json({ discordUserId: session.userId, username: session.username, steamId: linked?.steamId ?? null, stripeEnabled: isStripeConfigured() });
+  return res.json({ discordUserId: session.userId, username: session.username, steamId: linked?.steamId ?? null,
+    steamVerified: linked?.steamId ? await officialSteam(session.userId, linked.steamId) : false, stripeEnabled: isStripeConfigured() });
+});
+
+router.get("/duo-purchases", async (req, res) => {
+  const session = getCommunitySession(req);
+  if (!session) return res.status(401).json({ error: "Entre com Discord." });
+  return res.json(await listDuoPurchases(session.userId));
 });
 
 router.post("/pix", async (req, res) => {

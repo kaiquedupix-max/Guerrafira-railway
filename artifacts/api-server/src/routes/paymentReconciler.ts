@@ -3,6 +3,7 @@ import { db, paymentsTable, vipSubscriptionsTable } from "@workspace/db";
 import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "../bot/vipProducts.js";
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
+import { fulfillDuoPayment } from "./duoService.js";
 
 type PaymentRow = typeof paymentsTable.$inferSelect;
 type MpPayment = Record<string, unknown>;
@@ -77,7 +78,7 @@ async function findRecord(payment: MpPayment): Promise<PaymentRow | null> {
   const discordUserId = String(metadata.discord_user_id ?? "");
   const steamId = String(metadata.steam_id ?? "");
   const vipTier = String(metadata.vip_tier ?? "");
-  if (discordUserId && steamId && vipTier) {
+  if (discordUserId && steamId && vipTier && vipTier !== "duo") {
     const [row] = await db.select().from(paymentsTable).where(and(
       eq(paymentsTable.discordUserId, discordUserId),
       eq(paymentsTable.steamId, steamId),
@@ -109,6 +110,9 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
     return false;
   }
 
+  if (row.vipTier === "duo" && (String(payment.currency_id) !== "BRL" ||
+    Math.round(Number(payment.transaction_amount) * 100) !== Math.round(Number(row.amount) * 100))) return false;
+
   await db.update(paymentsTable).set({
     mpPaymentId: paymentId || row.mpPaymentId,
     mpPreferenceId: preferenceId || row.mpPreferenceId,
@@ -126,6 +130,10 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
     return true;
   }
 
+  if (row.vipTier === "duo") {
+    try { return await fulfillDuoPayment(row.id); }
+    catch (error) { logger.error({ error, rowId: row.id }, "Duo purchase delivery will retry"); return false; }
+  }
   if (row.vipGrantedAt) return true;
 
   const [existingFulfillment] = await db.select().from(vipSubscriptionsTable).where(and(
