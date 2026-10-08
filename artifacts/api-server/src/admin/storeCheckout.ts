@@ -109,8 +109,10 @@ export const storeCheckoutScript = String.raw`
           showSuccess(d);
           refreshPurchases();
           if(d.delivered&&d.dmStatus==='sent')clearInterval(paymentTimer);
-        }else if(['rejected','cancelled','failed','refunded','charged_back'].includes(d.status)){
-          clearInterval(paymentTimer);status('Pagamento '+d.status+'. Confira sua compra antes de iniciar outra tentativa.');
+        }else if(['rejected','cancelled','failed','refunded','charged_back','expired'].includes(d.status)){
+          clearInterval(paymentTimer);el('paymentSuccess').hidden=true;
+          const labels={rejected:'recusado',cancelled:'cancelado',failed:'não concluído',refunded:'reembolsado',charged_back:'contestado',expired:'expirado'};
+          status('Pagamento '+labels[d.status]+'. Confira sua compra antes de iniciar outra tentativa.');
         }else status('Aguardando confirmação do pagamento. Seus VIPs serão ativados automaticamente.');
       }catch{}
     };poll();paymentTimer=setInterval(poll,5000);
