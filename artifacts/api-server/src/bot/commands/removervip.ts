@@ -8,12 +8,15 @@ import {
 import { and, eq, gt, asc } from "drizzle-orm";
 import { db, vipSubscriptionsTable } from "@workspace/db";
 import { revokeVip, VIP_TIERS, type VipTier } from "../vip.js";
+import { subscriptionServer } from "../../routes/storeOrders.js";
+import { GUERRA_FRIA_SERVERS } from "../../core/servers.js";
 import { logger } from "../../lib/logger.js";
 
 export const data = new SlashCommandBuilder()
   .setName("removervip")
   .setDescription("Remove o VIP de um membro manualmente.")
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+  .addStringOption(opt => opt.setName("servidor").setDescription("Servidor do VIP que será removido").setRequired(true).addChoices({name:"Solo/Duo",value:"solo-duo"},{name:"Trio",value:"trio"}))
   .addStringOption((opt) =>
     opt
       .setName("vip")
@@ -25,6 +28,8 @@ export const data = new SlashCommandBuilder()
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
   try {
     const focused = interaction.options.getFocused().toLowerCase().trim();
+    const selectedServer = interaction.options.getString("servidor");
+    if (!selectedServer) { await interaction.respond([]); return; }
     const now = new Date();
 
     // Busca uma faixa maior antes de filtrar. O código antigo limitava a 25
@@ -38,11 +43,12 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
           eq(vipSubscriptionsTable.gameVipRemoved, false),
         ),
       )
-      .orderBy(asc(vipSubscriptionsTable.expiresAt))
-      .limit(500);
+      .orderBy(asc(vipSubscriptionsTable.expiresAt));
 
+    const servers = new Map(await Promise.all(active.map(async s => [s.id, await subscriptionServer(s.source)] as const)));
     const choices = active
       .filter((s) => {
+        if (servers.get(s.id) !== selectedServer) return false;
         if (!focused) return true;
         return (
           String(s.steamId || "").toLowerCase().includes(focused) ||
@@ -55,7 +61,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
         const vip = VIP_TIERS[s.vipTier as VipTier];
         const daysLeft = Math.max(0, Math.ceil((new Date(s.expiresAt).getTime() - now.getTime()) / 86_400_000));
         return {
-          name: `${vip?.emoji ?? "⭐"} ${vip?.name ?? s.vipTier} — ${s.steamId} (${daysLeft}d restante)`.slice(0, 100),
+          name: `${vip?.emoji ?? "⭐"} ${vip?.name ?? s.vipTier} — ${GUERRA_FRIA_SERVERS[servers.get(s.id)!].shortName} ${s.steamId} (${daysLeft}d restante)`.slice(0, 100),
           value: String(s.id),
         };
       });
@@ -71,6 +77,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ ephemeral: true });
 
   try {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.BanMembers)) { await interaction.editReply("Sem permissão para gerenciar VIPs."); return; }
     const subId = parseInt(interaction.options.getString("vip", true), 10);
     if (isNaN(subId)) {
       await interaction.editReply("❌ Seleção inválida. Use o autocomplete para escolher um VIP ativo.");
@@ -84,6 +91,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
     if (!sub) {
       await interaction.editReply("❌ Registro VIP não encontrado. Pode ter sido removido.");
+      return;
+    }
+    if (await subscriptionServer(sub.source) !== interaction.options.getString("servidor", true)) {
+      await interaction.editReply("❌ Esse VIP pertence a outro servidor. Selecione novamente no servidor correto.");
       return;
     }
 
@@ -112,6 +123,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       .setTitle(`${vip?.emoji ?? "⭐"} VIP Removido`)
       .addFields(
         { name: "Membro", value: discordLabel, inline: true },
+        { name: "Servidor", value: GUERRA_FRIA_SERVERS[await subscriptionServer(sub.source)].name, inline: true },
         { name: "Tier", value: vip?.name ?? sub.vipTier, inline: true },
         { name: "Steam ID", value: `\`${sub.steamId}\``, inline: true },
         { name: "Admin", value: `<@${interaction.user.id}>`, inline: true },

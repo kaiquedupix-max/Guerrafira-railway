@@ -1,171 +1,27 @@
-import {
-  SlashCommandBuilder,
-  EmbedBuilder,
-  type ChatInputCommandInteraction,
-} from "discord.js";
-import { VIP_TIERS } from "../vip.js";
-
-export const data = new SlashCommandBuilder()
-  .setName("ajuda")
-  .setDescription("Mostra todos os comandos do bot e explica o que cada um faz.");
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const isAdmin = interaction.memberPermissions?.has("BanMembers") ?? false;
-
-  const prices = {
-    bronze: VIP_TIERS.bronze.price.toFixed(2),
-    prata: VIP_TIERS.prata.price.toFixed(2),
-    ouro: VIP_TIERS.ouro.price.toFixed(2),
-  };
-
-  const geral = new EmbedBuilder()
-    .setColor(0x7c3aed)
-    .setTitle("📖 Central de Ajuda — Guerra Fria")
-    .setDescription("Sistema oficial de administração, VIP, Booster, vínculo Steam, leaderboard, tickets e integração com o servidor Rust.")
-    .addFields(
-      {
-        name: "👤 COMANDOS GERAIS",
-        value: [
-          "`/ajuda` — abre esta central de ajuda.",
-          "`/meuvip` — mostra seu VIP atual e data de expiração.",
-          "`/leaderboard categoria` — consulta os rankings do wipe pelo Discord.",
-          "🌐 O leaderboard completo também pode ser aberto pelo site oficial.",
-        ].join("\n"),
-      },
-      {
-        name: "🎮 VÍNCULO STEAM",
-        value: [
-          "O SteamID informado pela primeira vez fica **vinculado à conta do Discord**.",
-          "Depois do vínculo, VIP, Booster e outras funções reutilizam a Steam automaticamente.",
-          "🔒 O próprio jogador não pode trocar a Steam vinculada.",
-          "🎫 Para solicitar alteração, é necessário abrir um ticket com a administração.",
-        ].join("\n"),
-      },
-      {
-        name: "👑 VIP",
-        value: [
-          `🥉 **Bronze** — R$ ${prices.bronze}/mês`,
-          `🥈 **Prata** — R$ ${prices.prata}/mês`,
-          `🥇 **Ouro** — R$ ${prices.ouro}/mês`,
-          "💳 Compra via PIX ou cartão pelo Mercado Pago.",
-          "✅ Após o pagamento, a ativação é automática.",
-          "🔗 Quem já possui Steam vinculada não precisa informar o SteamID novamente.",
-        ].join("\n"),
-      },
-      {
-        name: "🚀 BOOSTER",
-        value: [
-          "O painel Booster verifica o impulso do Discord e aplica automaticamente os benefícios no Rust.",
-          "🎮 Utiliza o SteamID já vinculado à conta quando disponível.",
-          "♻️ Ao deixar de impulsionar, o grupo Booster é removido automaticamente do jogo.",
-        ].join("\n"),
-      },
-      {
-        name: "🎫 TICKETS",
-        value: [
-          "Use o painel para **Suporte**, **Comprar VIP**, **Denunciar Jogador** ou **Apelar Banimento**.",
-          "📩 Ao fechar um ticket, o histórico é enviado aos participantes e não fica armazenado como histórico consultável pelo bot.",
-        ].join("\n"),
-      },
-    )
-    .setFooter({ text: "Guerra Fria • Sistema oficial do servidor" })
-    .setTimestamp();
-
-  const embeds = [geral];
-
-  if (isAdmin) {
-    const admin1 = new EmbedBuilder()
-      .setColor(0xe74c3c)
-      .setTitle("🛡️ Staff — Moderação e Jogadores")
-      .addFields(
-        {
-          name: "⚔️ PUNIÇÕES",
-          value: [
-            "`/banir` — bane jogadores online ou offline, com motivo e duração.",
-            "`/desbanir` — remove um banimento.",
-            "`/kickar` — expulsa um jogador online.",
-            "⏱️ Banimentos temporários são removidos automaticamente ao expirar.",
-          ].join("\n"),
-        },
-        {
-          name: "👥 JOGADORES",
-          value: [
-            "`/listaplayer` — lista jogadores online/offline registrados pelo bot.",
-            "↳ Possui busca por nome/SteamID e paginação.",
-            "`/verificar` — marca o jogador como verificado, concede cargo no Discord e grupo `vr` no Rust.",
-            "🛡️ Jogadores verificados são ignorados pelos alertas do anti-cheat próprio.",
-          ].join("\n"),
-        },
-        {
-          name: "🎮 GERENCIAMENTO DE STEAM VINCULADA",
-          value: [
-            "`/steam consultar usuário` — mostra o SteamID vinculado e estado do Booster.",
-            "`/steam trocar usuário novo_steamid motivo` — troca a Steam vinculada pela administração.",
-            "↳ Se o Booster estiver ativo, transfere automaticamente o grupo `bs` para a nova Steam.",
-            "`/steam desvincular usuário motivo` — remove completamente o vínculo Steam.",
-            "⚠️ Use troca/desvinculação apenas após confirmar a solicitação do jogador pelo ticket.",
-          ].join("\n"),
-        },
-        {
-          name: "🚀 BOOSTER",
-          value: [
-            "Painel Booster — verifica o impulso e adiciona o jogador ao grupo `bs` no Rust.",
-            "`/removerbooster steamid` — remove manualmente os benefícios Booster do SteamID.",
-            "🔒 Para trocar Steam vinculada, use `/steam trocar`.",
-          ].join("\n"),
-        },
-      );
-
-    const admin2 = new EmbedBuilder()
-      .setColor(0xf1c40f)
-      .setTitle("⚙️ Staff — VIP, Ranking e Sistemas")
-      .addFields(
-        {
-          name: "👑 VIP",
-          value: [
-            "`/listvips` — lista os VIPs ativos.",
-            "`/darvip` — concede VIP manualmente.",
-            "`/removervip` — remove um VIP ativo.",
-            "💳 Compras pelo Mercado Pago são processadas e ativadas automaticamente.",
-          ].join("\n"),
-        },
-        {
-          name: "🎉 SORTEIOS",
-          value: [
-            "`/criarsorteio` — cria sorteio de VIP com duração configurável.",
-            "↳ O sistema escolhe o vencedor e entrega o prêmio automaticamente.",
-          ].join("\n"),
-        },
-        {
-          name: "📊 LEADERBOARD",
-          value: [
-            "`/leaderboard categoria` — consulta uma categoria no Discord.",
-            "`/resetleaderboard` — zera as estatísticas do wipe após confirmação.",
-            "🏆 O site possui Top 10 e ranking completo de combate, farm, raid e outras estatísticas.",
-          ].join("\n"),
-        },
-        {
-          name: "🛡️ ANTI-CHEAT PRÓPRIO",
-          value: [
-            "O sistema monitora automaticamente padrões de combate suspeitos e envia alertas para investigação da staff.",
-            "✅ Não aplica ban automático.",
-            "🔕 Jogadores já verificados pela administração são ignorados pelo detector.",
-            "💾 Hits e sequências de combate são analisados em memória; não são armazenados individualmente no banco.",
-          ].join("\n"),
-        },
-        {
-          name: "🗺️ MAPA & TICKETS",
-          value: [
-            "`/criarmapa` — cria/configura a votação de mapa.",
-            "📩 Logs de ticket não são mantidos no banco de dados.",
-          ].join("\n"),
-        },
-      )
-      .setFooter({ text: "Guerra Fria • Área administrativa" })
-      .setTimestamp();
-
-    embeds.push(admin1, admin2);
-  }
-
-  await interaction.reply({ embeds, ephemeral: true });
+import { SlashCommandBuilder, EmbedBuilder, PermissionsBitField, type ChatInputCommandInteraction } from "discord.js";
+type Definition = { name:string; description:string; default_member_permissions?:string|null; options?:Definition[]; type?:number };
+let definitions:Definition[]=[];
+export function configureHelp(commands:unknown[]){ definitions=commands as Definition[]; }
+export const data=new SlashCommandBuilder().setName("ajuda").setDescription("Lista os comandos disponíveis e explica a loja e os VIPs.");
+export function commandHelp(command:Definition):string[]{
+ const children=(command.options??[]).filter(o=>o.type===1||o.type===2);
+ return children.length?children.flatMap(c=>commandHelp({...c,name:command.name+' '+c.name})):['`/'+command.name+'` — '+command.description];
+}
+export async function execute(interaction:ChatInputCommandInteraction):Promise<void>{
+ const visible=definitions.filter(c=>!c.default_member_permissions||interaction.memberPermissions?.has(new PermissionsBitField(BigInt(c.default_member_permissions))));
+ const lines=visible.sort((a,b)=>a.name.localeCompare(b.name)).flatMap(commandHelp);
+ const embeds=[new EmbedBuilder().setColor(0xffb800).setTitle("Guerra Fria • Central de ajuda").setDescription([
+  "**Loja oficial:** https://www.guerrafriarust.com.br/loja",
+  "Compre VIP Bronze, Prata, Ouro e combos pelo site, com Steam e Discord autenticados. PIX e cartão Mercado Pago ficam no site; Stripe abre o checkout seguro externo.",
+  "Escolha o servidor antes de pagar. Após a confirmação, o site mostra o estado da ativação e o bot envia o recibo no privado quando permitido.",
+  "**Presentes:** envie o link exclusivo ao amigo. Ele entra com Steam e Discord para resgatar uma vez, dentro do prazo exibido. O Super Combo Duo ativa os três VIPs para o comprador e reserva os três para o amigo.",
+  "**No jogo:** `/kit` abre os kits e seus itens. Permissões, cooldowns e limites de resgate são respeitados. A validade dos VIPs continua sendo gerenciada pelo bot.",
+  "**Administração:** `/darvip` e `/removervip` exigem escolher Solo/Duo ou Trio. A remoção afeta a assinatura escolhida naquele servidor; outra assinatura ainda ativa continua valendo. `/listvips` e `/meuvip` mostram o servidor e o vencimento. `/removerbooster` usa o SteamID64 vinculado.",
+  "Para corrigir o vínculo Steam, abra um ticket com a administração."
+ ].join("\n\n"))];
+ let page:string[]=[];let size=0;
+ const push=()=>{if(page.length)embeds.push(new EmbedBuilder().setColor(0xffb800).setTitle("Comandos disponíveis • "+embeds.length).setDescription(page.join("\n")));page=[];size=0;};
+ for(const line of lines){if(size+line.length+1>3500)push();page.push(line);size+=line.length+1;}push();
+ await interaction.reply({embeds:[embeds[0]],ephemeral:true});
+ for(const embed of embeds.slice(1))await interaction.followUp({embeds:[embed],ephemeral:true});
 }

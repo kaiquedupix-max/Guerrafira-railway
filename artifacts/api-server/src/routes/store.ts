@@ -35,7 +35,8 @@ for (const [slug, filename] of [["duo", "vip-super-combo-duo.png"], ["duo-banner
 router.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
 router.use("/duo", duoRouter);
 router.use("/gift", giftRouter);
-router.get('/catalog/:tier',async(req,res)=>{const tier=parseTier(req.params.tier);if(!tier)return res.status(400).json({error:'VIP inválido.'});if(req.query.server&&req.query.server!=='solo-duo')return res.json({kits:[],available:false,message:'Servidor em preparação.'});return res.json(await storeKitCatalog(tier));});
+router.get('/servers',(_req,res)=>res.json(Object.values(GUERRA_FRIA_SERVERS).map(s=>({id:s.id,name:s.name,enabled:s.enabled&&!s.comingSoon}))));
+router.get('/catalog/:tier',async(req,res)=>{const tier=parseTier(req.params.tier),server=parseServerId(req.query.server??'solo-duo');if(!tier||!server)return res.status(400).json({error:'VIP ou servidor inválido.'});return res.json(await storeKitCatalog(tier,server));});
 const BASE_URL = "https://www.guerrafriarust.com.br";
 const STEAM_OPENID = "https://steamcommunity.com/openid/login";
 
@@ -184,6 +185,7 @@ router.get("/payments/:id", async(req,res) => {
   const duo = row.vipTier === "duo" && row.status === "approved" ? (await listDuoPurchases(session.userId)).find(p => p.id === row.id) : null;
   return res.json({id:row.id,status:row.status,delivered:Boolean(receipt?.completed_at)&&!order?.gift,gift:Boolean(order?.gift),giftReady:Boolean(gift),
     product: isVipProduct(row.vipTier) ? VIP_PRODUCTS[row.vipTier].name : "VIP", amount:row.amount,
+    serverName:GUERRA_FRIA_SERVERS[order?.server_id==='trio'?'trio':'solo-duo'].name,
     steamId:row.steamId, claimUrl:gift?.claimUrl??duo?.claimUrl??null, claimStatus:gift?.status??duo?.claimStatus, expiresAt:gift?.expiresAt??duo?.expiresAt,
     dmStatus:receipt?.sent_at ? "sent" : receipt?.attempts ? "retrying" : "pending"});
 });

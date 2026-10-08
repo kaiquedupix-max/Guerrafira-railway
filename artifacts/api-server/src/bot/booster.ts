@@ -89,13 +89,18 @@ export async function handleBoosterVerifyModal(interaction: ModalSubmitInteracti
 async function syncOne(client: Client, discordUserId: string, steamId: string, previouslyActive: boolean, manuallyDisabled: boolean): Promise<void> {
   if (manuallyDisabled || !previouslyActive) return;
   const guildId = process.env.DISCORD_GUILD_ID?.trim(); if (!guildId) return;
-  const guild = await client.guilds.fetch(guildId).catch(() => null); if (!guild) return;
-  const member = await guild.members.fetch(discordUserId).catch(() => null);
+  const guild = await client.guilds.fetch(guildId);
+  const member = await guild.members.fetch(discordUserId).catch((error: {code?:number}) => {
+    if (error.code === 10007) return null;
+    throw error; // A Discord outage must never revoke a valid Booster.
+  });
   const boosting = Boolean(member?.premiumSince);
   if (boosting) {
-    await executeRconCommand(grantCommand(steamId)).catch((err) => logger.error({ err, discordUserId, steamId }, "Failed to add Booster group during sync"));
+    const result = await executeRconCommand(grantCommand(steamId));
+    if (result === null || /unknown command|error:|failed|exception/i.test(result)) throw new Error("RCON não confirmou a restauração do Booster");
   } else if (previouslyActive) {
-    await executeRconCommand(revokeCommand(steamId)).catch((err) => logger.error({ err, discordUserId, steamId }, "Failed to remove Booster group during sync"));
+    const result = await executeRconCommand(revokeCommand(steamId));
+    if (result === null || /unknown command|error:|failed|exception/i.test(result)) throw new Error("RCON não confirmou a remoção do Booster");
     await db.update(boosterLinksTable).set({ active: false, updatedAt: new Date() }).where(eq(boosterLinksTable.discordUserId, discordUserId));
     logger.info({ discordUserId, steamId }, "Booster ended; removed from bs group in-game");
   }
@@ -114,7 +119,7 @@ export async function startBoosterSystem(client: Client): Promise<void> {
       if (interaction.isModalSubmit() && interaction.customId === "booster_verify_modal") await handleBoosterVerifyModal(interaction);
     } catch (err) { logger.error({ err }, "Booster interaction failed"); }
   });
-  await setupPanel(client); started = true;
+  await setupPanel(client).catch(err => logger.error({ err }, "Booster panel failed; entitlement sync will still run")); started = true;
   await syncAll(client).catch(err => logger.error({ err }, "Initial booster sync failed"));
   setInterval(() => syncAll(client).catch(err => logger.error({ err }, "Booster sync failed")), 2 * 60_000);
   logger.info("Booster verification panel and automatic in-game sync started");

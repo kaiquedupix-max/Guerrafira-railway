@@ -2,16 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Facepunch;
 using Oxide.Game.Rust.Cui;
 using Oxide.Core;
+using Oxide.Core.Plugins;
 using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("VipKits", "Guerra Fria", "2.0.0")]
+    [Info("VipKits", "Guerra Fria", "2.1.0")]
     [Description("Menu de kits com permissoes e cooldown persistente.")]
     public class VipKits : RustPlugin
     {
+        private const string BLUEPRINT_BASE = "blueprintbase";
         private const string Ui = "VipKits.Menu";
         private const string FormUi = "VipKits.Creator";
         private readonly HashSet<ulong> availableTab = new HashSet<ulong>();
@@ -30,13 +34,20 @@ namespace Oxide.Plugins
             [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<Reward> Items = new List<Reward>();
         }
+        [PluginReference] private Plugin PlayerDLCAPI;
+        private static Func<BasePlayer,ulong,bool> canUseSkin;
+        private static Func<BasePlayer,int,int> redirectItem;
         private Settings settings;
         private string logoPng;
         private Dictionary<string, Dictionary<string, double>> claims = new Dictionary<string, Dictionary<string, double>>();
+        private Dictionary<string, Dictionary<string, int>> uses = new Dictionary<string, Dictionary<string, int>>();
+        private class ClaimState { public Dictionary<string, Dictionary<string,double>> Cooldowns; public Dictionary<string,Dictionary<string,int>> Uses; }
         private bool claimsLoaded;
         private readonly HashSet<ulong> busy = new HashSet<ulong>();
         private class Settings
         {
+            public bool WipePlayerData = false;
+            public bool OwnedSkins = false;
             public string Title = "KITS DO SERVIDOR";
             public string StoreUrl = "https://guerrafriarust.com.br/loja";
             public string PurchaseMessage = "Compre seu VIP ou presenteie um amigo na loja oficial Guerra Fria.";
@@ -51,6 +62,10 @@ namespace Oxide.Plugins
         }
         private class Kit
         {
+            public int MaximumUses = 0;
+            public int RequiredAuth = 0;
+            public bool Hidden = false;
+            public string Description = "";
             public string StoreTier = "";
             public string Id;
             public string Name;
@@ -67,6 +82,9 @@ namespace Oxide.Plugins
             public string Shortname;
             public int Amount = 1;
             public ulong Skin;
+            public string IncludedIn = "";
+            public string Inventory = "main";
+            public ItemData Serialized;
         }
         protected override void LoadDefaultConfig() { settings = new Settings(); }
         protected override void LoadConfig()
@@ -90,6 +108,23 @@ namespace Oxide.Plugins
             catch (Exception ex) { PrintError("Configuracao invalida: " + ex.Message); throw; }
         }
         protected override void SaveConfig() { Config.WriteObject(settings, true); }
+        private List<Reward> DisplayRewards(Kit kit) {
+            var result = new List<Reward>();
+            foreach (var reward in kit.Items) {
+                result.Add(reward);
+                if (reward.Serialized != null) AddAttachments(result, reward.Serialized, reward.Shortname, 0);
+            }
+            return result;
+        }
+        private void AddAttachments(List<Reward> result, ItemData data, string parent, int depth) {
+            if (depth > 8) return;
+            var nested = data.Container != null ? data.Container.contents : data.Contents == null ? null : data.Contents.ToList();
+            if (nested == null) return;
+            foreach (var item in nested) {
+                result.Add(new Reward { Shortname = item.Shortname, Amount = item.Amount, Skin = item.Skin, Inventory = "attachment", IncludedIn = parent, Serialized = item });
+                AddAttachments(result, item, item.Shortname, depth + 1);
+            }
+        }
         private string StoreTier(Kit kit)
         {
             string explicitTier = (kit.StoreTier ?? "").Trim().ToLowerInvariant();
@@ -116,8 +151,8 @@ namespace Oxide.Plugins
                 kits = settings.Kits.Select(k => new {
                     id = k.Id, name = k.Name, tier = StoreTier(k), cooldownSeconds = k.CooldownSeconds,
                     wipeDelaySeconds = k.WipeDelaySeconds,
-                    items = k.Items.Select(r => { var def = ItemManager.FindItemDefinition(r.Shortname); return new {
-                        shortname = r.Shortname, amount = r.Amount, skin = r.Skin.ToString(),
+                    items = DisplayRewards(k).Select(r => { var def = ItemManager.FindItemDefinition(r.Shortname); return new {
+                        shortname = r.Shortname, amount = r.Amount, skin = r.Skin.ToString(), inventory = r.Inventory, includedIn = r.IncludedIn, loadedAmmo = r.Serialized == null ? 0 : r.Serialized.Ammo, ammoType = r.Serialized == null ? "" : r.Serialized.Ammotype,
                         itemId = def == null ? 0 : def.itemid, name = def == null ? r.Shortname : def.displayName.english
                     }; }).ToArray()
                 }).ToArray()
@@ -125,6 +160,8 @@ namespace Oxide.Plugins
         }
         private void Init()
         {
+            canUseSkin = (p, skin) => skin == 0 || !settings.OwnedSkins || PlayerDLCAPI == null || PlayerDLCAPI.Call<bool>("IsOwnedOrFreeSkin", p, skin);
+            redirectItem = (p, id) => !settings.OwnedSkins || PlayerDLCAPI == null ? id : PlayerDLCAPI.Call<int>("GetRedirectedItemIdIfNotOwned", p, id);
             LoadClaims();
             var ids = new HashSet<string>();
             foreach (var kit in settings.Kits)
@@ -133,8 +170,8 @@ namespace Oxide.Plugins
                     throw new Exception("Kit invalido: verifique IDs unicos, itens e cooldown.");
                 if (!string.IsNullOrWhiteSpace(kit.Permission))
                 {
-                    if (!kit.Permission.StartsWith("vipkits.", StringComparison.Ordinal)) throw new Exception("Permissoes devem comecar com vipkits.");
-                    permission.RegisterPermission(kit.Permission, this);
+                    if (!kit.Permission.StartsWith("vipkits.", StringComparison.Ordinal) && !kit.Permission.StartsWith("kits.", StringComparison.Ordinal)) throw new Exception("Namespace de permissao de kit invalido.");
+                    if (!permission.PermissionExists(kit.Permission)) permission.RegisterPermission(kit.Permission, this);
                 }
             }
 
@@ -144,8 +181,12 @@ namespace Oxide.Plugins
             if (claimsLoaded) return;
             try
             {
-                var loaded = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, Dictionary<string, double>>>(Name);
-                claims = loaded ?? new Dictionary<string, Dictionary<string, double>>();
+                var raw = Interface.Oxide.DataFileSystem.ReadObject<JObject>(Name);
+                if (raw != null && raw["Cooldowns"] != null) {
+                    var state = raw.ToObject<ClaimState>();
+                    claims = state.Cooldowns ?? new Dictionary<string, Dictionary<string,double>>();
+                    uses = state.Uses ?? new Dictionary<string, Dictionary<string,int>>();
+                } else claims = raw == null ? new Dictionary<string, Dictionary<string,double>>() : raw.ToObject<Dictionary<string, Dictionary<string,double>>>();
                 claimsLoaded = true;
             }
             catch (Exception ex)
@@ -165,11 +206,22 @@ namespace Oxide.Plugins
             }
             catch (Exception ex) { PrintError("Falha ao carregar logo: " + ex.Message); }
         }
+        private void OnNewSave(string filename) {
+            if (!settings.WipePlayerData || !claimsLoaded) return;
+            Interface.Oxide.DataFileSystem.WriteObject(Name + "/BeforeWipe_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss"), new ClaimState { Cooldowns = claims, Uses = uses });
+            claims.Clear(); uses.Clear(); SaveData();
+        }
+        [ConsoleCommand("vipkits.audit")]
+        private void Audit(ConsoleSystem.Arg arg) {
+            if (arg.Connection != null && arg.Connection.authLevel < 2) return;
+            arg.ReplyWith(JsonConvert.SerializeObject(new { version = "2.1.0", loaded = claimsLoaded, kits = settings.Kits.Count, items = settings.Kits.Sum(k => k.Items.Count), players = claims.Count, cooldowns = claims.Values.Sum(v => v.Count), usageEntries = uses.Values.Sum(v => v.Count), totalUses = uses.Values.Sum(v => v.Values.Sum()), permissions = settings.Kits.Select(k => new { kit = k.Id, permission = k.Permission, groups = string.IsNullOrEmpty(k.Permission) ? new string[0] : permission.GetPermissionGroups(k.Permission) }).ToArray() }));
+        }
+        private bool LimitReached(BasePlayer p, Kit k) { Dictionary<string,int> u; int n; return k.MaximumUses > 0 && uses.TryGetValue(p.UserIDString,out u) && u.TryGetValue(k.Id,out n) && n >= k.MaximumUses; }
         private void OnServerSave() { SaveData(); }
-        private void SaveData() { if (claimsLoaded && claims != null) Interface.Oxide.DataFileSystem.WriteObject(Name, claims); }
+        private void SaveData() { if (claimsLoaded && claims != null) Interface.Oxide.DataFileSystem.WriteObject(Name, new ClaimState { Cooldowns = claims, Uses = uses }); }
         private void Unload() { SaveData(); foreach (var p in BasePlayer.activePlayerList) { CuiHelper.DestroyUi(p, Ui); CuiHelper.DestroyUi(p, FormUi); } drafts.Clear(); availableTab.Clear(); }
         private void OnPlayerDisconnected(BasePlayer player, string reason) { CuiHelper.DestroyUi(player, Ui); CuiHelper.DestroyUi(player, FormUi); drafts.Remove(player.userID); availableTab.Remove(player.userID); }
-        private bool Allowed(BasePlayer p, Kit k) { return string.IsNullOrWhiteSpace(k.Permission) || permission.UserHasPermission(p.UserIDString, k.Permission); }
+        private bool Allowed(BasePlayer p, Kit k) { return p != null && p.net.connection.authLevel >= k.RequiredAuth && (string.IsNullOrWhiteSpace(k.Permission) || permission.UserHasPermission(p.UserIDString, k.Permission)); }
         private double Now() { return DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalSeconds; }
         private double Remaining(BasePlayer p, Kit k)
         {
@@ -260,7 +312,7 @@ namespace Oxide.Plugins
         {
             return p.inventory.containerMain.itemList.Concat(p.inventory.containerBelt.itemList)
                 .Concat(p.inventory.containerWear.itemList)
-                .Select(item => new Reward { Shortname = item.info.shortname, Amount = item.amount, Skin = item.skin }).ToList();
+                .Select(item => new Reward { Shortname = item.info.shortname, Amount = item.amount, Skin = item.skin, Inventory = item.parent == p.inventory.containerBelt ? "belt" : item.parent == p.inventory.containerWear ? "wear" : "main", Serialized = new ItemData(item) }).ToList();
         }
         [ChatCommand("kitcriar")]
         private void OpenCreator(BasePlayer p, string command, string[] args)
@@ -274,7 +326,7 @@ namespace Oxide.Plugins
                 if (kit == null) { p.ChatMessage("Kit nao encontrado. Use /kitcriar para criar um novo."); return; }
                 d.EditingId = kit.Id; d.Id = kit.Id; d.Name = kit.Name; d.Group = "";
                 d.Cooldown = kit.CooldownSeconds + "s"; d.WipeDelay = kit.WipeDelaySeconds + "s"; d.ImageUrl = kit.ImageUrl ?? "";
-                d.Items = kit.Items.Select(r => new Reward { Shortname = r.Shortname, Amount = r.Amount, Skin = r.Skin }).ToList();
+                d.Items = JsonConvert.DeserializeObject<List<Reward>>(JsonConvert.SerializeObject(kit.Items));
             }
             else
             {
@@ -448,7 +500,12 @@ namespace Oxide.Plugins
             Show(p, 0);
         }
         [ChatCommand("kit")]
-        private void Open(BasePlayer player, string command, string[] args) { availableTab.Remove(player.userID); Show(player, 0); }
+        private void Open(BasePlayer player, string command, string[] args) {
+            availableTab.Remove(player.userID);
+            if (args.Length > 0) { string name = string.Join(" ",args); var kit = settings.Kits.FirstOrDefault(k => k.Id.Equals(name,StringComparison.OrdinalIgnoreCase) || k.Name.Equals(name,StringComparison.OrdinalIgnoreCase));
+                if (kit == null) { player.ChatMessage("Kit nao encontrado."); return; } ClaimKit(player,kit,0); return;
+            } Show(player,0);
+        }
         [ConsoleCommand("vipkits.close")]
         private void Close(ConsoleSystem.Arg arg) { var p = arg.Player(); if (p != null) CuiHelper.DestroyUi(p, Ui); }
         [ConsoleCommand("vipkits.category")]
@@ -469,8 +526,9 @@ namespace Oxide.Plugins
             if (p == null || arg.Args == null || arg.Args.Length != 2 || !int.TryParse(arg.Args[1].ToString(), out page)) return;
             var kit = settings.Kits.FirstOrDefault(k => k.Id == arg.Args[0].ToString());
             if (kit == null) return;
+            var displayed = DisplayRewards(kit);
             const int perPage = 10;
-            int pages = Math.Max(1, (kit.Items.Count + perPage - 1) / perPage);
+            int pages = Math.Max(1, (displayed.Count + perPage - 1) / perPage);
             page = Math.Max(0, Math.Min(page, pages - 1));
             string modal = Ui + ".Items";
             string box = modal + ".Box";
@@ -479,11 +537,11 @@ namespace Oxide.Plugins
             c.Add(new CuiPanel { Image = { Color = "0.02 0.025 0.035 0.97" }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }, CursorEnabled = true }, Ui, modal);
             c.Add(new CuiPanel { Image = { Color = "0.06 0.08 0.105 1" }, RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-340 -285", OffsetMax = "340 285" } }, modal, box);
             PixelText(c, box, kit.Name, 28, -18, 568, 40, 23, "0.95 0.96 0.98 1", TextAnchor.MiddleLeft);
-            PixelText(c, box, "LISTA COMPLETA  /  " + kit.Items.Count + " entradas de itens", 28, -60, 620, 27, 13, "0.73 0.61 0.33 1", TextAnchor.MiddleLeft);
+            PixelText(c, box, "LISTA COMPLETA  /  " + displayed.Count + " entradas de itens", 28, -60, 620, 27, 13, "0.73 0.61 0.33 1", TextAnchor.MiddleLeft);
             PixelButton(c, box, "X", "vipkits.itemsclose", 620, -20, 32, 32, "0.23 0.16 0.17 1", 13);
-            for (int i = 0; i < perPage && page * perPage + i < kit.Items.Count; i++)
+            for (int i = 0; i < perPage && page * perPage + i < displayed.Count; i++)
             {
-                var reward = kit.Items[page * perPage + i];
+                var reward = displayed[page * perPage + i];
                 var def = ItemManager.FindItemDefinition(reward.Shortname);
                 string name = def != null ? def.displayName.english : reward.Shortname;
                 int top = -103 - i * 37;
@@ -534,7 +592,7 @@ namespace Oxide.Plugins
         private void Show(BasePlayer p, int page)
         {
             CuiHelper.DestroyUi(p, FormUi); drafts.Remove(p.userID);
-            var kits = settings.Kits.Where(k => !availableTab.Contains(p.userID) || Allowed(p, k)).ToList();
+            var kits = settings.Kits.Where(k => !k.Hidden && (!availableTab.Contains(p.userID) || Allowed(p, k))).ToList();
             int pages = Math.Max(1, (kits.Count + 3) / 4);
             page = Math.Max(0, Math.Min(page, pages - 1));
             CuiHelper.DestroyUi(p, Ui);
@@ -565,10 +623,10 @@ namespace Oxide.Plugins
             for (int i = 0; i < 4 && page * 4 + i < kits.Count; i++)
             {
                 var k = kits[page * 4 + i];
-                bool allowed = Allowed(p, k); double wipeWait = WipeRemaining(k); double wait = Math.Max(Remaining(p, k), wipeWait);
-                string status = !allowed ? "EXCLUSIVO VIP" : wait > 0 ? "LIBERA EM " + WaitText(wait) : "DISPONIVEL AGORA";
-                string action = !allowed ? "COMPRAR VIP" : wait > 0 ? "ATUALIZAR TEMPO" : "RESGATAR KIT";
-                string command = !allowed ? "vipkits.buy " + k.Id : wait > 0 ? "vipkits.page " + page : "vipkits.claim " + k.Id + " " + page;
+                bool allowed = Allowed(p, k); bool exhausted = LimitReached(p,k); double wipeWait = WipeRemaining(k); double wait = Math.Max(Remaining(p, k), wipeWait);
+                string status = exhausted ? "LIMITE ATINGIDO" : !allowed ? "EXCLUSIVO VIP" : wait > 0 ? "LIBERA EM " + WaitText(wait) : "DISPONIVEL AGORA";
+                string action = exhausted ? "LIMITE ATINGIDO" : !allowed ? "COMPRAR VIP" : wait > 0 ? "ATUALIZAR TEMPO" : "RESGATAR KIT";
+                string command = exhausted ? "vipkits.page " + page : !allowed ? "vipkits.buy " + k.Id : wait > 0 ? "vipkits.page " + page : "vipkits.claim " + k.Id + " " + page;
                 string accent = !allowed ? "0.77 0.55 0.15 1" : wait > 0 ? "0.42 0.48 0.55 1" : "0.23 0.66 0.42 1";
                 string button = !allowed ? "0.55 0.38 0.09 1" : wait > 0 ? "0.17 0.2 0.25 1" : "0.12 0.4 0.26 1";
                 string row = Ui + ".Card" + i;
@@ -584,7 +642,7 @@ namespace Oxide.Plugins
                 else CardText(c, image, "KIT\n" + k.Name.ToUpperInvariant(), "0.04 0.05", "0.96 0.95", 15, accent, TextAnchor.MiddleCenter);
                 CardText(c, row, k.Name, "0.06 0.43", "0.94 0.51", 18, "1 1 1 1", TextAnchor.MiddleCenter);
                 CardText(c, row, status, "0.05 0.37", "0.95 0.43", 10, accent, TextAnchor.MiddleCenter);
-                CardButton(c, row, "VER ITENS (" + k.Items.Count + ")", "vipkits.items " + k.Id + " 0", "0.06 0.23", "0.94 0.32", "0.14 0.17 0.19 1", 12);
+                CardButton(c, row, "VER ITENS (" + DisplayRewards(k).Count + ")", "vipkits.items " + k.Id + " 0", "0.06 0.23", "0.94 0.32", "0.14 0.17 0.19 1", 12);
                 string timing = wipeWait > 0 ? "POS-WIPE: " + WaitText(wipeWait) : "COOLDOWN: " + (k.CooldownSeconds == 0 ? "SEM ESPERA" : WaitText(k.CooldownSeconds));
                 CardText(c, row, timing, "0.04 0.17", "0.96 0.23", 9, "0.67 0.71 0.74 1", TextAnchor.MiddleCenter);
                 CardButton(c, row, action, command, "0.06 0.06", "0.94 0.15", button, 11);
@@ -643,7 +701,11 @@ namespace Oxide.Plugins
             var p = arg.Player();
             if (p == null || arg.Args == null || arg.Args.Length != 2) return;
             var k = settings.Kits.FirstOrDefault(x => x.Id == arg.Args[0].ToString()); int page;
-            if (!int.TryParse(arg.Args[1].ToString(), out page) || k == null || !Allowed(p, k)) return;
+            if (!int.TryParse(arg.Args[1].ToString(), out page) || k == null) return;
+            ClaimKit(p,k,page);
+        }
+        private void ClaimKit(BasePlayer p, Kit k, int page) {
+            if (!Allowed(p,k)) { p.ChatMessage("Voce nao tem permissao para este kit."); return; }
             if (!claimsLoaded) { p.ChatMessage("Dados de cooldown indisponiveis. Avise o owner do servidor."); return; }
             if (!p.IsAlive() || p.IsSleeping()) { p.ChatMessage("Voce precisa estar vivo e acordado."); return; }
             if (!busy.Add(p.userID)) return;
@@ -652,23 +714,38 @@ namespace Oxide.Plugins
             {
                 if (WipeRemaining(k) > 0) { p.ChatMessage("Kit bloqueado apos o wipe. Libera em " + WaitText(WipeRemaining(k)) + "."); return; }
                 if (Remaining(p, k) > 0) { p.ChatMessage("Aguarde " + WaitText(Remaining(p, k)) + " para resgatar."); return; }
+                Dictionary<string,int> used; int count = 0;
+                if (uses.TryGetValue(p.UserIDString, out used)) used.TryGetValue(k.Id, out count);
+                if (k.MaximumUses > 0 && count >= k.MaximumUses) { p.ChatMessage("Limite de resgates deste kit atingido."); return; }
+                var targets = new List<global::ItemContainer>();
+                var positions = new List<int>();
                 foreach (var r in k.Items)
                 {
-                    var def = r == null ? null : ItemManager.FindItemDefinition(r.Shortname);
-                    if (def == null || r.Amount <= 0) { p.ChatMessage("Este kit tem um item invalido. Avise a administracao."); return; }
-                    int left = r.Amount, stack = Math.Max(1, def.stackable);
-                    while (left > 0)
-                    {
-                        if (created.Count >= p.inventory.containerMain.capacity) { p.ChatMessage("Este kit excede o espaco da mochila."); return; }
-                        int amount = Math.Min(left, stack);
-                        var item = ItemManager.CreateByName(r.Shortname, amount, r.Skin);
+                    var def = ItemManager.FindItemDefinition(r.Shortname);
+                    if (def == null || r.Amount <= 0) { p.ChatMessage("Item invalido no kit. Avise a administracao."); return; }
+                    var target = r.Inventory == "belt" ? p.inventory.containerBelt : r.Inventory == "wear" ? p.inventory.containerWear : p.inventory.containerMain;
+                    if (r.Serialized != null) {
+                        var item = CreateItem(r.Serialized, p);
                         if (item == null) { p.ChatMessage("Falha ao criar o kit."); return; }
-                        created.Add(item); left -= amount;
+                        created.Add(item); targets.Add(target); positions.Add(r.Serialized.Position);
+                    } else {
+                        int left = r.Amount, stack = Math.Max(1, def.stackable);
+                        while (left > 0) {
+                            int amount = Math.Min(left, stack);
+                            var item = ItemManager.CreateByName(r.Shortname, amount, r.Skin);
+                            if (item == null) { p.ChatMessage("Falha ao criar o kit."); return; }
+                            created.Add(item); targets.Add(target); positions.Add(-1); left -= amount;
+                        }
                     }
                 }
-                if (p.inventory.containerMain.capacity - p.inventory.containerMain.itemList.Count < created.Count) { p.ChatMessage("Libere " + created.Count + " espacos na mochila para receber o kit."); return; }
-                foreach (var item in created)
-                    if (!item.MoveToContainer(p.inventory.containerMain, -1, false)) { p.ChatMessage("Nao foi possivel entregar o kit. Libere espaco e tente novamente."); return; }
+                bool configuredSpace = targets.Distinct().All(target => target.capacity - target.itemList.Count >= targets.Count(x => x == target));
+                bool fallbackSpace = p.inventory.containerMain.capacity - p.inventory.containerMain.itemList.Count + p.inventory.containerBelt.capacity - p.inventory.containerBelt.itemList.Count >= created.Count;
+                if (!configuredSpace && !fallbackSpace) { p.ChatMessage("Libere espaco na mochila, cintura e roupas para receber o kit."); return; }
+                for (int i = 0; i < created.Count; i++) {
+                    if (!created[i].MoveToContainer(targets[i], positions[i], false) && !created[i].MoveToContainer(targets[i], -1, false) && !created[i].MoveToContainer(p.inventory.containerMain, -1, false) && !created[i].MoveToContainer(p.inventory.containerBelt, -1, false)) { p.ChatMessage("Nao foi possivel entregar o kit. Libere espaco e tente novamente."); return; }
+                }
+                if (used == null) uses[p.UserIDString] = used = new Dictionary<string,int>();
+                used[k.Id] = count + 1;
                 Dictionary<string, double> user;
                 if (!claims.TryGetValue(p.UserIDString, out user) || user == null) claims[p.UserIDString] = user = new Dictionary<string, double>();
                 user[k.Id] = Now() + k.CooldownSeconds;
@@ -681,6 +758,397 @@ namespace Oxide.Plugins
                 busy.Remove(p.userID); Show(p, page);
             }
         }
+        // Legacy Kits serialization retained for lossless migration of configured items.
+        #region Serialized Items
+        private static Item CreateItem(ItemData itemData, BasePlayer player = null)
+        {
+            int itemId = itemData.ItemID;
+            ulong skin = itemData.Skin;
+
+
+            if (player != null) { itemId = redirectItem(player,itemId); skin = canUseSkin(player,skin) ? skin : 0UL; }
+            Item item = ItemManager.CreateByItemID(itemId, itemData.Amount, skin);
+            if (item == null) throw new Exception("Item invalido no kit importado: " + itemData.Shortname);
+
+            if (!string.IsNullOrEmpty(itemData.DisplayName))
+                item.name = itemData.DisplayName;
+
+            if (!string.IsNullOrEmpty(itemData.Text))
+                item.text = itemData.Text;
+
+            item._condition = itemData.Condition;
+            item._maxCondition = itemData.MaxCondition;
+
+            if (itemData.Frequency > 0)
+            {
+                ItemModRFListener rfListener = item.info.GetComponentInChildren<ItemModRFListener>();
+                if (rfListener)
+                    (BaseNetworkable.serverEntities.Find(item.instanceData.subEntity) as PagerEntity)?.ChangeFrequency(itemData.Frequency);
+            }
+
+            if (itemData.BlueprintItemID != 0)
+            {
+                if (item.instanceData == null)
+                    item.instanceData = new ProtoBuf.Item.InstanceData();
+
+                item.instanceData.ShouldPool = false;
+
+                item.instanceData.blueprintAmount = 1;
+                item.instanceData.blueprintTarget = itemData.BlueprintItemID;
+
+                item.MarkDirty();
+            }
+
+            FlameThrower flameThrower = item.GetHeldEntity() as FlameThrower;
+            if (flameThrower)
+                flameThrower.ammo = itemData.Ammo;
+
+            if (itemData.Contents != null)
+            {
+                foreach (ItemData contentData in itemData.Contents)
+                {
+                    Item newContent = CreateItem(contentData, player);
+                    if (newContent != null)
+                    {
+                        if (!newContent.MoveToContainer(item.contents))
+                            newContent.Remove();
+                    }
+                }
+            }
+
+            if (itemData.Container != null)
+            {
+                if (item.contents == null)
+                {
+                    ItemModContainerArmorSlot armorSlot = FindItemMod<ItemModContainerArmorSlot>(item);
+                    if (armorSlot)
+                        armorSlot.CreateAtCapacity(itemData.Container.slots, item);
+                    else
+                    {
+                        item.contents = Pool.Get<ItemContainer>();
+                        item.contents.ServerInitialize(item, itemData.Container.slots);
+                        item.contents.GiveUID();
+                    }
+                }
+                itemData.Container.Load(item.contents);
+            }
+
+            BaseProjectile weapon = item.GetHeldEntity() as BaseProjectile;
+            if (weapon)
+            {
+                weapon.DelayedModsChanged();
+
+                if (!string.IsNullOrEmpty(itemData.Ammotype))
+                    weapon.primaryMagazine.ammoType = ItemManager.FindItemDefinition(itemData.Ammotype);
+                weapon.primaryMagazine.contents = itemData.Ammo;
+            }
+
+
+            item.MarkDirty();
+
+            return item;
+        }
+
+        private static T FindItemMod<T>(Item item) where T : ItemMod
+        {
+            foreach (ItemMod itemMod in item.info.itemMods)
+            {
+                if (itemMod is T mod)
+                    return mod;
+            }
+
+            return null;
+        }
+
+        public class ItemData
+        {
+            public string Shortname { get; set; }
+
+            public string DisplayName { get; set; }
+
+            public ulong Skin { get; set; }
+
+            public int Amount { get; set; }
+
+            public float Condition { get; set; }
+
+            public float MaxCondition { get; set; }
+
+            public int Ammo { get; set; }
+
+            public string Ammotype { get; set; }
+
+            public int Position { get; set; }
+
+            public int Frequency { get; set; }
+
+            public string BlueprintShortname { get; set; }
+
+            public string Text { get; set; }
+
+            /// <summary>
+            /// Deprecated, replaced by serializing the item container instead of just the items in it
+            /// </summary>
+            public ItemData[] Contents { get; set; }
+
+            public ItemContainer Container { get; set; }
+
+
+            [JsonIgnore]
+            private int _itemId;
+
+            [JsonIgnore]
+            private int _blueprintItemId;
+
+            [JsonIgnore]
+            private JObject _jObject;
+
+
+            [JsonIgnore]
+            internal int ItemID
+            {
+                get
+                {
+                    if (_itemId == 0)
+                        _itemId = ItemManager.itemDictionaryByName[Shortname].itemid;
+                    return _itemId;
+                }
+            }
+
+            [JsonIgnore]
+            internal bool IsBlueprint => Shortname.Equals(BLUEPRINT_BASE);
+
+            [JsonIgnore]
+            internal int BlueprintItemID
+            {
+                get
+                {
+                    if (_blueprintItemId == 0 && !string.IsNullOrEmpty(BlueprintShortname))
+                        _blueprintItemId = ItemManager.itemDictionaryByName[BlueprintShortname].itemid;
+                    return _blueprintItemId;
+                }
+            }
+
+            [JsonIgnore]
+            internal JObject ToJObject
+            {
+                get
+                {
+                    if (_jObject == null)
+                    {
+                        _jObject = new JObject
+                        {
+                            ["Shortname"] = Shortname,
+                            ["DisplayName"] = DisplayName,
+                            ["SkinID"] = Skin,
+                            ["Amount"] = Amount,
+                            ["Condition"] = Condition,
+                            ["MaxCondition"] = MaxCondition,
+                            ["IsBlueprint"] = BlueprintItemID != 0,
+                            ["Ammo"] = Ammo,
+                            ["AmmoType"] = Ammotype,
+                            ["Text"] = Text,
+                            ["Contents"] = new JArray()
+                        };
+
+                        for (int i = 0; i < Contents?.Length; i++)
+                            (_jObject["Contents"] as JArray).Add(Contents[i].ToJObject);
+
+                        if (Container != null && Container.contents.Count > 0)
+                        {
+                            for (int i = 0; i < Container.contents.Count; i++)
+                                (_jObject["Contents"] as JArray).Add(Container.contents[i].ToJObject);
+                        }
+                    }
+
+                    return _jObject;
+                }
+            }
+
+            internal ItemData()
+            {
+            }
+
+            internal ItemData(Item item)
+            {
+                Shortname = item.info.shortname;
+                Amount = item.amount;
+                DisplayName = item.name;
+                Text = item.text;
+
+                BaseEntity heldEntity = item.GetHeldEntity();
+                if (heldEntity)
+                {
+                    Ammotype = heldEntity is BaseProjectile projectile ? projectile.primaryMagazine.ammoType.shortname : null;
+                    Ammo = heldEntity is BaseProjectile baseProjectile ? baseProjectile.primaryMagazine.contents :
+                        heldEntity is FlameThrower thrower ? thrower.ammo : 0;
+                }
+
+                Position = item.position;
+                Skin = item.skin;
+
+                Condition = item.condition;
+                MaxCondition = item.maxCondition;
+
+                Frequency = ItemModAssociatedEntity<PagerEntity>.GetAssociatedEntity(item)?.GetFrequency() ?? -1;
+
+                if (item.instanceData != null && item.instanceData.blueprintTarget != 0)
+                    BlueprintShortname = ItemManager.FindItemDefinition(item.instanceData.blueprintTarget).shortname;
+
+                // Deprecated
+                //Contents = item.contents?.itemList.Select(item1 => new ItemData(item1)).ToArray();
+
+                if (item.contents != null)
+                    Container = new ItemContainer(item.contents);
+            }
+
+            public class InstanceData
+            {
+                public int DataInt { get; set; }
+
+                public int BlueprintTarget { get; set; }
+
+                public int BlueprintAmount { get; set; }
+
+                public uint SubEntityNetID { get; set; }
+
+                internal InstanceData()
+                {
+                }
+
+                internal InstanceData(Item item)
+                {
+                    if (item.instanceData == null)
+                        return;
+
+                    DataInt = item.instanceData.dataInt;
+                    BlueprintAmount = item.instanceData.blueprintAmount;
+                    BlueprintTarget = item.instanceData.blueprintTarget;
+                }
+
+                internal void Restore(Item item)
+                {
+                    if (item.instanceData == null)
+                        item.instanceData = new ProtoBuf.Item.InstanceData();
+
+                    item.instanceData.ShouldPool = false;
+
+                    item.instanceData.blueprintAmount = BlueprintAmount;
+                    item.instanceData.blueprintTarget = BlueprintTarget;
+                    item.instanceData.dataInt = DataInt;
+
+                    item.MarkDirty();
+                }
+
+                internal bool IsValid => DataInt != 0 || BlueprintAmount != 0 || BlueprintTarget != 0;
+            }
+
+            public class ItemContainer
+            {
+                public int slots;
+                public float temperature;
+                public int flags;
+                public int allowedContents;
+                public int maxStackSize;
+                public List<int> allowedItems;
+                public List<int> availableSlots;
+                public int volume;
+                public List<ItemData> contents;
+
+                public ItemContainer(){}
+
+                public ItemContainer(global::ItemContainer container)
+                {
+                    contents = new List<ItemData>();
+                    slots = container.capacity;
+                    temperature = container.temperature;
+                    allowedContents = (int)container.allowedContents;
+
+                    if (container.HasLimitedAllowedItems)
+                    {
+                        allowedItems = new List<int>();
+                        for (int i = 0; i < container.onlyAllowedItems.Length; i++)
+                        {
+                            if (container.onlyAllowedItems[i])
+                            {
+                                allowedItems.Add(container.onlyAllowedItems[i].itemid);
+                            }
+                        }
+                    }
+
+                    flags = (int)container.flags;
+                    maxStackSize = container.maxStackSize;
+                    volume = container.containerVolume;
+
+                    if (container.availableSlots is { Count: > 0 })
+                    {
+                        availableSlots = new List<int>();
+                        for (int j = 0; j < container.availableSlots.Count; j++)
+                        {
+                            availableSlots.Add((int)container.availableSlots[j]);
+                        }
+                    }
+
+                    for (int k = 0; k < container.itemList.Count; k++)
+                    {
+                        Item item = container.itemList[k];
+                        if (item.IsValid())
+                        {
+                            contents.Add(new ItemData(item));
+                        }
+                    }
+                }
+
+                public void Load(global::ItemContainer itemContainer)
+                {
+                    itemContainer.capacity = slots;
+                    itemContainer.itemList = Pool.Get<List<Item>>();
+                    itemContainer.temperature = temperature;
+                    itemContainer.flags = (global::ItemContainer.Flag)flags;
+                    itemContainer.allowedContents = (global::ItemContainer.ContentsType)((allowedContents == 0) ? 1 : allowedContents);
+
+                    if (allowedItems is { Count: > 0 })
+                    {
+                        itemContainer.onlyAllowedItems = new ItemDefinition[allowedItems.Count];
+                        for (int i = 0; i < allowedItems.Count; i++)
+                        {
+                            itemContainer.onlyAllowedItems[i] = ItemManager.FindItemDefinition(allowedItems[i]);
+                        }
+                    }
+                    else
+                    {
+                        itemContainer.onlyAllowedItems = null;
+                    }
+
+                    itemContainer.maxStackSize = maxStackSize;
+                    itemContainer.containerVolume = volume;
+                    itemContainer.availableSlots.Clear();
+
+                    if (availableSlots != null)
+                    {
+                        for (int j = 0; j < availableSlots.Count; j++)
+                        {
+                            itemContainer.availableSlots.Add((ItemSlot)availableSlots[j]);
+                        }
+                    }
+
+                    foreach (ItemData itemData in contents)
+                    {
+                        Item item = CreateItem(itemData);
+                        if (item == null)
+                            continue;
+
+                        if (!item.MoveToContainer(itemContainer, itemData.Position) && !item.MoveToContainer(itemContainer))
+                            item.Remove();
+                    }
+
+                    itemContainer.MarkDirty();
+                }
+            }
+        }
+
+        #endregion
+
     }
 }
 

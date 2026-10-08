@@ -8,6 +8,8 @@ import { and, eq, gt, asc } from "drizzle-orm";
 import { db, vipSubscriptionsTable } from "@workspace/db";
 import { VIP_TIERS } from "../vip.js";
 import { logger } from "../../lib/logger.js";
+import { subscriptionServer } from "../../routes/storeOrders.js";
+import { GUERRA_FRIA_SERVERS } from "../../core/servers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("listvips")
@@ -23,6 +25,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ ephemeral: true });
 
   try {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.BanMembers)) { await interaction.editReply("Sem permissão para consultar todos os VIPs."); return; }
     const now = new Date();
     const active = await db
       .select()
@@ -79,7 +82,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         const urgency = days <= 3 ? "🔴" : days <= 7 ? "🟡" : "🟢";
         const source = s.source === "raffle" ? " *(sorteio)*" : "";
         embed.addFields({
-          name: `${vip?.emoji ?? "⭐"} ${vip?.name ?? s.vipTier}${source}`,
+          name: `${vip?.emoji ?? "⭐"} ${vip?.name ?? s.vipTier}${source} • ${GUERRA_FRIA_SERVERS[await subscriptionServer(s.source)].shortName}`,
           value: `${discordLabel(s.discordUserId)}\n🎮 \`${s.steamId}\`\n${urgency} Expira: **${ptBR(expires)}** (${days}d)`,
           inline: true,
         });

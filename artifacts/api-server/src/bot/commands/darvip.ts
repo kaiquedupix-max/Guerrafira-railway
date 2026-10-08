@@ -7,12 +7,14 @@ import {
 } from "discord.js";
 import { searchPlayers, getPlayerBySteamId } from "../utils/players.js";
 import { grantVip, VIP_TIERS, type VipTier } from "../vip.js";
+import { isServerPurchasable, GUERRA_FRIA_SERVERS } from "../../core/servers.js";
 import { logger } from "../../lib/logger.js";
 
 export const data = new SlashCommandBuilder()
   .setName("darvip")
   .setDescription("Concede VIP a um jogador do servidor.")
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+  .addStringOption(opt => opt.setName("servidor").setDescription("Servidor que receberá o VIP").setRequired(true).addChoices({name:"Solo/Duo",value:"solo-duo"},{name:"Trio",value:"trio"}))
   .addStringOption((opt) =>
     opt
       .setName("jogador")
@@ -44,7 +46,8 @@ export const data = new SlashCommandBuilder()
       .setName("membro")
       .setDescription("Membro do Discord para receber o cargo VIP (opcional)")
       .setRequired(false),
-  );
+  )
+  ;
 
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
   try {
@@ -66,6 +69,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ ephemeral: true });
 
   try {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.BanMembers)) { await interaction.editReply("Sem permissão para gerenciar VIPs."); return; }
+    const server = interaction.options.getString("servidor", true);
+    if (!isServerPurchasable(server)) { await interaction.editReply("Servidor indisponível para ativação."); return; }
     const steamId = interaction.options.getString("jogador", true).trim();
     const tier = interaction.options.getString("tier", true) as VipTier;
     const days = interaction.options.getInteger("duracao", true);
@@ -81,7 +87,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       return;
     }
 
-    const player = await getPlayerBySteamId(steamId);
+    const knownPlayer = await getPlayerBySteamId(steamId);
+    const player = knownPlayer ?? (server === 'trio' ? { steamId, playerName: steamId } : null);
     if (!player) {
       await interaction.editReply("❌ Jogador não encontrado no banco de dados.");
       return;
@@ -95,7 +102,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       steamId: player.steamId,
       tier,
       durationDays: days,
-      source: "purchase",
+      source: `manual:${server}`,
       client: interaction.client,
     });
 
@@ -113,6 +120,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         { name: "Jogador", value: `**${player.playerName}**`, inline: true },
         { name: "Tier", value: vip.name, inline: true },
         { name: "Steam ID", value: `\`${player.steamId}\``, inline: true },
+        { name: "Servidor", value: GUERRA_FRIA_SERVERS[server].name, inline: true },
         { name: "Duração", value: `${days} dias`, inline: true },
         { name: "Expira em", value: ptBR, inline: true },
         { name: "Admin", value: `<@${interaction.user.id}>`, inline: true },

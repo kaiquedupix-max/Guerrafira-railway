@@ -5,7 +5,9 @@
 import { type Client } from "discord.js";
 import { eq, and, lte, gt } from "drizzle-orm";
 import { db, vipSubscriptionsTable } from "@workspace/db";
-import { executeRconCommand } from "./utils/rcon.js";
+import { executeServerRcon } from "./utils/serverRcon.js";
+import { subscriptionServer } from "../routes/storeOrders.js";
+import type { GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
 
 export const VIP_TIERS = {
@@ -15,6 +17,33 @@ export const VIP_TIERS = {
 } as const;
 
 export type VipTier = keyof typeof VIP_TIERS;
+
+/** Restore the existing entitlement, never create or extend a subscription. */
+export async function reapplyDuoVip(subscriptionId: number, client: Client): Promise<boolean> {
+  const [sub] = await db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.id, subscriptionId)).limit(1);
+  if (!sub || sub.gameVipRemoved || new Date(sub.expiresAt).getTime() <= Date.now() || await subscriptionServer(sub.source) !== "solo-duo") return false;
+  if (!/^7656119\d{10}$/.test(sub.steamId) || !(sub.vipTier in VIP_TIERS)) throw new Error("Registro VIP com Steam ou tier inválido");
+  const tier = sub.vipTier as VipTier;
+  const command = buildRconCmd(`VIP_${tier.toUpperCase()}_GRANT_CMD`, sub.steamId);
+  if (!command) throw new Error("Comando de reaplicação não configurado");
+  await executeVipRcon(command, "grant", "solo-duo");
+  const [current] = await db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.id, subscriptionId)).limit(1);
+  if (!current || current.gameVipRemoved || new Date(current.expiresAt).getTime() <= Date.now()) {
+    if (current) await revokeVip({ subscriptionId: current.id, tier, steamId: current.steamId, discordUserId: current.discordUserId, client, reason: "expired" });
+    return false;
+  }
+  const roleId = process.env.DISCORD_VIP_ROLE_ID;
+  const guildId = process.env.DISCORD_GUILD_ID;
+  if (roleId && guildId && /^\d{16,22}$/.test(sub.discordUserId)) {
+    const guild = await client.guilds.fetch(guildId);
+    const member = await guild.members.fetch(sub.discordUserId).catch((error: {code?: number}) => {
+      if (error.code === 10007) return null; // Left the guild: retain their paid game entitlement.
+      throw error;
+    });
+    if (member && !member.roles.cache.has(roleId)) await member.roles.add(roleId, "Restauração de VIP ativo após migração dos kits");
+  }
+  return true;
+}
 
 function buildRconCmd(envKey: string, steamId: string): string | null {
   const template = process.env[envKey]?.trim();
@@ -43,11 +72,11 @@ function rconResponseLooksLikeError(response: string): boolean {
   ].some(marker => text.includes(marker));
 }
 
-async function executeVipRcon(command: string, action: "grant" | "revoke"): Promise<string> {
+async function executeVipRcon(command: string, action: "grant" | "revoke", server: GuerraFriaServerId = "solo-duo"): Promise<string> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const response = await executeRconCommand(command);
+      const response = await executeServerRcon(server,command);
       if (response !== null && !rconResponseLooksLikeError(response)) {
         logger.info({ command, action, response: response.slice(0, 500) }, "VIP RCON command confirmed");
         return response;
@@ -79,7 +108,7 @@ export async function grantVip(opts: {
   steamId: string;
   tier: VipTier;
   durationDays: number;
-  source: "purchase" | "raffle" | `purchase:${number}`;
+  source: "purchase" | "raffle" | `purchase:${number}` | "manual:solo-duo" | "manual:trio";
   client: Client;
 }): Promise<void> {
   const { discordUserId, steamId, tier, durationDays, source, client } = opts;
@@ -87,9 +116,10 @@ export async function grantVip(opts: {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
-  const grantCmd = buildRconCmd(`VIP_${tier.toUpperCase()}_GRANT_CMD`, steamId);
+  const server = await subscriptionServer(source);
+  const grantCmd = buildRconCmd(`${server === "trio" ? "TRIO_" : ""}VIP_${tier.toUpperCase()}_GRANT_CMD`, steamId);
   if (!grantCmd) throw new Error(`Comando RCON do VIP ${tier} não configurado.`);
-  await executeVipRcon(grantCmd, "grant");
+  await executeVipRcon(grantCmd, "grant",server);
 
   const roleId = process.env.DISCORD_VIP_ROLE_ID;
   const guildId = process.env.DISCORD_GUILD_ID;
@@ -100,8 +130,8 @@ export async function grantVip(opts: {
       if (!member) throw new Error("Membro não encontrado no servidor Discord");
       if (!member.roles.cache.has(roleId)) await member.roles.add(roleId, `VIP ${tier} concedido (${source})`);
     } catch (err) {
-      const rollback = buildRconCmd(`VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
-      if (rollback) await executeVipRcon(rollback, "revoke").catch(() => {});
+      const rollback = buildRconCmd(`${server === "trio" ? "TRIO_" : ""}VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
+      if (rollback) await executeVipRcon(rollback, "revoke", server).catch(() => {});
       logger.error({ err, discordUserId, roleId, guildId }, "VIP Discord role failed; Rust grant rolled back");
       throw new Error("O VIP não foi entregue no Discord; a alteração no Rust foi revertida para nova tentativa.");
     }
@@ -129,14 +159,18 @@ export async function revokeVip(opts: {
     gt(vipSubscriptionsTable.expiresAt, now),
     eq(vipSubscriptionsTable.gameVipRemoved, false),
   ));
-  const hasOtherSameTier = sameTier.some(s => s.id !== subscriptionId);
+  const [target] = await db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.id,subscriptionId)).limit(1);
+  if(!target)throw new Error("Assinatura VIP não encontrada.");
+  const server=await subscriptionServer(target.source);
+  const activeServers=await Promise.all(sameTier.map(async s=>({id:s.id,server:await subscriptionServer(s.source)})));
+  const hasOtherSameTier = activeServers.some(s => s.id !== subscriptionId && s.server===server);
   let gameVipRemoved = hasOtherSameTier;
   let didRunGameRevoke = false;
 
   if (!hasOtherSameTier) {
-    const revokeCmd = buildRconCmd(`VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
+    const revokeCmd = buildRconCmd(`${server === "trio" ? "TRIO_" : ""}VIP_${tier.toUpperCase()}_REVOKE_CMD`, steamId);
     if (!revokeCmd) throw new Error(`Comando RCON de remoção do VIP ${tier} não configurado.`);
-    await executeVipRcon(revokeCmd, "revoke");
+    await executeVipRcon(revokeCmd, "revoke",server);
     gameVipRemoved = true;
     didRunGameRevoke = true;
   }

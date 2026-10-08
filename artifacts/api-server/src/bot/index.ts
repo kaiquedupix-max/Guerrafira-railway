@@ -20,6 +20,7 @@ import { buildAutoUnbanEmbed, buildStatusEmbed } from "./utils/embeds.js";
 import { db, modLogsTable } from "@workspace/db";
 import { setDiscordClient } from "./client.js";
 import { startVipExpiryChecker } from "./vip.js";
+import { startDuoVipRestoration } from "./vipMigration.js";
 import { startBoosterSystem } from "./booster.js";
 import { setupVipStore } from "./vipStore.js";
 import { startSlotManager } from "./slotManager.js";
@@ -91,6 +92,7 @@ commands.set(wipeCommand.data.name, wipeCommand);
 commands.set(testeftpCommand.data.name, testeftpCommand);
 commands.set(enviarjsonCommand.data.name, enviarjsonCommand);
 commands.set(wipedatasCommand.data.name, wipedatasCommand);
+ajudaCommand.configureHelp([...commands.values()].map(command => command.data.toJSON()));
 
 export async function startBot(): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -125,6 +127,7 @@ export async function startBot(): Promise<void> {
     startSeason1DiscordRankCleanup(c);
     await ensureGameAnnouncementPlugin();
     startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
+    startDuoVipRestoration(c);
     await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
   });
 

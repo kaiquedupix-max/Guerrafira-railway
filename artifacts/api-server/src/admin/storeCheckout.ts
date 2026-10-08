@@ -26,15 +26,17 @@ export const storeCheckoutScript = String.raw`
   el('close').onclick=close;
   modal.onclick=e=>{if(e.target===modal)close()};
   document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+  let servers={'solo-duo':{enabled:true,name:'Guerra Fria Solo/Duo'},trio:{enabled:false,name:'Guerra Fria Trio'}};
   function selectServer(id){
     serverId=id;
     el('serverSolo').classList.toggle('active',id==='solo-duo');
     el('serverTrio').classList.toggle('active',id==='trio');
-    el('serverInfo').textContent=id==='trio'?'Guerra Fria Trio está em preparação. Compras serão liberadas em breve.':'Compras liberadas para Guerra Fria Solo/Duo.';
-    el('detailBuy').disabled=id==='trio';el('detailGift').disabled=id==='trio';document.dispatchEvent(new Event('gf:server'));
+    el('serverInfo').textContent=servers[id].enabled?'Compras liberadas para '+servers[id].name+'.':servers[id].name+' está em preparação.';
+    el('detailBuy').disabled=!servers[id].enabled;el('detailGift').disabled=!servers[id].enabled;document.dispatchEvent(new Event('gf:server'));
   }
   el('serverSolo').onclick=()=>selectServer('solo-duo');el('serverTrio').onclick=()=>selectServer('trio');
   selectServer(new URLSearchParams(location.search).get('server')==='trio'?'trio':'solo-duo');
+  fetch('/api/store/servers',{cache:'no-store'}).then(r=>r.json()).then(rows=>{for(const s of rows)if(servers[s.id])servers[s.id]=s;el('serverTrio').classList.toggle('soon',!servers.trio.enabled);el('serverTrio').querySelector('.tag').textContent=servers.trio.enabled?'DISPONÍVEL':'EM BREVE';selectServer(serverId);}).catch(()=>{});
   let accountLoading=false;
   async function refreshAccount(){
     if(accountLoading)return;accountLoading=true;
@@ -55,11 +57,11 @@ export const storeCheckoutScript = String.raw`
   }
   refreshAccount();setInterval(refreshAccount,10000);
   document.addEventListener('gf:checkout',async e=>{const b={dataset:e.detail};
-    if(serverId==='trio')return;
+    if(!servers[serverId].enabled)return;
     await dispose();tier=b.dataset.tier;amount=Number(b.dataset.price);gift=b.dataset.gift===true;
     el('modalTitle').textContent=b.dataset.name;
     el('modalPrice').textContent=amount.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})+' • 30 dias';
-    el('chosenServer').textContent='Servidor: Guerra Fria Solo/Duo';
+    el('chosenServer').textContent='Servidor: '+servers[serverId].name;
     el('paymentNote').textContent=gift?'Você está comprando um presente. Após o pagamento, envie o link ao amigo; ele entra com Steam e Discord para ativar o VIP.':'O VIP será ativado somente no servidor escolhido.';
     el('status').className='status';modal.classList.add('open');buttons();
     if(tier==='duo'&&!account.steamVerified)status('Confirme o login oficial com Steam para comprar o combo para duas pessoas.');
@@ -70,7 +72,7 @@ export const storeCheckoutScript = String.raw`
     if(!account.steamVerified)throw Error('Confirme o login oficial com Steam antes de comprar.');
     const email=el('email').value.trim();
     if(!el('email').checkValidity()||!email)throw Error('Informe um e-mail válido.');
-    if(serverId==='trio')throw Error('Servidor Trio em preparação.');
+    if(!servers[serverId].enabled)throw Error('Servidor em preparação.');
     return {tier,email,serverId,gift};
   }
   async function post(path,data){
@@ -91,7 +93,7 @@ export const storeCheckoutScript = String.raw`
     el('modalTitle').textContent=d.product||'Sua compra';el('modalPrice').textContent=d.amount?Number(d.amount).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})+' • 30 dias':'Compra confirmada';el('status').className='status';
     el('checkoutFields').hidden=true;el('embedded').replaceChildren();el('paymentSuccess').hidden=false;
     el('successTitle').textContent=d.gift?(d.giftReady?'Presente pronto para enviar!':'Pagamento confirmado! Preparando presente…'):d.delivered?'Pagamento concluído com sucesso!':'Pagamento confirmado!';
-    el('successDetail').textContent=d.gift?'Pagamento confirmado! O VIP será ativado na conta do seu amigo quando ele resgatar o presente.':d.delivered?'Seus benefícios já estão ativos no Guerra Fria Solo/Duo por 30 dias.':'Estamos ativando seus benefícios. Esta tela atualizará automaticamente.';
+    el('successDetail').textContent=d.gift?'Pagamento confirmado! O VIP será ativado na conta do seu amigo quando ele resgatar o presente.':d.delivered?'Seus benefícios já estão ativos no '+(d.serverName||servers[serverId].name)+' por 30 dias.':'Estamos ativando seus benefícios. Esta tela atualizará automaticamente.';
     el('successPurchase').textContent=(d.product||'VIP')+' • Compra #'+d.id+(!d.gift&&d.steamId?' • Steam '+d.steamId:'');
     el('successDuo').hidden=!d.claimUrl;
     if(d.claimUrl){el('successLink').value=d.claimUrl;el('successExpiry').textContent='Um único resgate • válido até '+new Date(d.expiresAt).toLocaleString('pt-BR');}

@@ -14,10 +14,14 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const member = interaction.options.getUser("membro", true);
   try {
-    const result = await setBoosterAccess(member.id, false, `Removido por ${interaction.user.tag}`);
-    await interaction.editReply(`✅ Booster removido de <@${member.id}> e do grupo **bs** no Rust (Steam \`${result.steamId}\`). A remoção permanecerá até nova ativação manual.`);
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) { await interaction.editReply("Sem permissão para gerenciar Boosters."); return; }
+    const steamId = interaction.options.getString("steamid", true).trim();
+    if (!/^7656119\d{10}$/.test(steamId)) { await interaction.editReply("SteamID64 inválido."); return; }
+    const [link] = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId)).limit(1);
+    if (!link) throw new ActionError("Steam sem Booster vinculado.", 404);
+    const result = await setBoosterAccess(link.discordUserId, false, `Removido por ${interaction.user.tag}`);
+    await interaction.editReply(`✅ Booster removido de <@${link.discordUserId}> e do grupo **bs** no Rust (Steam \`${result.steamId}\`). A remoção permanecerá até nova ativação manual.`);
   } catch (error) {
     await interaction.editReply(`❌ ${error instanceof ActionError ? error.message : "Falha interna ao remover o Booster."}`);
   }

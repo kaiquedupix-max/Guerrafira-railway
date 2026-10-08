@@ -1,3 +1,4 @@
+import { GUERRA_FRIA_SERVERS } from "../core/servers.js";
 import { pool } from "@workspace/db";
 import { discordClient } from "../bot/client.js";
 import { VIP_PRODUCTS, isVipProduct } from "../bot/vipProducts.js";
@@ -49,7 +50,7 @@ export async function sendStoreReceipts(): Promise<void> {
           claimUrl = `https://www.guerrafriarust.com.br/api/store/duo/redeem#${duoToken(payment.id, claim.nonce)}`;
       }
       const user = await client.users.fetch(payment.discord_user_id);
-      const description = `Seu pagamento foi confirmado automaticamente.\n**${VIP_PRODUCTS[productId].name}**\n${order?.gift?'🎁 Seu presente está pronto! O VIP será ativado na conta do amigo após o resgate.':'✅ Seus benefícios já estão ativos no **Guerra Fria Solo/Duo**, por **30 dias**.\nSteam: **'+payment.steam_id+'**'}\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
+      const description = `Seu pagamento foi confirmado automaticamente.\n**${VIP_PRODUCTS[productId].name}**\n${order?.gift?'🎁 Seu presente está pronto! O VIP será ativado na conta do amigo após o resgate.':'✅ Seus benefícios já estão ativos no **'+GUERRA_FRIA_SERVERS[order?.server_id==='trio'?'trio':'solo-duo'].name+'**, por **30 dias**.\nSteam: **'+payment.steam_id+'**'}\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
       await user.send({ embeds: [{ title: "✅ Pagamento concluído com sucesso", color: 0xffb800,
         description: description + (claimUrl ? `\n\n🎁 **Envie este link ao seu amigo:**\n${claimUrl}\nUm único resgate, válido por 30 dias após a compra. Ele deve entrar com Discord e Steam para receber ${order?.gift?'o presente':'Bronze + Prata + Ouro'}.` : ""),
         footer: { text: "Guerra Fria • Loja VIP" } }], allowedMentions: { parse: [] } });

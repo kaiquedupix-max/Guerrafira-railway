@@ -6,6 +6,8 @@ import {
 import { and, eq, gt } from "drizzle-orm";
 import { db, vipSubscriptionsTable } from "@workspace/db";
 import { VIP_TIERS } from "../vip.js";
+import { subscriptionServer } from "../../routes/storeOrders.js";
+import { GUERRA_FRIA_SERVERS } from "../../core/servers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("meuvip")
@@ -32,7 +34,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       .setTitle("❌  Nenhum VIP Ativo")
       .setDescription(
         "Você não possui VIP ativo no momento.\n\n" +
-        "Abra um ticket em **Comprar VIP** para adquirir um plano e desbloquear benefícios exclusivos!",
+        "Compre na loja oficial: https://www.guerrafriarust.com.br/loja",
       )
       .setFooter({ text: "Guerra Fria" });
     await interaction.editReply({ embeds: [embed] });
@@ -46,7 +48,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       timeZone: "America/Sao_Paulo",
     }).format(d);
 
-  const embeds = subs.map((s) => {
+  const embeds = await Promise.all(subs.map(async (s) => {
     const vip     = VIP_TIERS[s.vipTier as keyof typeof VIP_TIERS];
     const expires = new Date(s.expiresAt);
     const starts  = new Date(s.startsAt);
@@ -54,7 +56,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const dLeft   = Math.max(0, Math.ceil(msLeft / 86_400_000));
     const hLeft   = Math.max(0, Math.ceil((msLeft % 86_400_000) / 3_600_000));
     const urgency = dLeft <= 3 ? "🔴 Expirando em breve!" : dLeft <= 7 ? "🟡 Expira em breve" : "🟢 Ativo";
-    const sourceLabel = s.source === "raffle" ? "🎉 Sorteio" : "💳 Compra";
+    const sourceLabel = s.source === "raffle" ? "🎉 Sorteio" : s.source.startsWith("manual:") ? "🛡️ Concessão administrativa" : "💳 Compra";
 
     return new EmbedBuilder()
       .setColor(vip?.color ?? 0xf39c12)
@@ -63,6 +65,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       .addFields(
         { name: "🎮 Steam ID",      value: `\`${s.steamId}\``,   inline: true },
         { name: "📦 Plano",         value: vip?.name ?? s.vipTier, inline: true },
+        { name: "Servidor", value:GUERRA_FRIA_SERVERS[await subscriptionServer(s.source)].name,inline:true },
         { name: "🎁 Origem",        value: sourceLabel,            inline: true },
         { name: "📅 Ativado em",    value: ptBR(starts),           inline: true },
         { name: "⏰ Expira em",     value: ptBR(expires),          inline: true },
@@ -74,7 +77,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       )
       .setFooter({ text: "Guerra Fria • Sistema VIP" })
       .setTimestamp();
-  });
+  }));
 
-  await interaction.editReply({ embeds });
+  await interaction.editReply({ embeds:embeds.slice(0,4) });
+  for(let i=4;i<embeds.length;i+=4)await interaction.followUp({embeds:embeds.slice(i,i+4),ephemeral:true});
 }
