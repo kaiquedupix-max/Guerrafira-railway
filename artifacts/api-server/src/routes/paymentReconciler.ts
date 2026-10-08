@@ -4,6 +4,7 @@ import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "..
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
 import { fulfillDuoPayment } from "./duoService.js";
+import { recordStoreDelivery } from "./storeReceipts.js";
 
 type PaymentRow = typeof paymentsTable.$inferSelect;
 type MpPayment = Record<string, unknown>;
@@ -148,6 +149,7 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
       updatedAt: new Date(),
     }).where(eq(paymentsTable.id, row.id));
     logger.info({ paymentId, rowId: row.id }, "Approved card payment already fulfilled manually");
+    await recordStoreDelivery(row.id);
     return true;
   }
 
@@ -183,6 +185,7 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
       source: "purchase",
       client,
     });
+    await recordStoreDelivery(row.id);
     await notifyTicket(row,
       `✅ **Pagamento aprovado!** Seu **${VIP_PRODUCTS[vipTier].name}** foi ativado.\n🎮 [Abrir perfil Steam](https://steamcommunity.com/profiles/${steamId}) • 📅 Válido por **30 dias**. Obrigado! 🙌`,
     );

@@ -5,6 +5,7 @@ import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "..
 import { retrieveStripeCheckout, type StripeCheckoutSession } from "../bot/stripe.js";
 import { logger } from "../lib/logger.js";
 import { fulfillDuoPayment } from "./duoService.js";
+import { recordStoreDelivery } from "./storeReceipts.js";
 
 type PaymentRow = typeof paymentsTable.$inferSelect;
 let reconciliationStarted = false;
@@ -71,6 +72,7 @@ async function fulfillStripePayment(row: PaymentRow, session: StripeCheckoutSess
       updatedAt: new Date(),
     }).where(eq(paymentsTable.id, row.id));
     logger.info({ sessionId: session.id, rowId: row.id }, "Approved Stripe payment already fulfilled manually");
+    await recordStoreDelivery(row.id);
     return true;
   }
 
@@ -104,6 +106,7 @@ async function fulfillStripePayment(row: PaymentRow, session: StripeCheckoutSess
       source: "purchase",
       client,
     });
+    await recordStoreDelivery(row.id);
     await notifyTicket(row,
       `✅ **Pagamento Stripe aprovado!** Seu **${VIP_PRODUCTS[vipTier].name}** foi ativado.\n🎮 [Abrir perfil Steam](https://steamcommunity.com/profiles/${steamId}) • 📅 Válido por **30 dias**. Obrigado! 🙌`,
     );

@@ -3,6 +3,7 @@ import { pool, Pool } from "@workspace/db";
 import { discordClient } from "../bot/client.js";
 import { grantVipProduct } from "../bot/vipProducts.js";
 import { logger } from "../lib/logger.js";
+import { recordStoreDelivery } from "./storeReceipts.js";
 import { claimProblem, DUO_WINDOW_MS, duoToken, tokenHash, tokenMatches } from "./duoPolicy.js";
 
 type Payment = { id: number; discord_user_id: string; steam_id: string; status: string; vip_tier: string; vip_granted_at: Date | null };
@@ -58,6 +59,7 @@ export async function fulfillDuoPayment(id: number): Promise<boolean> {
       await deliver(payment, payment.discord_user_id, payment.steam_id);
       await pool.query("UPDATE payments SET vip_granted_at=now(),updated_at=now() WHERE id=$1", [id]);
     }
+    await recordStoreDelivery(id);
     return true;
   });
 }

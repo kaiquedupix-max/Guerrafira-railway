@@ -5,6 +5,7 @@ export const storeCheckoutScript = String.raw`
   let account={}, tier='', serverId='solo-duo', amount=0, busy=false, generation=0;
   let checkout=null, brick=null, paymentTimer=null, pixTimer=null;
   const sdkPromises=new Map();
+  const paymentStyle={theme:'dark',customVariables:{baseColor:'#ffb800',baseColorFirstVariant:'#e5a400',baseColorSecondVariant:'#ffd368',buttonTextColor:'#080b0d',textPrimaryColor:'#f8fafc',textSecondaryColor:'#b5c1ca',inputBackgroundColor:'#10191e',formBackgroundColor:'#0b1115',outlinePrimaryColor:'#455760',outlineSecondaryColor:'#ffb800',inputFocusedBoxShadow:'0 0 0 3px #ffb80033',inputVerticalPadding:'14px',inputHorizontalPadding:'14px',borderRadiusSmall:'8px',borderRadiusMedium:'10px',borderRadiusLarge:'12px',formPadding:'20px'}};
   const status=text=>{el('status').textContent=text;el('status').className='status show'};
   const flash=(text,type='')=>{el('flash').textContent=text;el('flash').className='flash show '+type};
   function buttons(){
@@ -19,6 +20,7 @@ export const storeCheckoutScript = String.raw`
     if(checkout){checkout.destroy();checkout=null;}
     const old=brick;brick=null;if(old)await old.unmount().catch(()=>{});
     el('embedded').replaceChildren();el('qr').className='qr';busy=false;buttons();
+    el('paymentSuccess').hidden=true;el('checkoutFields').hidden=false;
   }
   async function close(){modal.classList.remove('open');await dispose();}
   el('close').onclick=close;
@@ -29,7 +31,7 @@ export const storeCheckoutScript = String.raw`
     el('serverSolo').classList.toggle('active',id==='solo-duo');
     el('serverTrio').classList.toggle('active',id==='trio');
     el('serverInfo').textContent=id==='trio'?'Guerra Fria Trio está em preparação. Compras serão liberadas em breve.':'Compras liberadas para Guerra Fria Solo/Duo.';
-    document.querySelectorAll('.buy').forEach(b=>{b.disabled=id==='trio';b.textContent=id==='trio'?'EM BREVE':'COMPRAR AGORA →'});
+    document.querySelectorAll('.vipCard .buy').forEach(b=>{b.disabled=id==='trio';b.textContent=id==='trio'?'EM BREVE':'COMPRAR AGORA →'});
   }
   el('serverSolo').onclick=()=>selectServer('solo-duo');el('serverTrio').onclick=()=>selectServer('trio');
   selectServer(new URLSearchParams(location.search).get('server')==='trio'?'trio':'solo-duo');
@@ -52,7 +54,7 @@ export const storeCheckoutScript = String.raw`
     }catch(e){flash(e.message,'error')}finally{accountLoading=false;}
   }
   refreshAccount();setInterval(refreshAccount,10000);
-  document.querySelectorAll('.buy').forEach(b=>b.onclick=async()=>{
+  document.querySelectorAll('.vipCard .buy').forEach(b=>b.onclick=async()=>{
     if(serverId==='trio')return;
     await dispose();tier=b.dataset.tier;amount=Number(b.dataset.price);
     el('modalTitle').textContent=b.dataset.name;
@@ -84,6 +86,17 @@ export const storeCheckoutScript = String.raw`
     }));return sdkPromises.get(src);
   }
   function mountNode(id){el('embedded').replaceChildren();const div=document.createElement('div');div.id=id;el('embedded').append(div)}
+  function showSuccess(d){
+    el('modalTitle').textContent=d.product||'Sua compra';el('modalPrice').textContent=d.amount?Number(d.amount).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})+' • 30 dias':'Compra confirmada';el('status').className='status';
+    el('checkoutFields').hidden=true;el('embedded').replaceChildren();el('paymentSuccess').hidden=false;
+    el('successTitle').textContent=d.delivered?'Pagamento concluído com sucesso!':'Pagamento confirmado!';
+    el('successDetail').textContent=d.delivered?'Seus benefícios já estão ativos no Guerra Fria Solo/Duo por 30 dias.':'Estamos ativando seus benefícios. Esta tela atualizará automaticamente.';
+    el('successPurchase').textContent=(d.product||'VIP')+' • Compra #'+d.id+(d.steamId?' • Steam '+d.steamId:'');
+    el('successDuo').hidden=!d.claimUrl;
+    if(d.claimUrl){el('successLink').value=d.claimUrl;el('successExpiry').textContent='Um único resgate • válido até '+new Date(d.expiresAt).toLocaleString('pt-BR');}
+    el('successDm').textContent=d.dmStatus==='sent'?'✓ A confirmação também foi enviada no seu privado do Discord.':d.dmStatus==='retrying'?'Não conseguimos enviar no Discord. Libere mensagens privadas do servidor; tentaremos novamente.':'A confirmação será enviada automaticamente no seu privado do Discord.';
+  }
+  el('successCopy').onclick=async()=>{try{await navigator.clipboard.writeText(el('successLink').value);el('successCopy').textContent='LINK COPIADO ✓'}catch{el('successLink').select();el('successCopy').textContent='Selecione e copie o link acima'}};
   function watch(id,seq){
     clearInterval(paymentTimer);
     const poll=async()=>{
@@ -93,14 +106,18 @@ export const storeCheckoutScript = String.raw`
         if(d.status==='approved'){
           clearInterval(pixTimer);el('qr').className='qr';
           status(d.delivered?'Pagamento aprovado ✓ VIPs ativados.':'Pagamento aprovado ✓ A ativação está sendo processada.');
+          showSuccess(d);
           refreshPurchases();
-          if(d.delivered)clearInterval(paymentTimer);
+          if(d.delivered&&d.dmStatus==='sent')clearInterval(paymentTimer);
         }else if(['rejected','cancelled','failed','refunded','charged_back'].includes(d.status)){
           clearInterval(paymentTimer);status('Pagamento '+d.status+'. Confira sua compra antes de iniciar outra tentativa.');
         }else status('Aguardando confirmação do pagamento. Seus VIPs serão ativados automaticamente.');
       }catch{}
     };poll();paymentTimer=setInterval(poll,5000);
   }
+  const returningPayment=Number(new URLSearchParams(location.search).get('payment'));
+  if(Number.isSafeInteger(returningPayment)&&returningPayment>0){modal.classList.add('open');el('modalTitle').textContent='Sua compra';el('modalPrice').textContent='Conferindo confirmação do pagamento…';post('/payments/'+returningPayment+'/confirm',{}).catch(()=>{}).finally(()=>watch(returningPayment,generation));history.replaceState(null,'','/loja');}
+  else if(new URLSearchParams(location.search).get('stripe')==='cancelled')flash('Checkout Stripe cancelado. Você pode escolher outra forma de pagamento.','warn');
   el('pix').onclick=async()=>{
     if(busy)return;
     try{
@@ -123,16 +140,9 @@ export const storeCheckoutScript = String.raw`
     if(busy||!account.stripeEnabled)return;
     try{
       const data=purchase();await dispose();const seq=generation;busy=true;buttons();status('Carregando checkout seguro…');
-      await sdk('https://js.stripe.com/v3/');if(seq!==generation)return;
       const d=await post('/stripe/card',data);if(seq!==generation)return;
-      const instance=await Stripe(account.stripePublishableKey).initEmbeddedCheckout({clientSecret:d.clientSecret,onComplete:async()=>{
-        if(seq!==generation)return;
-        await post('/payments/'+d.rowId+'/confirm',{}).catch(()=>{});watch(d.rowId,seq);
-      }});
-      if(seq!==generation){instance.destroy();return;}
-      checkout=instance;mountNode('stripeCheckout');checkout.mount('#stripeCheckout');
-      status('Preencha o formulário seguro abaixo. O pagamento acontece dentro da loja.');
-      watch(d.rowId,seq);
+      const url=new URL(d.checkoutUrl);if(url.protocol!=='https:'||url.hostname!=='checkout.stripe.com')throw Error('Não foi possível abrir o checkout seguro.');
+      status('Abrindo o checkout seguro da Stripe. Após pagar, você voltará à loja.');location.assign(url.href);
     }catch(e){status(e.message)}finally{busy=false;buttons()}
   };
   el('card').onclick=async()=>{
@@ -144,7 +154,7 @@ export const storeCheckoutScript = String.raw`
       const builder=new MercadoPago(account.mpPublicKey,{locale:'pt-BR'}).bricks();mountNode('mpCard');
       const instance=await builder.create('cardPayment','mpCard',{
         initialization:{amount,payer:{email:data.email}},
-        customization:{visual:{style:{theme:'dark'}},paymentMethods:{maxInstallments:12}},
+        customization:{visual:{style:paymentStyle},paymentMethods:{maxInstallments:12}},
         callbacks:{onReady:()=>{if(seq===generation)status('Preencha o cartão no formulário seguro abaixo.');},
           onError:()=>{if(seq===generation)status('Confira os dados do cartão ou tente carregar o formulário novamente.');},
           onSubmit:async formData=>{

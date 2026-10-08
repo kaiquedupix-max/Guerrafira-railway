@@ -3,7 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { db, paymentsTable } from "@workspace/db";
 import { getCommunitySession } from "../admin/communitySession.js";
 import { createPixPayment } from "../bot/mp.js";
-import { createStripeCheckout, isEmbeddedStripeConfigured, stripePublishableKey, retrieveStripeCheckout } from "../bot/stripe.js";
+import { createStripeCheckout, isStripeConfigured, retrieveStripeCheckout } from "../bot/stripe.js";
+import { receiptState } from "./storeReceipts.js";
 import { getLinkedSteamV2, saveLinkedSteamV2, STEAM_LOCKED_NOTICE } from "../bot/utils/linkedSteamV2.js";
 import { VIP_PRODUCTS, isVipProduct, type VipProduct } from "../bot/vipProducts.js";
 import { GUERRA_FRIA_SERVERS, parseServerId, type GuerraFriaServerId } from "../core/servers.js";
@@ -119,7 +120,7 @@ router.get("/me", async (req, res) => {
   if (!session) return res.status(401).json({ error: "Sua sessão expirou. Entre novamente com o Discord." });
   const linked = await getLinkedSteamV2(session.userId);
   return res.json({ discordUserId: session.userId, username: session.username, steamId: linked?.steamId ?? null,
-    steamVerified: linked?.steamId ? await officialSteam(session.userId, linked.steamId) : false, stripeEnabled: isEmbeddedStripeConfigured(), stripePublishableKey: stripePublishableKey(), mpEnabled: isEmbeddedMpConfigured(), mpPublicKey: mpPublishableKey() });
+    steamVerified: linked?.steamId ? await officialSteam(session.userId, linked.steamId) : false, stripeEnabled: isStripeConfigured(), mpEnabled: isEmbeddedMpConfigured(), mpPublicKey: mpPublishableKey() });
 });
 
 router.get("/duo-purchases", async (req, res) => {
@@ -167,7 +168,12 @@ router.get("/payments/:id", async(req,res) => {
   if(!Number.isSafeInteger(id)||id<1) return res.status(400).json({error:"Compra inválida."});
   const [row]=await db.select().from(paymentsTable).where(and(eq(paymentsTable.id,id),eq(paymentsTable.discordUserId,session.userId))).limit(1);
   if(!row) return res.status(404).json({error:"Compra não encontrada."});
-  return res.json({id:row.id,status:row.status,delivered:Boolean(row.vipGrantedAt)});
+  const receipt = await receiptState(row.id);
+  const duo = row.vipTier === "duo" && row.status === "approved" ? (await listDuoPurchases(session.userId)).find(p => p.id === row.id) : null;
+  return res.json({id:row.id,status:row.status,delivered:Boolean(receipt?.completed_at),
+    product: isVipProduct(row.vipTier) ? VIP_PRODUCTS[row.vipTier].name : "VIP", amount:row.amount,
+    steamId:row.steamId, claimUrl:duo?.claimUrl ?? null, claimStatus:duo?.claimStatus, expiresAt:duo?.expiresAt,
+    dmStatus:receipt?.sent_at ? "sent" : receipt?.attempts ? "retrying" : "pending"});
 });
 
 router.post("/payments/:id/confirm", async(req,res) => {
@@ -185,7 +191,7 @@ router.post("/payments/:id/confirm", async(req,res) => {
 
 router.post("/stripe/card", async (req, res) => {
   const input = await validate(req, res); if (!input) return;
-  if (!isEmbeddedStripeConfigured()) return res.status(503).json({ error: "Pagamento por Stripe ainda não está configurado." });
+  if (!isStripeConfigured()) return res.status(503).json({ error: "Pagamento por Stripe ainda não está configurado." });
   const vip = VIP_PRODUCTS[input.tier];
   const server = GUERRA_FRIA_SERVERS[input.serverId];
   try {
@@ -202,7 +208,7 @@ router.post("/stripe/card", async (req, res) => {
 
     const checkout = await createStripeCheckout({
       paymentRowId: row.id,
-      embedded: true,
+      embedded: false,
       amount: vip.price,
       title: `${vip.name} Guerra Fria ${server.shortName} - 30 dias`,
       email: input.email,
@@ -217,7 +223,7 @@ router.post("/stripe/card", async (req, res) => {
 
     await db.update(paymentsTable).set({ stripeSessionId: checkout.sessionId, updatedAt: new Date() })
       .where(eq(paymentsTable.id, row.id));
-    return res.json({ rowId: row.id, clientSecret: checkout.clientSecret, sessionId: checkout.sessionId, steamId: input.steamId, serverId: input.serverId });
+    return res.json({ rowId: row.id, checkoutUrl: checkout.checkoutUrl, sessionId: checkout.sessionId, steamId: input.steamId, serverId: input.serverId });
   } catch (err) {
     logger.error({ err, tier: input.tier, serverId: input.serverId, discordUserId: input.discordUserId }, "Web store Stripe card error");
     return res.status(500).json({ error: "Não foi possível abrir o checkout da Stripe agora. Tente novamente." });
@@ -225,14 +231,17 @@ router.post("/stripe/card", async (req, res) => {
 });
 
 router.get("/stripe/success", async (req, res) => {
+  const buyer = getCommunitySession(req);
+  if (!buyer) return void res.redirect("/loja");
   const sessionId = typeof req.query.session_id === "string" ? req.query.session_id : "";
   if (!sessionId) return void res.redirect("/loja?stripe=error");
   try {
     const checkout = await retrieveStripeCheckout(sessionId);
     if (!checkout) return void res.redirect("/loja?stripe=error");
+    const [owned] = await db.select().from(paymentsTable).where(and(eq(paymentsTable.stripeSessionId,sessionId),eq(paymentsTable.discordUserId,buyer.userId))).limit(1);
+    if (!owned) return void res.redirect("/loja?stripe=error");
     const processed = await processStripeCheckoutSession(checkout);
-    if (processed && checkout.payment_status === "paid") return void res.redirect("/loja?stripe=success");
-    return void res.redirect("/loja?stripe=pending");
+    return void res.redirect(`/loja?payment=${owned.id}&stripe=${processed && checkout.payment_status === "paid" ? "success" : "pending"}`);
   } catch (err) {
     logger.error({ err, sessionId }, "Stripe checkout success reconciliation failed");
     return void res.redirect("/loja?stripe=error");

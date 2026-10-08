@@ -51,7 +51,7 @@ test('provider requests keep server price and identities and contain no hosted r
   process.env.STRIPE_SECRET_KEY='sk_test_secret';process.env.STRIPE_PUBLISHABLE_KEY='pk_test_public';
   process.env.APP_URL='https://www.guerrafriarust.com.br';
   globalThis.fetch=async(url,options)=>{
-    requests.push({url,options});return new Response(JSON.stringify(String(url).includes('stripe')?{id:'cs_test_example',client_secret:'cs_test_example_secret'}:{id:123,status:'pending'}));
+    requests.push({url,options});return new Response(JSON.stringify(String(url).includes('stripe')?{id:'cs_test_example',client_secret:'cs_test_example_secret',url:'https://checkout.stripe.com/c/pay/test'}:{id:123,status:'pending'}));
   };
   try{
     const mp=await bundle('src/bot/mpEmbedded.ts',{'logger.js':log});
@@ -71,10 +71,16 @@ test('provider requests keep server price and identities and contain no hosted r
     assert.equal(body.get('ui_mode'),'embedded');assert.equal(body.get('redirect_on_completion'),'never');
     assert.equal(body.has('success_url'),false);assert.equal(body.has('cancel_url'),false);
     assert.equal(body.get('line_items[0][price_data][unit_amount]'),'12000');
+    delete process.env.STRIPE_PUBLISHABLE_KEY;delete process.env.STRIPE_PUBLIC_KEY;
+    assert.equal(stripe.isStripeConfigured(),true);assert.equal(stripe.isEmbeddedStripeConfigured(),false);
+    const hosted=await stripe.createStripeCheckout({paymentRowId:2,amount:120,title:'Duo',email:'buyer@example.com',discordUserId:'buyer',steamId:'steam',vipTier:'duo'});
+    assert.equal(hosted.checkoutUrl,'https://checkout.stripe.com/c/pay/test');
+    const hostedBody=new URLSearchParams(requests[2].options.body);
+    assert.equal(hostedBody.has('ui_mode'),false);assert.match(hostedBody.get('success_url'),/session_id=\{CHECKOUT_SESSION_ID\}/);
   }finally{globalThis.fetch=original;}
 });
 
-test('checkout mounts both SDKs inside the store, retains card retry id and PIX displays its code',async()=>{
+test('checkout opens hosted Stripe, retains card retry id and PIX displays its code',async()=>{
   const {renderStorePage}=await bundle('src/admin/storePage.ts',{'vipProducts.js':'export const VIP_PRODUCTS=globalThis.__storeTests.products;'});
   const requests=[],mounted=[],errors=[];let cardSubmit,fail=true;
   const dom=new JSDOM(renderStorePage('Buyer'),{url:'https://www.guerrafriarust.com.br/loja',runScripts:'dangerously',beforeParse(w){
@@ -91,7 +97,7 @@ test('checkout mounts both SDKs inside the store, retains card retry id and PIX 
       let data={};
       if(url==='/api/store/me')data={steamId:'76561190000000001',steamVerified:true,stripeEnabled:true,mpEnabled:true,stripePublishableKey:'pk_test_public',mpPublicKey:'mp_public'};
       else if(url==='/api/store/duo-purchases')data=[];
-      else if(url==='/api/store/stripe/card')data={rowId:1,clientSecret:'secret'};
+      else if(url==='/api/store/stripe/card')data={rowId:1,checkoutUrl:'https://checkout.stripe.com/c/pay/test'};
       else if(url==='/api/store/card'){if(fail){fail=false;throw Error('network')}data={rowId:2,paymentId:'123',status:'pending'};}
       else if(url==='/api/store/pix')data={rowId:3,qrCode:'pix-test-code',qrCodeBase64:'AA==',expiresAt:new Date(Date.now()+600000).toISOString()};
       else if(url.startsWith('/api/store/payments/'))data={status:'pending'};
@@ -100,7 +106,7 @@ test('checkout mounts both SDKs inside the store, retains card retry id and PIX 
   }});
   const pause=()=>new Promise(r=>setTimeout(r,30));
   const doc=dom.window.document;await pause();doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('email').value='buyer@example.com';
-  doc.getElementById('stripe').click();await pause();assert.ok(mounted.includes('#stripeCheckout'));
+  doc.getElementById('stripe').click();await pause();assert.ok(requests.some(r=>r.url==='/api/store/stripe/card'));assert.equal(mounted.includes('#stripeCheckout'),false);
   doc.getElementById('card').click();await pause();assert.ok(mounted.includes('cardPayment'));
   const card={token:'valid-token',payment_method_id:'visa',installments:1};
   await assert.rejects(cardSubmit(card),/Falha de conexão/);await cardSubmit(card);await pause();
@@ -191,4 +197,53 @@ test('an open checkout clears its displayed Steam and disables payment when the 
   assert.equal(doc.getElementById('pix').disabled,true);assert.equal(doc.getElementById('card').disabled,true);
   assert.equal(doc.getElementById('steamLogin').style.display,'flex');assert.match(doc.getElementById('status').textContent,/administração/);
   dom.window.close();
+});
+
+test('private receipts persist completion, retry closed DMs and send a duo link once',async()=>{
+  process.env.DUO_TOKEN_SECRET='test-only-stable-secret';
+  const sent=[];let blocked=true;
+  globalThis.__storeTests.client={users:{fetch:async()=>({send:async message=>{if(blocked)throw Error('closed DM');sent.push(message);}})}};
+  const receipts=await bundle('src/routes/storeReceipts.ts',{
+    '@workspace/db':'export const pool=globalThis.__storeTests.pool;',
+    'client.js':'export const discordClient=()=>globalThis.__storeTests.client;',
+    'vipProducts.js':'export const VIP_PRODUCTS=globalThis.__storeTests.products;export const isVipProduct=x=>x in VIP_PRODUCTS;',
+    'logger.js':log
+  });
+  await pg.exec(`CREATE TABLE IF NOT EXISTS payments(id SERIAL PRIMARY KEY,discord_user_id TEXT,steam_id TEXT,email TEXT,vip_tier TEXT,amount NUMERIC,method TEXT,status TEXT,mp_external_reference TEXT);
+    CREATE TABLE duo_redemptions(payment_id INTEGER PRIMARY KEY,nonce TEXT,status TEXT,expires_at TIMESTAMPTZ);`);
+  const row=(await pg.query("INSERT INTO payments(discord_user_id,steam_id,vip_tier,amount,status) VALUES('buyer','steam','duo',120,'approved') RETURNING id")).rows[0];
+  await pg.query("INSERT INTO duo_redemptions VALUES($1,'nonce','available',now()+interval '30 days')",[row.id]);
+  assert.equal(await receipts.receiptState(row.id),undefined);
+  await receipts.sendStoreReceipts();assert.equal(sent.length,0);
+  await receipts.recordStoreDelivery(row.id);await receipts.recordStoreDelivery(row.id);
+  await receipts.sendStoreReceipts();assert.equal(sent.length,0);assert.equal((await receipts.receiptState(row.id)).attempts,1);
+  blocked=false;await pg.query("UPDATE store_receipts SET next_attempt_at=now() WHERE payment_id=$1",[row.id]);
+  await Promise.all([receipts.sendStoreReceipts(),receipts.sendStoreReceipts()]);
+  assert.equal(sent.length,1);assert.match(sent[0].embeds[0].description,/benefícios já estão ativos/);
+  assert.match(sent[0].embeds[0].description,/duo\/redeem#[A-Za-z0-9_-]{43}/);
+  assert.ok((await receipts.receiptState(row.id)).sent_at);
+  await receipts.sendStoreReceipts();assert.equal(sent.length,1);
+});
+
+test('success screen waits for completed delivery and shows the owned duo invitation and DM state',async()=>{
+  const {renderStorePage}=await bundle('src/admin/storePage.ts',{'vipProducts.js':'export const VIP_PRODUCTS=globalThis.__storeTests.products;'});
+  let delivered=false,poll;const dom=new JSDOM(renderStorePage('Buyer'),{url:'https://www.guerrafriarust.com.br/loja?payment=7',runScripts:'dangerously',beforeParse(w){
+    w.setInterval=(fn,ms)=>{if(ms===5000)poll=fn;return 1};w.clearInterval=()=>{};
+    w.fetch=async url=>({ok:true,json:async()=>url==='/api/store/me'?{steamId:'steam',steamVerified:true}:url==='/api/store/duo-purchases'?[]:url==='/api/store/payments/7'?{
+      id:7,status:'approved',delivered,product:'Super Combo Duo',steamId:'steam',claimUrl:'https://www.guerrafriarust.com.br/api/store/duo/redeem#test',expiresAt:new Date(Date.now()+600000).toISOString(),dmStatus:delivered?'sent':'pending'
+    }:{} });
+  }});
+  try{
+    await new Promise(r=>setTimeout(r,30));const doc=dom.window.document;
+    assert.equal(doc.getElementById('paymentSuccess').hidden,false);
+    assert.match(doc.getElementById('successDetail').textContent,/ativando/);
+    assert.doesNotMatch(doc.getElementById('successDetail').textContent,/já estão ativos/);
+    delivered=true;await poll();
+    assert.match(doc.getElementById('successDetail').textContent,/já estão ativos/);
+    assert.match(doc.getElementById('successDm').textContent,/enviada/);
+    assert.equal(doc.getElementById('successDuo').hidden,false);
+    assert.match(doc.getElementById('successLink').value,/redeem#test/);
+    assert.equal(doc.getElementById('checkoutFields').hidden,true);
+    assert.equal(dom.window.location.search,'');
+  }finally{dom.window.close()}
 });

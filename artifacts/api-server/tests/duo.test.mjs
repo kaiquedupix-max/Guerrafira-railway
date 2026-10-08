@@ -59,7 +59,7 @@ async function bundle(file, mocks = true) {
       b.onResolve({ filter:/\/lib\/logger\.js$/ }, args => ({path:args.path,namespace:'mock'}));
       b.onLoad({filter:/.*/,namespace:'mock'}, args => ({contents:args.path==='db'
         ? 'export const pool=globalThis.__duoTest.pool;export const Pool=globalThis.__duoTest.Pool;'
-        : args.path.includes('vipProducts') ? 'export const grantVipProduct=globalThis.__duoTest.delivery;export const VIP_PRODUCTS=globalThis.__duoTest.products;'
+        : args.path.includes('vipProducts') ? 'export const grantVipProduct=globalThis.__duoTest.delivery;export const VIP_PRODUCTS=globalThis.__duoTest.products;export const isVipProduct=x=>x in VIP_PRODUCTS;'
         : args.path.includes('client') ? 'export const discordClient=()=>({});'
         : 'export const logger={error(){},info(){}};',loader:'js'}));
     } }] : [] });
