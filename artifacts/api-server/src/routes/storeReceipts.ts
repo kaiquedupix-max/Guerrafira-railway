@@ -33,15 +33,16 @@ export async function sendStoreReceipts(): Promise<void> {
   for (const receipt of rows) {
     try {
       const payment = (await pool.query("SELECT * FROM payments WHERE id=$1 AND status='approved'", [receipt.payment_id])).rows[0];
-      if (!payment || !isVipProduct(payment.vip_tier)) throw Error("Receipt unavailable");
+      const productId: unknown = payment?.vip_tier;
+      if (!payment || !isVipProduct(productId)) throw Error("Receipt unavailable");
       let claimUrl: string | null = null;
-      if (payment.vip_tier === "duo") {
+      if (productId === "duo") {
         const claim = (await pool.query("SELECT * FROM duo_redemptions WHERE payment_id=$1", [payment.id])).rows[0];
         if (claim?.status === "available" && new Date(claim.expires_at).getTime() > Date.now())
           claimUrl = `https://www.guerrafriarust.com.br/api/store/duo/redeem#${duoToken(payment.id, claim.nonce)}`;
       }
       const user = await client.users.fetch(payment.discord_user_id);
-      const description = `Seu pagamento foi confirmado automaticamente.\n**${VIP_PRODUCTS[payment.vip_tier].name}**\n✅ Seus benefícios já estão ativos no **Guerra Fria Solo/Duo**, por **30 dias**.\nSteam: **${payment.steam_id}**\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
+      const description = `Seu pagamento foi confirmado automaticamente.\n**${VIP_PRODUCTS[productId].name}**\n✅ Seus benefícios já estão ativos no **Guerra Fria Solo/Duo**, por **30 dias**.\nSteam: **${payment.steam_id}**\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
       await user.send({ embeds: [{ title: "✅ Pagamento concluído com sucesso", color: 0xffb800,
         description: description + (claimUrl ? `\n\n👥 **Envie este link ao seu amigo:**\n${claimUrl}\nUm único resgate, válido por 30 dias após a compra. Ele deve entrar com Discord e Steam para receber Bronze + Prata + Ouro.` : ""),
         footer: { text: "Guerra Fria • Loja VIP" } }], allowedMentions: { parse: [] } });
