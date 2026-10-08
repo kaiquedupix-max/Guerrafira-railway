@@ -4,6 +4,7 @@ import { discordClient } from "../bot/client.js";
 import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "../bot/vipProducts.js";
 import { retrieveStripeCheckout, type StripeCheckoutSession } from "../bot/stripe.js";
 import { logger } from "../lib/logger.js";
+import { fulfillDuoPayment } from "./duoService.js";
 
 type PaymentRow = typeof paymentsTable.$inferSelect;
 let reconciliationStarted = false;
@@ -52,6 +53,10 @@ async function notifyTicket(row: PaymentRow, content: string): Promise<void> {
 }
 
 async function fulfillStripePayment(row: PaymentRow, session: StripeCheckoutSession): Promise<boolean> {
+  if (row.vipTier === "duo") {
+    try { return await fulfillDuoPayment(row.id); }
+    catch (error) { logger.error({ error, rowId: row.id }, "Duo Stripe delivery will retry"); return false; }
+  }
   if (row.vipGrantedAt) return true;
 
   const [existingFulfillment] = await db.select().from(vipSubscriptionsTable).where(and(

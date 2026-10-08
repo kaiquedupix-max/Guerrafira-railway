@@ -5,7 +5,7 @@ export const vipSubscriptionsTable = pgTable("vip_subscriptions", {
   discordUserId:      varchar("discord_user_id", { length: 64 }).notNull(),
   steamId:            varchar("steam_id", { length: 32 }).notNull(),
   vipTier:            varchar("vip_tier", { length: 16 }).notNull(),   // bronze | prata | ouro
-  source:             varchar("source", { length: 16 }).notNull(),     // purchase | raffle
+  source:             varchar("source", { length: 64 }).notNull(),     // purchase | raffle | purchase:<payment id>
   durationDays:       integer("duration_days").notNull().default(30),
   startsAt:           timestamp("starts_at").notNull(),
   expiresAt:          timestamp("expires_at").notNull(),

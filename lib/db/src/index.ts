@@ -3,6 +3,7 @@ import pg from "pg";
 import * as schema from "./schema";
 
 const { Pool } = pg;
+export { Pool };
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
