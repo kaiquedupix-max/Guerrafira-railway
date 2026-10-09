@@ -1,3 +1,4 @@
+import { roundedThemeCss } from "./roundedTheme.js";
 import type { Request } from "express";
 import { renderHome as renderBaseHome } from "./homePage.js";
 
@@ -135,5 +136,5 @@ a:focus-visible,button:focus-visible{outline:2px solid #ffb000;outline-offset:4p
   .leaderHead{padding:0 12px}.leaderHead strong{font-size:10px}.leaderHead a{font-size:8px}.leaderLabel,.leaderRow{grid-template-columns:24px minmax(0,1fr) 44px 42px;padding-left:12px;padding-right:12px}
 }
 </style>`;
-  return base.replace("</head>", `${css}</head>`);
+  return base.replace("</head>", `${css}${roundedThemeCss}</head>`);
 }

@@ -1,3 +1,4 @@
+import { roundedThemeCss } from "./roundedTheme.js";
 export type SiteSection = "home" | "store" | "donation" | "leaderboard" | "integrity" | "admin" | "season" | "status" | "profile";
 import { brandThemeCss } from "./brandTheme.js";
 import { publicMilitaryThemeCss } from "./publicMilitaryTheme.js";
@@ -50,7 +51,7 @@ body .productBadge,body .offerTag{border-radius:999px!important}
 body .buy,body .primary,body .giftButton,body .pay,body .copy,body .close,body .serverCard,body .steamLogin{border-radius:16px!important}
 body .vipCard .price{font-family:Arial,Helvetica,sans-serif!important;letter-spacing:0!important}
 </style>` : "";
-  let out = html.replace("</head>", `${pwaMeta}${css}${sectionTheme}${storeTheme}</head>`);
+  let out = html.replace("</head>", `${pwaMeta}${css}${sectionTheme}${storeTheme}${roundedThemeCss}</head>`);
   out = out.replace(/<body([^>]*)>/i, `<body$1>${chrome}${drawer}`);
   out = out.replace("</body>", `${publicJs}</body>`);
   return out;
