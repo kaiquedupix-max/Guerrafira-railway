@@ -1,3 +1,5 @@
+import {adminServer} from "../../core/adminServerContext.js";
+import {executeServerRcon} from "./serverRcon.js";
 /** Rust WebRCON client — WebSocket-based RCON + broadcast event system. */
 import WebSocket from "ws";
 import { logger } from "../../lib/logger.js";
@@ -91,7 +93,10 @@ async function ensureConnected(): Promise<boolean> {
   return connectionPromise;
 }
 
-export async function executeRconCommand(command: string): Promise<string | null> {
+export function executeRconCommand(command:string):Promise<string|null>{
+ return adminServer()==="trio"?executeServerRcon("trio",command):executeDuoRconCommand(command);
+}
+export async function executeDuoRconCommand(command: string): Promise<string | null> {
   if (command === "antibot.json") {
     const cached = latestAntibotTelemetry;
     if (cached && Date.now() - cached.at <= 20_000) return cached.json;

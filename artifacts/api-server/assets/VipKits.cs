@@ -153,7 +153,7 @@ namespace Oxide.Plugins
                     wipeDelaySeconds = k.WipeDelaySeconds,
                     items = DisplayRewards(k).Select(r => { var def = ItemManager.FindItemDefinition(r.Shortname); return new {
                         shortname = r.Shortname, amount = r.Amount, skin = r.Skin.ToString(), inventory = r.Inventory, includedIn = r.IncludedIn, loadedAmmo = r.Serialized == null ? 0 : r.Serialized.Ammo, ammoType = r.Serialized == null ? "" : r.Serialized.Ammotype,
-                        itemId = def == null ? 0 : def.itemid, name = def == null ? r.Shortname : def.displayName.english
+                        itemId = def == null ? 0 : def.itemid, name = def == null ? r.Shortname : def.displayName.english, category = def == null ? "Resources" : def.category.ToString()
                     }; }).ToArray()
                 }).ToArray()
             }));

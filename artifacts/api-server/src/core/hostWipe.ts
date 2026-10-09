@@ -1,3 +1,4 @@
+import {hostSettings} from "./adminServerContext.js";
 import { db, modLogsTable } from "@workspace/db";
 import { assertWipeUnlocked, getWipeLockState } from "./wipeLock.js";
 import { resetAllLeaderboardStats } from "./leaderboardReset.js";
@@ -8,9 +9,9 @@ export type WipeActor = { id: string; name: string };
 export type WipeLifecycle = { onStopped?: () => Promise<void> | void };
 export type DiagnosticFilePermission = { listing: boolean; write: boolean; delete: boolean; confirmed: boolean; probePath: string };
 
-const panelUrl=()=>String(process.env.ELGAE_PANEL_URL||"").replace(/\/$/,"");
-const serverId=()=>String(process.env.ELGAE_SERVER_ID||"").trim();
-const apiKey=()=>String(process.env.ELGAE_API_KEY||"").trim();
+const panelUrl=()=>hostSettings().panelUrl;
+const serverId=()=>hostSettings().serverId;
+const apiKey=()=>hostSettings().apiKey;
 const executionEnabled=()=>process.env.WIPE_EXECUTION_ENABLED==="true";
 const automationEnabled=()=>process.env.WIPE_AUTOMATION_ENABLED==="true";
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));

@@ -1,3 +1,5 @@
+import {adminServer} from "../core/adminServerContext.js";
+import {subscriptionServer} from "../routes/storeOrders.js";
 import { Router } from "express";
 import { db, vipSubscriptionsTable, modLogsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -13,19 +15,19 @@ const clean = (v: unknown, n = 64) => String(v ?? "").replace(/[\r\n\t]/g, " ").
 
 router.post("/grant", async (req, res) => {
   const client = discordClient();
-  if (!client) return res.status(503).json({ error: "Bot do Discord indisponível." });
+  if (!client) return void res.status(503).json({ error: "Bot do Discord indisponível." });
   const steamId = clean(req.body?.steamId, 17);
   const discordUserId = clean(req.body?.discordUserId, 32);
   const tier = clean(req.body?.tier, 16) as VipTier;
   const days = Math.max(1, Math.min(365, Number(req.body?.days) || 30));
-  if (!steamRe.test(steamId) || !["bronze","prata","ouro"].includes(tier)) return res.status(400).json({ error: "Dados inválidos." });
+  if (!steamRe.test(steamId) || !["bronze","prata","ouro"].includes(tier)) return void res.status(400).json({ error: "Dados inválidos." });
 
   await grantVip({
     discordUserId: discordUserId || "manual-web",
     steamId,
     tier,
     durationDays: days,
-    source: "purchase",
+    source: adminServer()==="trio"?"manual:trio":"manual:solo-duo",
     client,
   });
 
@@ -37,11 +39,11 @@ router.post("/grant", async (req, res) => {
 
 router.post("/revoke", async (req, res) => {
   const client = discordClient();
-  if (!client) return res.status(503).json({ error: "Bot do Discord indisponível." });
+  if (!client) return void res.status(503).json({ error: "Bot do Discord indisponível." });
   const id = Number(req.body?.id);
-  if (!Number.isInteger(id)) return res.status(400).json({ error: "VIP inválido." });
+  if (!Number.isInteger(id)) return void res.status(400).json({ error: "VIP inválido." });
   const [sub] = await db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.id, id)).limit(1);
-  if (!sub) return res.status(404).json({ error: "VIP não encontrado." });
+  if (!sub) return void res.status(404).json({ error: "VIP não encontrado." });
 
   await revokeVip({ subscriptionId: sub.id, tier: sub.vipTier as VipTier, steamId: sub.steamId, discordUserId: sub.discordUserId, client });
 

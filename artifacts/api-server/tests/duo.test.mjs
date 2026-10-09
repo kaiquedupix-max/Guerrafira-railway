@@ -145,8 +145,10 @@ test('duo page preserves the token through login and requires verified Steam',as
 });
 test('real VIP product expansion retries components per recipient and preserves individual plans',async()=>{
   const rows=[],table={steamId:'steamId',discordUserId:'discordUserId',vipTier:'vipTier',source:'source'};
-  let outage='';
+  let outage='',orderSelection='solo-duo';
   const mocks={
+    '../routes/storeOrders.js':{storeOrder:async()=>({server_id:orderSelection})},
+    '../core/storePricing.js':{selectedServers:s=>s==='both'?['solo-duo','trio']:[s]},
     'drizzle-orm':{eq:(key,value)=>({key,value}),and:(...conditions)=>conditions},
     '@workspace/db':{vipSubscriptionsTable:table,db:{select:()=>({from:()=>({where:conditions=>({limit:async()=>rows.filter(row=>conditions.every(c=>row[c.key]===c.value))})})})}},
     './vip.js':{VIP_TIERS:{bronze:products.bronze,prata:products.prata,ouro:products.ouro},grantVip:async opts=>{
@@ -163,6 +165,11 @@ test('real VIP product expansion retries components per recipient and preserves 
   assert.equal(rows.length,6);assert.equal(rows.filter(x=>x.steamId==='s1'&&x.vipTier==='bronze').length,1);
   await exports.grantVipProduct({...opts,tier:'bronze',paymentId:101});assert.equal(rows.length,7);
   await exports.grantVipProduct({...opts,tier:'combo',paymentId:102});assert.equal(rows.length,10);
+  orderSelection='both';outage='prata';await assert.rejects(exports.grantVipProduct({...opts,paymentId:103}),/partial/);outage='';
+  await exports.grantVipProduct({...opts,paymentId:103});await exports.grantVipProduct({...opts,paymentId:103});
+  assert.equal(rows.filter(x=>x.source==='purchase:103:solo-duo').length,3);assert.equal(rows.filter(x=>x.source==='purchase:103:trio').length,3);
+  await exports.grantVipProduct({...opts,paymentId:103,discordUserId:'c',steamId:'s3',deliveryServers:['trio']});
+  assert.equal(rows.filter(x=>x.steamId==='s3'&&x.source==='purchase:103:trio').length,3);assert.equal(rows.filter(x=>x.steamId==='s3'&&x.source==='purchase:103:solo-duo').length,0);
 });
 test('paid gifts issue an owned link without granting the buyer, then bind a single recipient',async()=>{
   const gifts=await bundle('src/routes/giftService.ts');
@@ -211,11 +218,37 @@ test('store offers five products, validates checkout and recovers from network f
   }});await new Promise(resolve=>setTimeout(resolve,30));
   const doc=dom.window.document;assert.equal(doc.querySelectorAll('.vipCard').length,5);
   assert.equal(doc.querySelector('[data-tier=duo]').dataset.price,'120');assert.equal(errors.length,0);
-  assert.match(doc.getElementById('duoPurchases').textContent,/COPIAR LINK DO DUO/);
-  doc.querySelector('[data-tier=duo]').click();doc.getElementById('detailBuy').click();doc.getElementById('email').value='invalid';doc.getElementById('pix').click();
+  assert.match(doc.getElementById('duoPurchases').textContent,/COPIAR CONVITE 1/);
+  doc.querySelector('[data-tier=duo]').click();doc.getElementById('serverSolo').click();doc.getElementById('detailBuy').click();doc.getElementById('email').value='invalid';doc.getElementById('pix').click();
   await new Promise(resolve=>setTimeout(resolve,10));assert.match(doc.getElementById('status').textContent,/e-mail válido/);
   doc.getElementById('email').value='buyer@example.com';doc.getElementById('pix').click();
   await new Promise(resolve=>setTimeout(resolve,20));assert.match(doc.getElementById('status').textContent,/Falha de conexão/);
   assert.equal(doc.getElementById('pix').disabled,false);assert.equal(JSON.parse(requests.find(r=>r.url==='/api/store/pix').body).tier,'duo');
   dom.window.close();
+});
+
+
+test('Trio super combo creates two independent invitations and rejects the same friend twice',async()=>{
+ const orders=await bundle('src/routes/storeOrders.ts');await purchase(60);await orders.recordStoreOrder(60,false,'trio',2);await service.fulfillDuoPayment(60);
+ const row=(await service.listDuoPurchases('buyer')).find(x=>x.id===60);assert.equal(row.claimLinks.length,2);assert.notEqual(row.claimLinks[0].claimUrl,row.claimLinks[1].claimUrl);
+ const t1=row.claimLinks[0].claimUrl.split('#')[1],t2=row.claimLinks[1].claimUrl.split('#')[1];
+ await service.redeemDuo(t1,'friendTrio1','76561190000000061');await assert.rejects(service.redeemDuo(t2,'friendTrio1','76561190000000062'),/amigo|conta|convite/);
+ await assert.rejects(service.redeemDuo(t2,'friendTrio2','76561190000000061'),/amigo|conta|convite/);
+ assert.equal((await service.inspectDuoToken(t2)).status,'available');await service.redeemDuo(t2,'friendTrio2','76561190000000062');assert.equal((await service.inspectDuoToken(t2)).status,'redeemed');
+ assert.deepEqual(calls.filter(c=>c.paymentId===60&&c.steamId==='76561190000000062').map(c=>c.deliveryServers),[['trio'],['trio'],['trio']]);
+ await assert.rejects(orders.recordStoreOrder(60,false,'trio',1),/inválida/);
+});
+
+test('legacy Trio super combo keeps its original single invitation',async()=>{
+ const orders=await bundle('src/routes/storeOrders.ts');await purchase(61);await orders.recordStoreOrder(61,false,'trio');await service.fulfillDuoPayment(61);assert.equal((await service.listDuoPurchases('buyer')).find(x=>x.id===61).claimLinks.length,1);
+});
+
+
+test('product requires server selection, shows Trio promotion, both-server quote and ordered item categories',async()=>{
+ const {renderStorePage}=await bundle('src/admin/storePage.ts');
+ const dom=new JSDOM(renderStorePage('Buyer'),{url:'https://www.guerrafriarust.com.br/loja',runScripts:'dangerously',beforeParse(w){w.setInterval=()=>1;w.clearInterval=()=>{};w.fetch=async url=>({ok:true,json:async()=>url==='/api/store/servers'?[{id:'solo-duo',enabled:true,name:'Duo'},{id:'trio',enabled:true,name:'Trio'}]:url==='/api/store/me'?{steamId:'steam',steamVerified:true}:url.includes('/catalog/')?{available:true,complete:true,kits:[{name:'Kit',cooldownSeconds:3600,items:['roupas','armas','componentes','recursos'].map(category=>({category,name:category,amount:1,icon:'https://example.com/item.png'}))}]}:[]});}});
+ try{await new Promise(r=>setTimeout(r,20));const doc=dom.window.document;assert.doesNotMatch(doc.querySelector('.vipCard .price').textContent,/R\$/);assert.match(doc.querySelector('.vipCard.duo .price').textContent,/A partir de.*120/);doc.querySelector('[data-tier=duo]').click();assert.equal(doc.getElementById('detailBuy').disabled,true);assert.match(doc.getElementById('detailPrice').textContent,/Selecione/);
+ doc.getElementById('serverTrio').click();await new Promise(r=>setTimeout(r,20));assert.equal(doc.getElementById('detailName').textContent,'Super Combo Trio');assert.match(doc.getElementById('detailRegular').textContent,/240/);assert.match(doc.getElementById('detailPrice').textContent,/200/);assert.deepEqual([...doc.querySelectorAll('.kitCategory')].map(x=>x.textContent),['Recursos','Componentes','Armas','Roupas']);
+ doc.getElementById('serverBoth').click();await new Promise(r=>setTimeout(r,20));assert.match(doc.getElementById('detailPrice').textContent,/288/);doc.getElementById('detailBuy').click();await new Promise(r=>setTimeout(r,20));assert.match(doc.getElementById('modalPrice').textContent,/288/);assert.match(doc.getElementById('paymentNote').textContent,/10%/);
+ }finally{dom.window.close();}
 });

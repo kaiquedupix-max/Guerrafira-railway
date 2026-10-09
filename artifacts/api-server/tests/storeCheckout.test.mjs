@@ -33,7 +33,7 @@ async function bundle(path,mocks={}){
 after(async()=>{delete globalThis.__storeTests;await pg.close()});
 
 test('persistent card attempts reuse the same payment and reject changed buyer, product, email or price',async()=>{
-  await pg.exec(`CREATE TABLE payments(id SERIAL PRIMARY KEY,discord_user_id TEXT,steam_id TEXT,email TEXT,vip_tier TEXT,amount NUMERIC,method TEXT,status TEXT,mp_external_reference TEXT);`);
+  await pg.exec(`CREATE TABLE IF NOT EXISTS vip_subscriptions(source VARCHAR(16),discord_user_id TEXT,steam_id TEXT);CREATE TABLE payments(id SERIAL PRIMARY KEY,discord_user_id TEXT,steam_id TEXT,email TEXT,vip_tier TEXT,amount NUMERIC,method TEXT,status TEXT,mp_external_reference TEXT);`);
   const {cardAttempt}=await bundle('src/routes/storeCardAttempts.ts',{'@workspace/db':'export const pool=globalThis.__storeTests.pool;'});
   const key='dd01d978-65d7-451d-a8de-45b3f9dd4173', purchase={tier:'duo',steamId:'76561190000000001',discordUserId:'buyer',email:'buyer@example.com'};
   const first=await cardAttempt(key,purchase,120),retry=await cardAttempt(key,purchase,120);
@@ -105,7 +105,7 @@ test('checkout opens hosted Stripe, retains card retry id and PIX displays its c
     };
   }});
   const pause=()=>new Promise(r=>setTimeout(r,30));
-  const doc=dom.window.document;await pause();doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('detailBuy').click();await pause();doc.getElementById('email').value='buyer@example.com';
+  const doc=dom.window.document;await pause();doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('serverSolo').click();doc.getElementById('detailBuy').click();await pause();doc.getElementById('email').value='buyer@example.com';
   doc.getElementById('stripe').click();await pause();assert.ok(requests.some(r=>r.url==='/api/store/stripe/card'));assert.equal(mounted.includes('#stripeCheckout'),false);
   doc.getElementById('card').click();await pause();assert.ok(mounted.includes('cardPayment'));
   const card={token:'valid-token',payment_method_id:'visa',installments:1};
@@ -117,7 +117,7 @@ test('checkout opens hosted Stripe, retains card retry id and PIX displays its c
   assert.deepEqual(errors,[]);dom.window.close();
 });
 
-test('Discord migration preserves humans, paginates old cards, replaces with two website buttons and is idempotent',async()=>{
+test('Discord migration preserves humans, paginates old cards, replaces with the official website button and is idempotent',async()=>{
   const vip=await bundle('src/bot/vipStore.ts',{'logger.js':log,'booster.js':'export async function startBoosterSystem(){}','moderation.js':'export function startDiscordModeration(){}'});
   delete process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID;delete process.env.DISCORD_GUILD_ID;
   const messages=[],deleted=[];let next=300;
@@ -131,13 +131,13 @@ test('Discord migration preserves humans, paginates old cards, replaces with two
     const list=messages.filter(m=>!before||Number(m.id)<Number(before)).sort((a,b)=>Number(b.id)-Number(a.id)).slice(0,limit);return new Collection(list.map(m=>[m.id,m]));
   }},send:async p=>{const m=make(next++,'bot',p.embeds.map(e=>e.toJSON()));m.components=p.components?.map(r=>r.toJSON());messages.push(m);return m}};
   const client={user:{id:'bot'},channels:{fetch:async()=>channel}};
-  await vip.setupVipStore(client);assert.equal(deleted.length,105);assert.equal(messages.length,3);
+  await vip.setupVipStore(client);assert.equal(deleted.length,105);assert.equal(messages.length,2);
   assert.equal(messages.filter(m=>m.author.id==='human').length,1);
   for(const m of messages.filter(m=>m.author.id==='bot')){
-    const button=m.components[0].components[0];assert.equal(button.style,5);assert.match(button.url,/\/loja\?server=(solo-duo|trio)$/);assert.equal(button.custom_id,undefined);
-    assert.match(m.embeds[0].image.url,/\/api\/store\/art\/store-banner$/);
+    const button=m.components[0].components[0];assert.equal(button.style,5);assert.match(button.url,/\/loja(?:\?|$)/);assert.equal(button.custom_id,undefined);
+    assert.match(m.embeds[0].description,/Trio.*compras liberadas/);assert.match(m.embeds[0].image.url,/\/api\/store\/art\/store-banner$/);
   }
-  await vip.setupVipStore(client);assert.equal(messages.length,3);assert.equal(deleted.length,105);
+  await vip.setupVipStore(client);assert.equal(messages.length,2);assert.equal(deleted.length,105);
 });
 
 test('Steam unlink removes website proof atomically and never recreates identity from purchase/VIP history',async()=>{
@@ -146,7 +146,7 @@ test('Steam unlink removes website proof atomically and never recreates identity
   await pg.exec(`CREATE TABLE booster_links(id SERIAL PRIMARY KEY,discord_user_id VARCHAR(64) NOT NULL UNIQUE,
     steam_id VARCHAR(32) NOT NULL,active BOOLEAN NOT NULL DEFAULT false,manually_disabled BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP NOT NULL DEFAULT now(),updated_at TIMESTAMP NOT NULL DEFAULT now());
-    CREATE TABLE vip_subscriptions(discord_user_id TEXT,steam_id TEXT);`);
+    CREATE TABLE IF NOT EXISTS vip_subscriptions(discord_user_id TEXT,steam_id TEXT);`);
   const adapter='export const db=globalThis.__storeTests.db;export const boosterLinksTable=globalThis.__storeTests.boosterLinksTable;export const pool=globalThis.__storeTests.pool;';
   const links=await bundle('src/bot/utils/linkedSteamV2.ts',{'@workspace/db':adapter});
   const auth=await bundle('src/routes/storeSteamAuth.ts',{'@workspace/db':adapter});
@@ -192,7 +192,7 @@ test('an open checkout clears its displayed Steam and disables payment when the 
     w.fetch=async url=>({ok:true,json:async()=>url==='/api/store/me'?{steamId:linked?'76561190000000008':null,steamVerified:linked,mpEnabled:true}:[]});
   }});
   const pause=()=>new Promise(r=>setTimeout(r,30));await pause();const doc=dom.window.document;
-  doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('detailBuy').click();await pause();assert.equal(doc.getElementById('pix').disabled,false);
+  doc.querySelector('[data-tier=duo]').click();await pause();doc.getElementById('serverSolo').click();doc.getElementById('detailBuy').click();await pause();assert.equal(doc.getElementById('pix').disabled,false);
   linked=false;await refresh();assert.equal(doc.getElementById('steamLabel').textContent,'Steam não conectada');
   assert.equal(doc.getElementById('pix').disabled,true);assert.equal(doc.getElementById('card').disabled,true);
   assert.equal(doc.getElementById('steamLogin').style.display,'flex');assert.match(doc.getElementById('status').textContent,/administração/);
@@ -210,9 +210,9 @@ test('private receipts persist completion, retry closed DMs and send a duo link 
     'logger.js':log
   });
   await pg.exec(`CREATE TABLE IF NOT EXISTS payments(id SERIAL PRIMARY KEY,discord_user_id TEXT,steam_id TEXT,email TEXT,vip_tier TEXT,amount NUMERIC,method TEXT,status TEXT,mp_external_reference TEXT);
-    CREATE TABLE duo_redemptions(payment_id INTEGER PRIMARY KEY,nonce TEXT,status TEXT,expires_at TIMESTAMPTZ);`);
+    CREATE TABLE duo_redemptions(payment_id INTEGER PRIMARY KEY,nonce TEXT,status TEXT,expires_at TIMESTAMPTZ,slot INTEGER DEFAULT 1);`);
   const row=(await pg.query("INSERT INTO payments(discord_user_id,steam_id,vip_tier,amount,status) VALUES('buyer','steam','duo',120,'approved') RETURNING id")).rows[0];
-  await pg.query("INSERT INTO duo_redemptions VALUES($1,'nonce','available',now()+interval '30 days')",[row.id]);
+  await pg.query("INSERT INTO duo_redemptions(payment_id,nonce,status,expires_at) VALUES($1,'nonce','available',now()+interval '30 days')",[row.id]);
   assert.equal(await receipts.receiptState(row.id),undefined);
   await receipts.sendStoreReceipts();assert.equal(sent.length,0);
   await receipts.recordStoreDelivery(row.id);await receipts.recordStoreDelivery(row.id);
@@ -227,10 +227,10 @@ test('private receipts persist completion, retry closed DMs and send a duo link 
 
 test('success screen waits for completed delivery and shows the owned duo invitation and DM state',async()=>{
   const {renderStorePage}=await bundle('src/admin/storePage.ts',{'vipProducts.js':'export const VIP_PRODUCTS=globalThis.__storeTests.products;'});
-  let delivered=false,poll;const dom=new JSDOM(renderStorePage('Buyer'),{url:'https://www.guerrafriarust.com.br/loja?payment=7',runScripts:'dangerously',beforeParse(w){
+  let delivered=false,poll,claimLinks;const dom=new JSDOM(renderStorePage('Buyer'),{url:'https://www.guerrafriarust.com.br/loja?payment=7',runScripts:'dangerously',beforeParse(w){
     w.setInterval=(fn,ms)=>{if(ms===5000)poll=fn;return 1};w.clearInterval=()=>{};
     w.fetch=async url=>({ok:true,json:async()=>url==='/api/store/me'?{steamId:'steam',steamVerified:true}:url==='/api/store/duo-purchases'?[]:url==='/api/store/payments/7'?{
-      id:7,status:'approved',delivered,product:'Super Combo Duo',steamId:'steam',claimUrl:'https://www.guerrafriarust.com.br/api/store/duo/redeem#test',expiresAt:new Date(Date.now()+600000).toISOString(),dmStatus:delivered?'sent':'pending'
+      id:7,status:'approved',delivered,claimLinks,serverId:'both',product:'Super Combo Duo',steamId:'steam',claimUrl:'https://www.guerrafriarust.com.br/api/store/duo/redeem#test',expiresAt:new Date(Date.now()+600000).toISOString(),dmStatus:delivered?'sent':'pending'
     }:{} });
   }});
   try{
@@ -245,5 +245,7 @@ test('success screen waits for completed delivery and shows the owned duo invita
     assert.match(doc.getElementById('successLink').value,/redeem#test/);
     assert.equal(doc.getElementById('checkoutFields').hidden,true);
     assert.equal(dom.window.location.search,'');
+    claimLinks=[{slot:1,claimUrl:null},{slot:2,claimUrl:'https://www.guerrafriarust.com.br/api/store/duo/redeem#friend2'}];await poll();
+    assert.equal(doc.getElementById('successDuo').hidden,true);assert.match(doc.querySelector('#successInvites input').value,/#friend2/);assert.match(doc.querySelector('#successInvites b').textContent,/amigo 2.*Trio/);
   }finally{dom.window.close()}
 });

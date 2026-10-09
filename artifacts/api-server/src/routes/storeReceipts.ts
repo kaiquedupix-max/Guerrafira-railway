@@ -1,3 +1,4 @@
+import {selectionName,storeQuote,type StoreSelection} from '../core/storePricing.js';
 import { GUERRA_FRIA_SERVERS } from "../core/servers.js";
 import { pool } from "@workspace/db";
 import { discordClient } from "../bot/client.js";
@@ -39,20 +40,21 @@ export async function sendStoreReceipts(): Promise<void> {
       const payment = (await pool.query("SELECT * FROM payments WHERE id=$1 AND status='approved'", [receipt.payment_id])).rows[0];
       const productId: unknown = payment?.vip_tier;
       if (!payment || !isVipProduct(productId)) throw Error("Receipt unavailable");
-      let claimUrl: string | null = null;
+      let claimUrl: string | null = null;let extraLinks:string[]=[];
       const order=await storeOrder(payment.id);
       if(order?.gift){
         const gift=(await pool.query('SELECT * FROM store_gifts WHERE payment_id=$1',[payment.id])).rows[0];
         if(gift?.status==='available'&&new Date(gift.expires_at).getTime()>Date.now())claimUrl=`https://www.guerrafriarust.com.br/api/store/gift/redeem#${createHmac('sha256',duoSecret()).update(`gift:${payment.id}:${gift.nonce}`).digest('base64url')}`;
       }else if (productId === "duo") {
-        const claim = (await pool.query("SELECT * FROM duo_redemptions WHERE payment_id=$1", [payment.id])).rows[0];
+        const claims = (await pool.query("SELECT * FROM duo_redemptions WHERE payment_id=$1 ORDER BY slot", [payment.id])).rows;
+        const claim=claims[0];extraLinks=claims.slice(1).filter(c=>c.status==='available'&&new Date(c.expires_at).getTime()>Date.now()).map(c=>`https://www.guerrafriarust.com.br/api/store/duo/redeem#${duoToken(payment.id,c.nonce)}`);
         if (claim?.status === "available" && new Date(claim.expires_at).getTime() > Date.now())
           claimUrl = `https://www.guerrafriarust.com.br/api/store/duo/redeem#${duoToken(payment.id, claim.nonce)}`;
       }
       const user = await client.users.fetch(payment.discord_user_id);
-      const description = `Seu pagamento foi confirmado automaticamente.\n**${VIP_PRODUCTS[productId].name}**\n${order?.gift?'🎁 Seu presente está pronto! O VIP será ativado na conta do amigo após o resgate.':'✅ Seus benefícios já estão ativos no **'+GUERRA_FRIA_SERVERS[order?.server_id==='trio'?'trio':'solo-duo'].name+'**, por **30 dias**.\nSteam: **'+payment.steam_id+'**'}\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
+      const description = `Seu pagamento foi confirmado automaticamente.\n**${storeQuote(productId,(order?.server_id||'solo-duo') as StoreSelection).name}**\n${order?.gift?'🎁 Seu presente está pronto! O VIP será ativado na conta do amigo após o resgate.':'✅ Seus benefícios já estão ativos no **'+selectionName((order?.server_id||'solo-duo') as StoreSelection)+'**, por **30 dias**.\nSteam: **'+payment.steam_id+'**'}\nCompra **#${payment.id}** • **${Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}**`;
       await user.send({ embeds: [{ title: "✅ Pagamento concluído com sucesso", color: 0xffb800,
-        description: description + (claimUrl ? `\n\n🎁 **Envie este link ao seu amigo:**\n${claimUrl}\nUm único resgate, válido por 30 dias após a compra. Ele deve entrar com Discord e Steam para receber ${order?.gift?'o presente':'Bronze + Prata + Ouro'}.` : ""),
+        description: description + extraLinks.map((link,i)=>`\n\n🎁 **Convite do amigo ${i+2}${order?.server_id==='both'?' • servidor Trio':''}:**\n${link}\nUso único, válido por 30 dias; login com Steam e Discord.`).join('') + (claimUrl ? `\n\n🎁 **Envie este link ao seu amigo${order?.server_id==='both'?' • Duo + Trio':''}:**\n${claimUrl}\nUm único resgate, válido por 30 dias após a compra. Ele deve entrar com Discord e Steam para receber ${order?.gift?'o presente':'Bronze + Prata + Ouro'}.` : ""),
         footer: { text: "Guerra Fria • Loja VIP" } }], allowedMentions: { parse: [] } });
       await pool.query("UPDATE store_receipts SET sent_at=now(),lease_until=NULL WHERE payment_id=$1", [payment.id]);
     } catch {

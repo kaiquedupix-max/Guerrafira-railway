@@ -108,7 +108,7 @@ export async function grantVip(opts: {
   steamId: string;
   tier: VipTier;
   durationDays: number;
-  source: "purchase" | "raffle" | `purchase:${number}` | "manual:solo-duo" | "manual:trio";
+  source: "purchase" | "raffle" | `purchase:${number}` | `purchase:${number}:solo-duo` | `purchase:${number}:trio` | "manual:solo-duo" | "manual:trio";
   client: Client;
 }): Promise<void> {
   const { discordUserId, steamId, tier, durationDays, source, client } = opts;

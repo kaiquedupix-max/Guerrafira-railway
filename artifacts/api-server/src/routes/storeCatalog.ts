@@ -2,8 +2,15 @@ import { executeServerRcon } from "../bot/utils/serverRcon.js";
 import type { GuerraFriaServerId } from "../core/servers.js";
 import { isVipProduct, type VipProduct } from "../bot/vipProducts.js";
 
-export type KitItem = {shortname:string;name:string;amount:number;skin:string;itemId:number;icon:string;inventory:string;includedIn:string;loadedAmmo:number;ammoType:string};
+export type KitItem = {category:string;shortname:string;name:string;amount:number;skin:string;itemId:number;icon:string;inventory:string;includedIn:string;loadedAmmo:number;ammoType:string};
 export type StoreKit = {id:string;name:string;tier:string;cooldownSeconds:number;wipeDelaySeconds:number;items:KitItem[]};
+export function storeItemCategory(category:unknown,inventory:unknown):string{
+ const value=String(category||'').toLowerCase();
+ if(value==='attire'||inventory==='wear')return 'roupas';
+ if(['weapon','ammunition','tool'].includes(value))return 'armas';
+ if(['component','electrical'].includes(value))return 'componentes';
+ return 'recursos';
+}
 const iconBase="https://cdn.rusthelp.com/images/256/";
 /** Legacy Duo kit aliases remain usable in-game; display their contents only once. */
 export function uniqueStoreKits(kits:StoreKit[]):StoreKit[]{
@@ -26,7 +33,7 @@ export function parseKitCatalog(raw:string):StoreKit[]{
       cooldownSeconds:Math.max(0,Number(k.cooldownSeconds)||0),wipeDelaySeconds:Math.max(0,Number(k.wipeDelaySeconds)||0),
       items:k.items.map((i:any)=>{
         if(!i||!/^[a-z0-9._ -]{1,90}$/.test(i.shortname)||!Number.isSafeInteger(i.amount)||i.amount<1)throw Error("Item inválido");
-        return {inventory:String(i.inventory||"main").slice(0,20),includedIn:String(i.includedIn||"").slice(0,90),loadedAmmo:Math.max(0,Number(i.loadedAmmo)||0),ammoType:String(i.ammoType||"").slice(0,90),shortname:i.shortname,name:String(i.name||i.shortname).slice(0,160),amount:i.amount,skin:String(i.skin||"0"),itemId:Number(i.itemId)||0,icon:iconBase+encodeURIComponent(i.shortname)+".png"};
+        return {category:storeItemCategory(i.category,i.inventory),inventory:String(i.inventory||"main").slice(0,20),includedIn:String(i.includedIn||"").slice(0,90),loadedAmmo:Math.max(0,Number(i.loadedAmmo)||0),ammoType:String(i.ammoType||"").slice(0,90),shortname:i.shortname,name:String(i.name||i.shortname).slice(0,160),amount:i.amount,skin:String(i.skin||"0"),itemId:Number(i.itemId)||0,icon:iconBase+encodeURIComponent(i.shortname)+".png"};
       })};
   });
 }

@@ -1,3 +1,4 @@
+import {fulfillStorePayment} from './storeFulfillment.js';
 import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import { db, paymentsTable, vipSubscriptionsTable } from "@workspace/db";
 import { grantVipProduct, isVipProduct, VIP_PRODUCTS, type VipProduct } from "../bot/vipProducts.js";
@@ -137,6 +138,7 @@ export async function processMpPayment(payment: MpPayment): Promise<boolean> {
     try { return await fulfillDuoPayment(row.id); }
     catch (error) { logger.error({ error, rowId: row.id }, "Duo purchase delivery will retry"); return false; }
   }
+  try { const result=await fulfillStorePayment(row.id);if(result!==undefined)return result; } catch(error) { logger.error({error,rowId:row.id},"Store delivery pending retry");return false; }
   if (row.vipGrantedAt) return true;
 
   const [existingFulfillment] = await db.select().from(vipSubscriptionsTable).where(and(

@@ -1,3 +1,4 @@
+import {adminServer} from "../core/adminServerContext.js";
 import { Router } from "express";
 import { executeRconCommand, getOnlinePlayers, getServerInfo } from "../bot/utils/rcon.js";
 import { ActionError, executeRconRequired } from "../core/systemActions.js";
@@ -12,12 +13,14 @@ import { createHostFolder, deleteHostFiles, getHostFileDownloadUrl, hostConsoleS
 
 const router = Router();
 router.use(requireAdmin);
+router.use((req,res,next)=>{if(adminServer()==="trio"&&req.path==="/slot-control")return void res.status(409).json({error:"O controle automático de slots permanece exclusivo do Solo/Duo."});next();});
 initLiveOps();
 const steamRe = /^7656119\d{10}$/;
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
-let itemCache: Array<{ id: number; shortname: string; name: string; category?: string; stack?: number }> = [];
-let itemCacheAt = 0;
-let warnedRestart: { timer: ReturnType<typeof setTimeout>; executeAt: number; requestedBy: string } | null = null;
+type CatalogItem={id:number;shortname:string;name:string;category?:string;stack?:number};
+const itemCaches:Record<string,{items:CatalogItem[];at:number}>={"solo-duo":{items:[],at:0},trio:{items:[],at:0}};
+type RestartWarning={timer:ReturnType<typeof setTimeout>;executeAt:number;requestedBy:string};
+const restarts:Record<string,RestartWarning|null>={"solo-duo":null,trio:null};
 let telemetry={rxMbps:0,txMbps:0,baselineRxMbps:0,suspected:false,consecutiveSpikes:0,normalSamples:0,thresholdMbps:Number(process.env.DDOS_ALERT_MBPS)||50,updatedAt:0};
 let previousNetwork:{at:number;rx:number;tx:number}|null=null;
 let lastResource:Awaited<ReturnType<typeof getHostResourceSnapshot>>|null=null;
@@ -50,7 +53,7 @@ async function sampleTelemetry():Promise<void>{
 setTimeout(()=>sampleTelemetry().catch(()=>{}),1_000);setInterval(()=>sampleTelemetry().catch(()=>{}),10_000);
 
 router.get("/power/status", async (_req, res) => {
-  try { if(!lastResource)await sampleTelemetry();const resource=lastResource||await getHostResourceSnapshot();res.json({ state: resource.state,uptime:resource.uptime,network:{rxMbps:telemetry.rxMbps,txMbps:telemetry.txMbps,rxBytes:resource.networkRxBytes,txBytes:resource.networkTxBytes},security:{status:telemetry.suspected?"suspected":"normal",thresholdMbps:Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8),updatedAt:telemetry.updatedAt,note:"Detector de anomalia local; a confirmação de DDoS depende da hospedagem."}, scheduledRestart: warnedRestart ? { executeAt: warnedRestart.executeAt, requestedBy: warnedRestart.requestedBy } : null }); }
+  try { if(adminServer()==="solo-duo"&&!lastResource)await sampleTelemetry();const resource=adminServer()==="trio"?await getHostResourceSnapshot():lastResource||await getHostResourceSnapshot();res.json({ state: resource.state,uptime:resource.uptime,network:{rxMbps:adminServer()==="trio"?null:telemetry.rxMbps,txMbps:adminServer()==="trio"?null:telemetry.txMbps,rxBytes:resource.networkRxBytes,txBytes:resource.networkTxBytes},security:{status:adminServer()==="trio"?"unavailable":telemetry.suspected?"suspected":"normal",thresholdMbps:Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8),updatedAt:telemetry.updatedAt,note:"Detector de anomalia local; a confirmação de DDoS depende da hospedagem."}, scheduledRestart: restarts[adminServer()] ? { executeAt: restarts[adminServer()]!.executeAt, requestedBy: restarts[adminServer()]!.requestedBy } : null }); }
   catch (error: any) { res.status(502).json({ error: error?.message || "Não foi possível consultar o servidor." }); }
 });
 
@@ -58,7 +61,7 @@ router.post("/power", async (req, res) => {
   const signal = String(req.body?.signal || "") as HostPowerSignal;
   if (!["start", "stop", "restart"].includes(signal)) return void res.status(400).json({ error: "Ação de energia inválida." });
   try {
-    if (warnedRestart) { clearTimeout(warnedRestart.timer); warnedRestart = null; }
+    if (restarts[adminServer()]) { clearTimeout(restarts[adminServer()]!.timer); restarts[adminServer()] = null; }
     const result = await controlHostPower(signal, powerActor(res));
     res.json({ ok: true, ...result });
   } catch (error: any) { res.status(502).json({ error: error?.message || "A host não confirmou a ação." }); }
@@ -67,13 +70,13 @@ router.post("/power", async (req, res) => {
 router.post("/restart-warning", async (req, res) => {
   const minutes = Number(req.body?.minutes);
   if (![1, 5, 15].includes(minutes)) return void res.status(400).json({ error: "Escolha 1, 5 ou 15 minutos." });
-  if (warnedRestart) return void res.status(409).json({ error: "Já existe um reinício com aviso agendado." });
+  if (restarts[adminServer()]) return void res.status(409).json({ error: "Já existe um reinício com aviso agendado." });
   const actor = powerActor(res), executeAt = Date.now() + minutes * 60_000;
   try { await restartWarning(`Servidor reiniciando em ${minutes} minuto${minutes === 1 ? "" : "s"}.`); }
   catch (error: any) { return void res.status(503).json({ error: error?.message || "Não foi possível avisar o jogo." }); }
   const checkpoints = [300, 60, 30, 15, 10, 5].filter(seconds => seconds < minutes * 60);
   for (const seconds of checkpoints) setTimeout(() => {
-    if (!warnedRestart || warnedRestart.executeAt !== executeAt) return;
+    if (!restarts[adminServer()] || restarts[adminServer()]!.executeAt !== executeAt) return;
     restartWarning(seconds >= 60 ? "Servidor reiniciando em 1 minuto." : `Servidor reiniciando em ${seconds} segundos.`).catch(() => {});
   }, minutes * 60_000 - seconds * 1_000);
   const timer = setTimeout(async () => {
@@ -81,9 +84,9 @@ router.post("/restart-warning", async (req, res) => {
     catch (error) {
       void notifySubscribedAdmins({ kind: "system", title: "Falha no reinício do servidor", message: error instanceof Error ? error.message : "A host não confirmou o reinício.", severity: "critical" }).catch(() => {});
     }
-    finally { warnedRestart = null; }
+    finally { restarts[adminServer()] = null; }
   }, minutes * 60_000);
-  warnedRestart = { timer, executeAt, requestedBy: actor.name };
+  restarts[adminServer()] = { timer, executeAt, requestedBy: actor.name };
   res.status(202).json({ ok: true, executeAt, requestedBy: actor.name });
 });
 
@@ -152,27 +155,28 @@ router.post("/slot-control", async (req, res) => {
 
 router.get("/items", async (req, res) => {
   const q = clean(req.query.q, 80).toLowerCase();
-  if (!itemCache.length || Date.now() - itemCacheAt > 15 * 60_000) {
+  const cache=itemCaches[adminServer()];
+  if (!cache.items.length || Date.now() - cache.at > 15 * 60_000) {
     const raw = await executeRconCommand("gf.items").catch(() => null);
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          itemCache = parsed.filter(x => x && x.shortname && x.name);
-          itemCacheAt = Date.now();
+          cache.items = parsed.filter(x => x && x.shortname && x.name);
+          cache.at = Date.now();
         }
       } catch {}
     }
   }
-  if (!itemCache.length) return res.status(503).json({ error: "Catálogo de itens indisponível. Instale o plugin GuerraFriaItemCatalog.cs no servidor Rust.", items: [] });
-  const items = (q ? itemCache.filter(x => String(x.name).toLowerCase().includes(q) || String(x.shortname).toLowerCase().includes(q) || String(x.category ?? "").toLowerCase().includes(q)) : itemCache).slice(0, 80);
-  res.json({ items, total: itemCache.length });
+  if (!cache.items.length) return void res.status(503).json({ error: "Catálogo de itens indisponível. Instale o plugin GuerraFriaItemCatalog.cs no servidor Rust.", items: [] });
+  const items = (q ? cache.items.filter(x => String(x.name).toLowerCase().includes(q) || String(x.shortname).toLowerCase().includes(q) || String(x.category ?? "").toLowerCase().includes(q)) : cache.items).slice(0, 80);
+  res.json({ items, total: cache.items.length });
 });
 
-router.get("/chat", (_req, res) => res.json({ messages: getLiveChat() }));
+router.get("/chat", (_req, res) => res.json({ messages: adminServer()==="trio"?[]:getLiveChat() }));
 router.post("/chat", async (req, res) => {
   const message = clean(req.body?.message, 220);
-  if (!message) return res.status(400).json({ error: "Mensagem vazia." });
+  if (!message) return void res.status(400).json({ error: "Mensagem vazia." });
 
   const admin = res.locals.admin as { userId?: string; username?: string };
   const displayName = admin.userId ? await getGuerraFriaDisplayName(admin.userId, admin.username || "Administrador") : (admin.username || "Administrador");
@@ -180,15 +184,15 @@ router.post("/chat", async (req, res) => {
   const safeMessage = message.replace(/"/g, "'");
 
   const formatted = `<color=red>[Administração]</color> <color=orange>${safeAdmin}:</color> <color=#D8B4FE>${safeMessage}</color>`;
-  addModeratorChat(`Administração • ${safeAdmin}`, message);
+  if(adminServer()==="solo-duo")addModeratorChat(`Administração • ${safeAdmin}`, message);
 
   let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
   if (result === null) result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
 
-  if (result === null) return res.status(503).json({ error: "O RCON não confirmou o envio da mensagem ao jogo." });
+  if (result === null) return void res.status(503).json({ error: "O RCON não confirmou o envio da mensagem ao jogo." });
   res.json({ ok: true, rcon: true });
 });
-router.get("/events", (_req, res) => res.json({ events: getLiveEvents() }));
+router.get("/events", (_req, res) => res.json({ events: adminServer()==="trio"?[]:getLiveEvents() }));
 
 async function runGameCommand(res: any, command: string): Promise<void> {
   try {
@@ -202,33 +206,33 @@ async function runGameCommand(res: any, command: string): Promise<void> {
 
 router.post("/say", async (req, res) => {
   const message = clean(req.body?.message, 220);
-  if (!message) return res.status(400).json({ error: "Mensagem vazia." });
+  if (!message) return void res.status(400).json({ error: "Mensagem vazia." });
   await runGameCommand(res, `say ${message}`);
 });
 router.post("/give", async (req, res) => {
   const steamId = clean(req.body?.steamId, 17), item = clean(req.body?.item, 80), amount = Math.max(1, Math.min(100000, Number(req.body?.amount) || 1));
-  if (!steamRe.test(steamId) || !/^[a-z0-9._-]+$/i.test(item)) return res.status(400).json({ error: "SteamID ou item inválido." });
+  if (!steamRe.test(steamId) || !/^[a-z0-9._-]+$/i.test(item)) return void res.status(400).json({ error: "SteamID ou item inválido." });
   await runGameCommand(res, `inventory.giveto ${steamId} ${item} ${amount}`);
 });
 router.post("/clear-inventory", async (req, res) => {
   const steamId = clean(req.body?.steamId, 17);
-  if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." });
+  if (!steamRe.test(steamId)) return void res.status(400).json({ error: "SteamID inválido." });
   await runGameCommand(res, `inventory.clearinventory ${steamId}`);
 });
 router.post("/teleport", async (req, res) => {
   const from = clean(req.body?.from, 17), to = clean(req.body?.to, 17);
-  if (!steamRe.test(from) || !steamRe.test(to)) return res.status(400).json({ error: "SteamID inválido." });
+  if (!steamRe.test(from) || !steamRe.test(to)) return void res.status(400).json({ error: "SteamID inválido." });
   await runGameCommand(res, `teleport ${from} ${to}`);
 });
 router.post("/spawn", async (req, res) => {
   const entity = clean(req.body?.entity, 120);
-  if (!/^[a-z0-9_./-]+$/i.test(entity)) return res.status(400).json({ error: "Entidade inválida." });
+  if (!/^[a-z0-9_./-]+$/i.test(entity)) return void res.status(400).json({ error: "Entidade inválida." });
   await runGameCommand(res, `spawn ${entity}`);
 });
 router.post("/rcon", async (req, res) => {
   const command = clean(req.body?.command, 500);
-  if (!command) return res.status(400).json({ error: "Comando vazio." });
-  if (/^(quit|restart|server\.identity|rcon\.)\b/i.test(command)) return res.status(403).json({ error: "Este comando crítico foi bloqueado no painel web." });
+  if (!command) return void res.status(400).json({ error: "Comando vazio." });
+  if (/^(quit|restart|server\.identity|rcon\.)\b/i.test(command)) return void res.status(403).json({ error: "Este comando crítico foi bloqueado no painel web." });
   await runGameCommand(res, command);
 });
 export default router;

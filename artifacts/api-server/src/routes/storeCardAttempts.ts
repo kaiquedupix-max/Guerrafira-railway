@@ -1,6 +1,7 @@
 import { pool } from "@workspace/db";
 import type { VipProduct } from "../bot/vipProducts.js";
 import { ensureStoreOrders } from "./storeOrders.js";
+import {storeQuote,type StoreSelection} from '../core/storePricing.js';
 let ready: Promise<void> | undefined;
 export function ensureCardAttempts() {
   return ready ??= pool.query(`CREATE TABLE IF NOT EXISTS store_card_attempts (
@@ -30,7 +31,7 @@ export async function cardAttempt(key: string, purchase: Purchase, price: number
         VALUES($1,$2,$3,$4,$5,'credit_card','pending',$6) RETURNING *`,
       [purchase.discordUserId,purchase.steamId,purchase.email,purchase.tier,price.toFixed(2),`site-card-${key}`])).rows[0];
       await client.query("INSERT INTO store_card_attempts(attempt_id,payment_id) VALUES($1,$2)", [key,row.id]);
-      await client.query("INSERT INTO store_orders(payment_id,gift,server_id) VALUES($1,$2,$3)",[row.id,Boolean(purchase.gift),purchase.serverId||'solo-duo']);
+      await client.query("INSERT INTO store_orders(payment_id,gift,server_id,friend_slots) VALUES($1,$2,$3,$4)",[row.id,Boolean(purchase.gift),purchase.serverId||'solo-duo',storeQuote(purchase.tier,(purchase.serverId||'solo-duo') as StoreSelection).friendSlots]);
     }
     await client.query("COMMIT");
     return row;

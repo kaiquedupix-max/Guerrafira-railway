@@ -1,10 +1,10 @@
 import WebSocket from 'ws';
-import {executeRconCommand} from './rcon.js';
+import {executeDuoRconCommand} from './rcon.js';
 import type {GuerraFriaServerId} from '../../core/servers.js';
 
 // The Trio has an isolated connection: never retarget the existing Solo/Duo socket.
 export async function executeServerRcon(server:GuerraFriaServerId,command:string):Promise<string|null>{
- if(server==='solo-duo')return executeRconCommand(command);
+ if(server==='solo-duo')return executeDuoRconCommand(command);
  const host=process.env.TRIO_RCON_HOST,port=process.env.TRIO_RCON_PORT,password=process.env.TRIO_RCON_PASSWORD;
  if(!host||!port||!password)return null;
  return new Promise(resolve=>{

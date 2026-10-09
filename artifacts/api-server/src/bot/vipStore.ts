@@ -70,7 +70,7 @@ export async function setupVipStore(client:Client):Promise<void> {
       "🥉 **VIP Bronze** • 🥈 **VIP Prata** • 🥇 **VIP Ouro**\n"+
       "🎁 **Pacote 3 VIPs** • 👥 **Super Combo**\n\n"+
       "✅ **Solo/Duo:** compras liberadas\n"+
-      "⏳ **Trio:** servidor ainda não lançado — vendas bloqueadas por enquanto\n\n"+
+      "✅ **Trio:** compras liberadas • Super Combo para você + 2 amigos\n\n"+
       "🔐 Login com Discord + Steam\n💳 PIX e cartão"
     )
     .setFooter({text:VIP_STORE_MARKER});

@@ -1,3 +1,4 @@
+import {adminServerMiddleware,adminServer} from "../core/adminServerContext.js";
 import { Router } from "express";
 import { adminLoginV3, adminCallbackV3, adminLogoutV3 } from "../admin/oauthRoutesV3.js";
 import readRoutes from "../admin/routesRead.js";
@@ -19,9 +20,9 @@ import seasonControlRoutes from "../admin/routesSeasonControl.js";
 import seasonOfficialRoutes from "../admin/routesSeasonOfficial.js";
 import seasonUnifiedRegistrationsRoutes from "../admin/routesSeasonRegistrationsUnified.js";
 import { requireFinanceAccess } from "../admin/financeGuard.js";
-
 const router = Router();
-
+router.use(adminServerMiddleware);
+router.use((req,res,next)=>{if(adminServer()==="trio"&&/^\/(wipe|player-state|integrity|leaderboard|moderation)(?:\/|$)/.test(req.path))return void res.status(409).json({error:"Este recurso usa dados exclusivos do Solo/Duo. Selecione Solo/Duo para administrá-lo."});next();});
 router.use((req, _res, next) => {
   const auth = req.get("authorization") ?? "";
   if (auth.toLowerCase().startsWith("bearer ")) {
@@ -30,7 +31,6 @@ router.use((req, _res, next) => {
   }
   next();
 });
-
 router.get("/auth/login", adminLoginV3);
 router.get("/auth/callback", adminCallbackV3);
 router.get("/auth/logout", adminLogoutV3);

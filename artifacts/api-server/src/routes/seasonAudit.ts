@@ -1,3 +1,4 @@
+import {requireAdmin} from "../admin/guard.js";
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -43,7 +44,7 @@ async function competitiveRank(seasonNumber:number,steamId:string,baseMmr:unknow
   return {rank:rankForSeason(seasonNumber,xp,position),effectiveMmr:num(effectiveMmr,1000),position,xp};
 }
 
-router.get("/season/:number/player/:steamId/audit", async (req, res) => {
+router.get("/season/:number/player/:steamId/audit", requireAdmin, async (req, res) => {
   try {
     const seasonNumber = Math.max(1, int(req.params.number, 1));
     const steamId = text(req.params.steamId, 32);

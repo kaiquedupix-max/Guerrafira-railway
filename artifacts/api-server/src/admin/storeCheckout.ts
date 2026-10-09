@@ -5,7 +5,7 @@ export const storeCheckoutScript = String.raw`
   let account={}, tier='', serverId='solo-duo', amount=0, gift=false,busy=false, generation=0;
   let checkout=null, brick=null, paymentTimer=null, pixTimer=null;
   const sdkPromises=new Map();
-  const paymentStyle={theme:'dark',customVariables:{baseColor:'#ffb800',baseColorFirstVariant:'#e5a400',baseColorSecondVariant:'#ffd368',buttonTextColor:'#080b0d',textPrimaryColor:'#f8fafc',textSecondaryColor:'#b5c1ca',inputBackgroundColor:'#10191e',formBackgroundColor:'#0b1115',outlinePrimaryColor:'#455760',outlineSecondaryColor:'#ffb800',inputFocusedBoxShadow:'0 0 0 3px #ffb80033',inputVerticalPadding:'14px',inputHorizontalPadding:'14px',borderRadiusSmall:'8px',borderRadiusMedium:'10px',borderRadiusLarge:'12px',formPadding:'20px'}};
+  const paymentStyle={theme:'dark',customVariables:{baseColor:'#ffb800',baseColorFirstVariant:'#e5a400',baseColorSecondVariant:'#ffd368',buttonTextColor:'#080b0d',textPrimaryColor:'#f8fafc',textSecondaryColor:'#b5c1ca',inputBackgroundColor:'#10191e',formBackgroundColor:'#0b1115',outlinePrimaryColor:'#455760',outlineSecondaryColor:'#ffb800',inputFocusedBoxShadow:'0 0 0 3px #ffb80033',inputVerticalPadding:'14px',inputHorizontalPadding:'14px',borderRadiusSmall:'14px',borderRadiusMedium:'18px',borderRadiusLarge:'22px',formPadding:'20px'}};
   const status=text=>{el('status').textContent=text;el('status').className='status show'};
   const flash=(text,type='')=>{el('flash').textContent=text;el('flash').className='flash show '+type};
   function buttons(){
@@ -26,17 +26,19 @@ export const storeCheckoutScript = String.raw`
   el('close').onclick=close;
   modal.onclick=e=>{if(e.target===modal)close()};
   document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
-  let servers={'solo-duo':{enabled:true,name:'Guerra Fria Solo/Duo'},trio:{enabled:false,name:'Guerra Fria Trio'}};
+  let servers={'solo-duo':{enabled:true,name:'Guerra Fria Solo/Duo'},trio:{enabled:false,name:'Guerra Fria Trio'},both:{enabled:false,name:'Guerra Fria Solo/Duo + Trio'}};
   function selectServer(id){
-    serverId=id;
+    serverId=id;window.gfSelectedServer=id;
+    if(!id){el('serverSolo').classList.remove('active');el('serverTrio').classList.remove('active');el('serverBoth')?.classList.remove('active');el('serverInfo').textContent='Selecione um servidor para consultar preço e itens.';el('detailBuy').disabled=true;el('detailGift').disabled=true;return;}
     el('serverSolo').classList.toggle('active',id==='solo-duo');
-    el('serverTrio').classList.toggle('active',id==='trio');
+    el('serverTrio').classList.toggle('active',id==='trio');el('serverBoth')?.classList.toggle('active',id==='both');
     el('serverInfo').textContent=servers[id].enabled?'Compras liberadas para '+servers[id].name+'.':servers[id].name+' está em preparação.';
     el('detailBuy').disabled=!servers[id].enabled;el('detailGift').disabled=!servers[id].enabled;document.dispatchEvent(new Event('gf:server'));
   }
-  el('serverSolo').onclick=()=>selectServer('solo-duo');el('serverTrio').onclick=()=>selectServer('trio');
+  document.addEventListener('gf:clear-server',()=>selectServer(null));
+  if(el('serverBoth'))el('serverBoth').onclick=()=>selectServer('both');el('serverSolo').onclick=()=>selectServer('solo-duo');el('serverTrio').onclick=()=>selectServer('trio');
   selectServer(new URLSearchParams(location.search).get('server')==='trio'?'trio':'solo-duo');
-  fetch('/api/store/servers',{cache:'no-store'}).then(r=>r.json()).then(rows=>{for(const s of rows)if(servers[s.id])servers[s.id]=s;el('serverTrio').classList.toggle('soon',!servers.trio.enabled);el('serverTrio').querySelector('.tag').textContent=servers.trio.enabled?'DISPONÍVEL':'EM BREVE';selectServer(serverId);}).catch(()=>{});
+  fetch('/api/store/servers',{cache:'no-store'}).then(r=>r.json()).then(rows=>{for(const s of rows)if(servers[s.id])servers[s.id]=s;servers.both.enabled=servers.trio.enabled&&servers['solo-duo'].enabled;el('serverBoth')?.classList.toggle('soon',!servers.both.enabled);el('serverTrio').classList.toggle('soon',!servers.trio.enabled);el('serverTrio').querySelector('.tag').textContent=servers.trio.enabled?'DISPONÍVEL':'EM BREVE';selectServer(serverId);}).catch(()=>{});
   let accountLoading=false;
   async function refreshAccount(){
     if(accountLoading)return;accountLoading=true;
@@ -57,14 +59,14 @@ export const storeCheckoutScript = String.raw`
   }
   refreshAccount();setInterval(refreshAccount,10000);
   document.addEventListener('gf:checkout',async e=>{const b={dataset:e.detail};
-    if(!servers[serverId].enabled)return;
-    await dispose();tier=b.dataset.tier;amount=Number(b.dataset.price);gift=b.dataset.gift===true;
-    el('modalTitle').textContent=b.dataset.name;
+    if(!servers[serverId]?.enabled)return;
+    await dispose();tier=b.dataset.tier;amount=window.gfStorePricing?.[serverId]?.[tier]?.price??Number(b.dataset.price);gift=b.dataset.gift===true;
+    el('modalTitle').textContent=window.gfStorePricing?.[serverId]?.[tier]?.name||b.dataset.name;
     el('modalPrice').textContent=amount.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})+' • 30 dias';
     el('chosenServer').textContent='Servidor: '+servers[serverId].name;
-    el('paymentNote').textContent=gift?'Você está comprando um presente. Após o pagamento, envie o link ao amigo; ele entra com Steam e Discord para ativar o VIP.':'O VIP será ativado somente no servidor escolhido.';
+    el('paymentNote').textContent=gift?'Você está comprando um presente. Após o pagamento, envie o link ao amigo; ele entra com Steam e Discord para ativar o VIP.':serverId==='both'?'Os VIPs serão ativados nos dois servidores. Desconto adicional de 10% já aplicado.':'O VIP será ativado somente no servidor escolhido.';
     el('status').className='status';modal.classList.add('open');buttons();
-    if(tier==='duo'&&!account.steamVerified)status('Confirme o login oficial com Steam para comprar o combo para duas pessoas.');
+    if(tier==='duo'&&!account.steamVerified)status('Confirme o login oficial com Steam para comprar o combo para seu grupo.');
     el('email').focus();
   });
   function purchase(){
@@ -95,7 +97,7 @@ export const storeCheckoutScript = String.raw`
     el('successTitle').textContent=d.gift?(d.giftReady?'Presente pronto para enviar!':'Pagamento confirmado! Preparando presente…'):d.delivered?'Pagamento concluído com sucesso!':'Pagamento confirmado!';
     el('successDetail').textContent=d.gift?'Pagamento confirmado! O VIP será ativado na conta do seu amigo quando ele resgatar o presente.':d.delivered?'Seus benefícios já estão ativos no '+(d.serverName||servers[serverId].name)+' por 30 dias.':'Estamos ativando seus benefícios. Esta tela atualizará automaticamente.';
     el('successPurchase').textContent=(d.product||'VIP')+' • Compra #'+d.id+(!d.gift&&d.steamId?' • Steam '+d.steamId:'');
-    el('successDuo').hidden=!d.claimUrl;
+    const links=(d.claimLinks||[]).filter(x=>x.claimUrl),invites=el('successInvites');if(invites){invites.replaceChildren();if(links.length)for(const link of links){const box=document.createElement('div');box.className='inviteCard';const title=document.createElement('b');title.textContent='Convite do amigo '+link.slot+(d.serverId==='both'?(Number(link.slot)===2?' • Trio':' • Solo/Duo + Trio'):'');const input=document.createElement('input');input.value=link.claimUrl;input.readOnly=true;input.setAttribute('aria-label',title.textContent);const copy=document.createElement('button');copy.className='primary';copy.textContent='COPIAR CONVITE';copy.onclick=async()=>{try{await navigator.clipboard.writeText(link.claimUrl);copy.textContent='COPIADO ✓'}catch{input.select()}};box.append(title,input,copy);invites.append(box);}}el('successDuo').hidden=!d.claimUrl||links.length>0;
     if(d.claimUrl){el('successLink').value=d.claimUrl;el('successExpiry').textContent='Um único resgate • válido até '+new Date(d.expiresAt).toLocaleString('pt-BR');}
     el('successDm').textContent=d.dmStatus==='sent'?'✓ A confirmação também foi enviada no seu privado do Discord.':d.dmStatus==='retrying'?'Não conseguimos enviar no Discord. Libere mensagens privadas do servidor; tentaremos novamente.':'A confirmação será enviada automaticamente no seu privado do Discord.';
   }
