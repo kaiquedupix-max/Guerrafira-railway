@@ -21,10 +21,16 @@ export function setDiscordClient(client: Client): void {
 
   // Restaura votações de mapa já existentes sem criar outra votação.
   // Mantém votos, mensagem e horário e apenas atualiza o visual/menções.
-  restoreActiveMapVotes(client).catch((err) => {
-    logger.error({ err }, "Failed to restore active map votes");
-  });
-  startMapWipeScheduler(client);
+  async function restoreVotes() {
+    try {
+      await restoreActiveMapVotes(client);
+      startMapWipeScheduler(client);
+    } catch (err) {
+      logger.error({ err }, "Failed to repair/restore active map votes; retrying in 60 seconds");
+      setTimeout(() => void restoreVotes(), 60_000);
+    }
+  }
+  void restoreVotes();
   startDailyRestartScheduler(client);
 }
 

@@ -9,6 +9,7 @@ import { executeServerRcon } from "./utils/serverRcon.js";
 import { subscriptionServer } from "../routes/storeOrders.js";
 import type { GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
+import { vipStartsAt, repairTrioPrelaunchVips } from "./trioLaunch.js";
 
 export const VIP_TIERS = {
   bronze: { id: "bronze", name: "VIP Bronze", emoji: "🥉", price: 15, color: 0xcd7f32, benefits: [] as string[] },
@@ -114,9 +115,9 @@ export async function grantVip(opts: {
   const { discordUserId, steamId, tier, durationDays, source, client } = opts;
   logger.info({ tier, steamId, discordUserId, durationDays, source }, "▶ grantVip started");
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
-
   const server = await subscriptionServer(source);
+  const startsAt = vipStartsAt(server, now);
+  const expiresAt = new Date(startsAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
   const grantCmd = buildRconCmd(`${server === "trio" ? "TRIO_" : ""}VIP_${tier.toUpperCase()}_GRANT_CMD`, steamId);
   if (!grantCmd) throw new Error(`Comando RCON do VIP ${tier} não configurado.`);
   await executeVipRcon(grantCmd, "grant",server);
@@ -137,7 +138,7 @@ export async function grantVip(opts: {
     }
   }
 
-  await db.insert(vipSubscriptionsTable).values({ discordUserId, steamId, vipTier: tier, source, durationDays, startsAt: now, expiresAt });
+  await db.insert(vipSubscriptionsTable).values({ discordUserId, steamId, vipTier: tier, source, durationDays, startsAt, expiresAt });
   logger.info({ tier, steamId, discordUserId, expiresAt }, "✅ grantVip complete — DB saved");
 }
 
@@ -231,6 +232,9 @@ export function startVipExpiryChecker(client: Client): void {
   const processedExpired = new Set<number>();
 
   async function check() {
+    // Repair before expiry processing so prelaunch purchases do not lose days.
+    // If repair fails, retry the check without revoking any entitlement.
+    await repairTrioPrelaunchVips();
     const now = new Date();
 
     // Inclui registros expirados antigos na primeira passagem de cada processo para

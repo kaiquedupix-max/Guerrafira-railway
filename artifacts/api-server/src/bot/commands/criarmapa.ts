@@ -1,7 +1,7 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits,
   SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction,
-  type Client, type TextChannel,
+  type Client, type TextChannel, type Guild,
 } from "discord.js";
 import { and, eq, gt, isNull, lte } from "drizzle-orm";
 import { db, pool, mapVotesTable, mapVoteBallotsTable, vipSubscriptionsTable, boosterLinksTable } from "@workspace/db";
@@ -236,6 +236,7 @@ export function cancelActiveMapVoteRuntime(messageId: string): void {
 }
 
 export async function restoreActiveMapVotes(client: Client): Promise<void> {
+  await repairActiveVoteWeights(client);
   const savedVotes = await db.select().from(mapVotesTable).where(eq(mapVotesTable.status, "active"));
   for (const saved of savedVotes) {
     let maps: MapOption[];
@@ -260,13 +261,36 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
   }
 }
 
-async function getVoteWeight(discordUserId: string): Promise<{ weight: number; vip: boolean; booster: boolean }> {
+async function getVoteWeight(discordUserId: string, guild: Guild | null): Promise<{ weight: number; vip: boolean; booster: boolean }> {
   const now = new Date();
   const vipRows = await db.select().from(vipSubscriptionsTable).where(and(eq(vipSubscriptionsTable.discordUserId, discordUserId), gt(vipSubscriptionsTable.expiresAt, now)));
   const boosterRows = await db.select().from(boosterLinksTable).where(and(eq(boosterLinksTable.discordUserId, discordUserId), eq(boosterLinksTable.active, true))).limit(1);
-  const vip = vipRows.some(v => !v.discordRoleRemoved && !v.gameVipRemoved);
-  const booster = boosterRows.length > 0;
+  const member = guild ? await guild.members.fetch({ user: discordUserId, force: true }).catch((error: { code?: number }) => {
+    if (error.code === 10007) return null;
+    throw error;
+  }) : null;
+  const vip = vipRows.some(v => !v.gameVipRemoved) || Boolean(member?.roles.cache.has(process.env.DISCORD_VIP_ROLE_ID || VIP_ROLE_ID));
+  const booster = boosterRows.length > 0 || Boolean(member?.premiumSinceTimestamp)
+    || Boolean(member?.roles.cache.has(process.env.DISCORD_BOOSTER_ROLE_ID || BOOSTER_ROLE_ID));
   return { weight: vip || booster ? 2 : 1, vip, booster };
+}
+
+/** Promote existing ballots only; never erase a bonus earned when the vote was cast. */
+export async function repairActiveVoteWeights(client: Client): Promise<void> {
+  const votes = await db.select().from(mapVotesTable).where(eq(mapVotesTable.status, "active"));
+  for (const vote of votes) {
+    const channel = await client.channels.fetch(vote.channelId);
+    if (!channel || !("guild" in channel)) continue;
+    const ballots = await db.select().from(mapVoteBallotsTable).where(eq(mapVoteBallotsTable.mapVoteId, vote.id));
+    for (const ballot of ballots) {
+      const bonus = await getVoteWeight(ballot.discordUserId, channel.guild);
+      if (bonus.weight !== 2 || ballot.weight >= 2) continue;
+      // The active-state guard prevents rewriting a vote after its result is finalized.
+      await pool.query(`UPDATE map_vote_ballots SET weight=2, is_vip=$1, is_booster=$2
+        WHERE id=$3 AND weight<2 AND EXISTS (SELECT 1 FROM map_votes WHERE id=$4 AND status='active')`,
+        [bonus.vip || ballot.isVip, bonus.booster || ballot.isBooster, ballot.id, vote.id]);
+    }
+  }
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -345,7 +369,7 @@ export async function handleMapVote(interaction: ButtonInteraction): Promise<voi
     await interaction.reply({ content: `ℹ️ Você já votou nesta votação.\nSeu voto continua registrado em **${chosen}** e não pode ser alterado.`, ephemeral: true });
     return;
   }
-  const bonus = await getVoteWeight(interaction.user.id);
+  const bonus = await getVoteWeight(interaction.user.id, interaction.guild);
   const inserted = await db.insert(mapVoteBallotsTable).values({ mapVoteId: vote.id, discordUserId: interaction.user.id, optionIndex: option, weight: bonus.weight, isVip: bonus.vip, isBooster: bonus.booster }).onConflictDoNothing().returning({ id: mapVoteBallotsTable.id });
   if (!inserted[0]) { await interaction.reply({ content: "ℹ️ Você já votou nesta votação. Seu primeiro voto foi mantido.", ephemeral: true }); return; }
   const badge = bonus.vip && bonus.booster ? `${VIP_MENTION} + ${BOOSTER_MENTION}` : bonus.vip ? VIP_MENTION : bonus.booster ? BOOSTER_MENTION : "👤 voto padrão";
