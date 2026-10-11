@@ -1,7 +1,9 @@
 import fs from "node:fs";
 
 const file = new URL("../src/bot/commands/criarmapa.ts", import.meta.url);
-let src = fs.readFileSync(file, "utf8");
+// Git checkouts and API uploads may use CRLF even on a Linux build host.
+// Normalize before matching the multiline safety patches.
+let src = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 
 function replaceOnce(from, to, label) {
   if (src.includes(to)) return;
@@ -91,3 +93,4 @@ replaceOnce(
 
 fs.writeFileSync(file, src);
 console.log("Wipe safety patch applied: vote closes 18:00 BRT on wipe day; technical flow 18:25; force-finish never changes wipe time.");
+
