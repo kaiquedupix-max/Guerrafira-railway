@@ -4,6 +4,7 @@ import {
   ModalBuilder, TextInputBuilder, TextInputStyle, SlashCommandBuilder,
   MessageFlags, PermissionsBitField, type ChatInputCommandInteraction,
   type AutocompleteInteraction, type MessageEditOptions,
+  type MessageComponentInteraction, type ModalSubmitInteraction,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import { logger } from "../../lib/logger.js";
@@ -15,6 +16,16 @@ type Definition = Option & { default_member_permissions?: string | null };
 type Command = { data: { name: string; toJSON(): unknown }; execute(i: ChatInputCommandInteraction): Promise<void>; autocomplete?(i: AutocompleteInteraction): Promise<void> };
 type Entry = { command: Command; definition: Definition; path: string[]; fields: Option[]; label: string };
 let commands: Command[] = [];
+const activeMenus = new Set<string>();
+const modalButtons = new Map<string, (i: MessageComponentInteraction) => Promise<void>>();
+export async function handleMenuInteraction(interaction: MessageComponentInteraction | ModalSubmitInteraction): Promise<void> {
+  const session = interaction.customId.split(":").slice(0, 2).join(":") + ":";
+  if (!activeMenus.has(session)) {
+    await interaction.reply({ content: "Este painel expirou ou o bot foi reiniciado. Abra /menu novamente para pesquisar jogadores.", flags: MessageFlags.Ephemeral });
+  } else if (interaction.isMessageComponent()) {
+    await modalButtons.get(session)?.(interaction);
+  }
+}
 export const data = new SlashCommandBuilder().setName("menu").setDescription("Abre o painel com todas as funções do bot")
   .addAttachmentOption(o => o.setName("arquivo").setDescription("Arquivo opcional para usar nas funções que aceitam anexos"));
 export function configureMenu(available: Command[]) { commands = available.filter(c => c.data.name !== "menu"); }
@@ -65,6 +76,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   if (!interaction.inGuild()) { await interaction.editReply("Abra o menu dentro do servidor Discord."); return; }
   const session = `menu:${randomUUID()}:`;
+  activeMenus.add(session);
   const id = (key: string) => session + key;
   const message = await interaction.editReply({ content: "Abrindo painel…", components: [] });
   const wait = () => message.awaitMessageComponent({ time: 300_000, filter: i => i.user.id === interaction.user.id && i.customId.startsWith(session) });
@@ -88,14 +100,39 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       if (!entry) { await chosen.deferUpdate(); continue; }
       await chosen.deferUpdate();
       const values = new Map<string, unknown>();
+      const suggestionsFor = async (field: Option, query: string) => {
+        let suggestions: { name: string; value: string | number }[] = [];
+        if (!entry.command.autocomplete) return suggestions;
+        const context = new Proxy(interaction, { get(target, key) {
+          if (key === "options") return { ...panelOptions(values, entry.path), getFocused: () => query };
+          if (key === "respond") return async (found: typeof suggestions) => { suggestions = found.filter(s => s.value !== "none").slice(0, 25); };
+          if (key === "responded") return false;
+          const v = Reflect.get(target, key, target); return typeof v === "function" ? v.bind(target) : v;
+        } }) as unknown as AutocompleteInteraction;
+        await entry.command.autocomplete(context);
+        return suggestions;
+      };
       let back = false;
       for (const field of entry.fields) {
         let complete = false, error = "";
+        const searchable = Boolean(field.autocomplete && entry.command.autocomplete);
+        let initialSuggestions: { name: string; value: string | number }[] = [];
+        if (searchable) {
+          try {
+            initialSuggestions = await suggestionsFor(field, "");
+            if (field.name === "jogador" && entry.definition.name !== "desbanir") {
+              initialSuggestions = initialSuggestions.filter(s => s.name.includes("🟢"));
+            }
+          } catch (err) { logger.error({ err }, "Initial menu player list failed"); }
+        }
         while (!complete) {
           const controls = row(button(id("back"), "Voltar ao menu"), cancel);
           if (!field.required) controls.addComponents(button(id("skip"), "Pular"));
           const components: NonNullable<MessageEditOptions["components"]>[number][] = [];
-          if (field.choices?.length || field.type === 5) {
+          if (searchable) {
+            if (initialSuggestions.length) components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("value")).setPlaceholder(entry.definition.name === "desbanir" ? "Selecione um jogador banido" : "Selecione um jogador ou pesquise pelo nome").addOptions(initialSuggestions.map(s => ({ label: s.name.slice(0, 100), value: String(s.value) })))));
+            controls.addComponents(button(id("fill"), "Pesquisar por nome", ButtonStyle.Primary));
+          } else if (field.choices?.length || field.type === 5) {
             const choices = field.choices ?? [{ name: "Sim", value: "true" }, { name: "Não", value: "false" }];
             components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("value")).setPlaceholder(field.name).addOptions(choices.map(c => ({ label: c.name.slice(0, 100), value: String(c.value) })))));
           } else if (field.type === 6) {
@@ -111,7 +148,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             if (attachment) controls.addComponents(button(id("attachment"), "Usar arquivo anexado", ButtonStyle.Primary));
           } else controls.addComponents(button(id("fill"), "Preencher", ButtonStyle.Primary));
           components.push(controls);
-          await interaction.editReply({ content: `**${entry.label} • ${field.name}**\n${field.description}\n${field.required ? "Obrigatório" : "Opcional"}${field.type === 11 ? " • Anexe o arquivo ao executar /menu para selecioná-lo aqui." : ""}${error ? `\n❌ ${error}` : ""}`, components });
+          await interaction.editReply({ content: `**${entry.label} • ${field.name}**\n${searchable ? "Selecione na lista ou clique em Pesquisar por nome, digite parte do nick e escolha o resultado." : field.description}\n${field.required ? "Obrigatório" : "Opcional"}${searchable && !initialSuggestions.length ? " • Nenhum jogador disponível na lista inicial. Use a pesquisa." : ""}${field.type === 11 ? " • Anexe o arquivo ao executar /menu para selecioná-lo aqui." : ""}${error ? `\n❌ ${error}` : ""}`, components });
           const input = await wait();
           if (input.customId === id("cancel")) { await input.update({ content: "Menu fechado. Nenhuma ação executada.", components: [] }); return; }
           if (input.customId === id("back")) { await input.deferUpdate(); back = true; break; }
@@ -119,20 +156,36 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           if (input.customId === id("attachment")) { values.set(field.name, interaction.options.getAttachment("arquivo")); await input.deferUpdate(); complete = true; }
           else if (input.customId === id("fill")) {
             const modalId = id(randomUUID());
-            await input.showModal(new ModalBuilder().setCustomId(modalId).setTitle(field.name.slice(0, 45)).addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("value").setLabel(field.description.slice(0, 45)).setStyle(field.name === "json" || field.name === "motivo" ? TextInputStyle.Paragraph : TextInputStyle.Short).setRequired(true).setMaxLength(Math.min(field.max_length ?? 4000, 4000)))));
-            const submitted = await input.awaitModalSubmit({ time: 300_000, filter: m => m.customId === modalId && m.user.id === interaction.user.id });
+            const modal = new ModalBuilder().setCustomId(modalId).setTitle(searchable ? "Pesquisar jogador" : field.name.slice(0, 45)).addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("value").setLabel(searchable ? "Nome do jogador ou SteamID64" : field.description.slice(0, 45)).setStyle(field.name === "json" || field.name === "motivo" ? TextInputStyle.Paragraph : TextInputStyle.Short).setRequired(true).setMaxLength(Math.min(field.max_length ?? 4000, 4000))));
+            let dismiss!: (i: MessageComponentInteraction) => void;
+            const dismissed = new Promise<MessageComponentInteraction>(resolve => { dismiss = resolve; });
+            modalButtons.set(session, async i => {
+              if (i.user.id !== interaction.user.id) { await i.reply({ content: "Abra seu próprio painel com /menu.", flags: MessageFlags.Ephemeral }); return; }
+              if (i.customId === id("fill")) await i.showModal(modal);
+              else dismiss(i);
+            });
+            try {
+              await input.showModal(modal);
+            } catch (err) {
+              logger.error({ err }, "Menu modal could not open");
+              if (!input.replied && !input.deferred) await input.reply({ content: "Não foi possível abrir a pesquisa. Abra /menu novamente.", flags: MessageFlags.Ephemeral }).catch(() => {});
+              throw err;
+            }
+            const submitted = await Promise.race([input.awaitModalSubmit({ time: 300_000, filter: m => m.customId === modalId && m.user.id === interaction.user.id }), dismissed]);
+            modalButtons.delete(session);
+            if (!("fields" in submitted)) {
+              if (submitted.customId === id("cancel")) { await submitted.update({ content: "Menu fechado. Nenhuma ação executada.", components: [] }); return; }
+              await submitted.deferUpdate();
+              if (submitted.customId === id("back")) back = true;
+              if (submitted.customId === id("value") && submitted.isStringSelectMenu()) { values.set(field.name, submitted.values[0]); complete = true; break; }
+              if (back || (submitted.customId === id("skip") && !field.required)) break;
+              continue;
+            }
             await submitted.deferUpdate();
             try {
               const value = validateValue(field, submitted.fields.getTextInputValue("value"));
               if (field.autocomplete && entry.command.autocomplete) {
-                let suggestions: { name: string; value: string | number }[] = [];
-                const searchContext = new Proxy(interaction, { get(target, key) {
-                  if (key === "options") return { ...panelOptions(values, entry.path), getFocused: () => String(value) };
-                  if (key === "respond") return async (found: typeof suggestions) => { suggestions = found.filter(s => s.value !== "none").slice(0, 25); };
-                  if (key === "responded") return false;
-                  const v = Reflect.get(target, key, target); return typeof v === "function" ? v.bind(target) : v;
-                } }) as unknown as AutocompleteInteraction;
-                await entry.command.autocomplete(searchContext);
+                const suggestions = await suggestionsFor(field, String(value));
                 if (!suggestions.length) { error = "Nenhum resultado encontrado. Tente o SteamID64 ou outro nome."; continue; }
                 await interaction.editReply({ content: `**${entry.label} • ${field.name}**\nSelecione o resultado da busca.`, components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("result")).setPlaceholder("Selecione o resultado").addOptions(suggestions.map(s => ({ label: s.name.slice(0, 100), value: String(s.value) })))), row(button(id("retry"), "Buscar novamente"), button(id("back"), "Voltar ao menu"), cancel)] });
                 const result = await wait();
@@ -182,5 +235,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   } catch (error) {
     logger.error({ error, userId: interaction.user.id }, "Bot menu interaction ended");
     await interaction.editReply({ content: "O painel expirou ou encontrou uma falha. Abra /menu novamente. Se você confirmou uma ação, consulte os registros antes de repetir.", components: [] }).catch(() => {});
+  } finally {
+    activeMenus.delete(session);
+    modalButtons.delete(session);
   }
 }

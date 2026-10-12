@@ -144,6 +144,7 @@ export async function startBot(): Promise<void> {
 
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
+      if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && interaction.customId.startsWith("menu:")) { await menuCommand.handleMenuInteraction(interaction); return; }
       if (interaction.isAutocomplete()) { const cmd = commands.get(interaction.commandName); if (cmd?.autocomplete) await cmd.autocomplete(interaction); return; }
       if (interaction.isChatInputCommand()) { const cmd = commands.get(interaction.commandName); if (cmd) await cmd.execute(interaction); return; }
       if (interaction.isButton()) {
