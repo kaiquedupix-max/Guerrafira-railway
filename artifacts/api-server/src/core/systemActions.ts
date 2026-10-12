@@ -1,5 +1,5 @@
 import { EmbedBuilder } from "discord.js";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, and, inArray } from "drizzle-orm";
 import { db, modLogsTable, playersTable } from "@workspace/db";
 import { discordClient } from "../bot/client.js";
 import { executeRconCommand } from "../bot/utils/rcon.js";
@@ -13,9 +13,9 @@ const steamRe = /^7656119\d{10}$/;
 const safe = (value: string, max = 300) => String(value ?? "").replace(/[\r\n\t"]/g, " ").trim().slice(0, max);
 const safeChat = (value: string, max = 180) => safe(value, max).replace(/[<>]/g, "");
 
-export class ActionError extends Error {
-  constructor(message: string, public readonly status = 400) { super(message); }
-}
+import { ActionError } from "./actionError.js";
+import { removeRustBan } from "./rustUnban.js";
+export { ActionError } from "./actionError.js";
 
 export async function executeRconRequired(command: string, attempts = 3): Promise<string> {
   let last: unknown;
@@ -67,7 +67,7 @@ async function sendGameModerationNotice(command: string, steamId: string, type: 
   });
 }
 
-export async function banPlayer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string; evidenceUrl?: string; skipRcon?: boolean }) {
+export async function banPlayer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string; evidenceUrl?: string; skipRcon?: boolean; association?: { steamId: string; playerName: string } }) {
   const row = await player(input.steamId);
   const name = safe(input.playerName || row?.playerName || `Jogador offline (${input.steamId})`, 100);
   const reason = safe(input.reason);
@@ -97,7 +97,7 @@ export async function banPlayer(input: { steamId: string; duration: BanDuration;
     banDuration: input.duration,
     banExpiresAt: expiresAt
   });
-  const banEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle("🔨 Banimento aplicado").addFields(
+  const banEmbed = new EmbedBuilder().setColor(0xe74c3c).setTitle(input.association ? "🔨 Banimento por associação" : "🔨 Banimento aplicado").addFields(
     { name: "Jogador", value: name, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Duração", value: input.duration, inline: true }, { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
   );
@@ -112,7 +112,7 @@ export async function banPlayer(input: { steamId: string; duration: BanDuration;
   banEmbed.setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp();
   await log(await withSteamProfile(banEmbed, input.steamId));
   const gameNotified = await sendGameModerationNotice(
-    `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 125)}</color>${evidenceUrl ? " | <color=#00E6C3>Provas/motivo: Discord ou www.guerrafriarust.com.br</color>" : ""}`,
+    `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido${input.association ? " por associação" : ""}. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 125)}</color>${evidenceUrl ? " | <color=#00E6C3>Provas/motivo: Discord ou www.guerrafriarust.com.br</color>" : ""}`,
     input.steamId, "BAN");
   return { playerName: name, expiresAt, gameNotified };
 }
@@ -159,26 +159,28 @@ export async function kickPlayer(input: { steamId: string; reason: string; actor
 
 export async function activeBan(steamId: string) {
   if (!steamRe.test(steamId)) throw new ActionError("SteamID inválido.");
-  const rows = await db.select().from(modLogsTable).where(eq(modLogsTable.steamId, steamId)).orderBy(desc(modLogsTable.createdAt)).limit(100);
+  const rows = await db.select().from(modLogsTable).where(and(eq(modLogsTable.steamId, steamId), inArray(modLogsTable.action, ["BAN", "PREVENTIVE_BAN", "DESBANIR", "SYSTEM_UNBAN"]))).orderBy(desc(modLogsTable.createdAt), desc(modLogsTable.id)).limit(1);
   const state = rows.find(x => x.action === "BAN" || x.action === "PREVENTIVE_BAN" || x.action === "DESBANIR" || x.action === "SYSTEM_UNBAN");
   return state?.action === "BAN" || state?.action === "PREVENTIVE_BAN" ? state : null;
 }
 
 export async function unbanPlayer(input: { steamId: string; reason: string; actor: ActionActor }) {
   const ban = await activeBan(input.steamId);
-  if (!ban) throw new ActionError("Este jogador não possui banimento ativo.", 409);
+  // A ban applied through Rust or a plugin may have no local audit entry.
+  const row = await player(input.steamId);
+  const playerName = ban?.playerName || row?.playerName || `Jogador (${input.steamId})`;
   const reason = safe(input.reason); if (!reason) throw new ActionError("Motivo obrigatório.");
-  await executeRconRequired(`unban ${input.steamId}`);
-  await db.insert(modLogsTable).values({ action: "DESBANIR", steamId: input.steamId, playerName: ban.playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
+  await removeRustBan(input.steamId, executeRconRequired);
+  await db.insert(modLogsTable).values({ action: "DESBANIR", steamId: input.steamId, playerName: playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
   await log(new EmbedBuilder().setColor(0x22c55e).setTitle("✅ Jogador desbanido").addFields(
-    { name: "Jogador", value: ban.playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
-    { name: "Tipo anterior", value: ban.action === "PREVENTIVE_BAN" ? "Banimento preventivo" : "Banimento", inline: true },
+    { name: "Jogador", value: playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
+    { name: "Tipo anterior", value: ban?.action === "PREVENTIVE_BAN" ? "Banimento preventivo" : "Banimento", inline: true },
     { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
   ).setFooter({ text: "Guerra Fria • Moderação" }).setTimestamp());
   const gameNotified = await sendGameModerationNotice(
-    `say <color=#00FF88>[JOGADOR DESBANIDO]</color> | <color=#FF8800>${safeChat(ban.playerName, 80)}</color> foi desbanido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
+    `say <color=#00FF88>[JOGADOR DESBANIDO]</color> | <color=#FF8800>${safeChat(playerName, 80)}</color> foi desbanido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 160)}</color>`,
     input.steamId, "UNBAN");
-  return { playerName: ban.playerName, previousType: ban.action, gameNotified };
+  return { playerName: playerName, previousType: ban?.action, gameNotified };
 }
 
 async function memberFor(discordUserId: string) {

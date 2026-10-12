@@ -24,11 +24,11 @@ async function moderationActor(interaction: ChatInputCommandInteraction) {
 async function getBannedPlayers(query: string) {
   const history = await db.select().from(modLogsTable)
     .where(inArray(modLogsTable.action, ["BAN", "PREVENTIVE_BAN", "SYSTEM_UNBAN", "DESBANIR"]))
-    .orderBy(desc(modLogsTable.createdAt));
+    .orderBy(desc(modLogsTable.createdAt), desc(modLogsTable.id));
   const latestState = new Map<string, typeof history[0]>();
   for (const row of history) if (!latestState.has(row.steamId)) latestState.set(row.steamId, row);
   const currentBans = Array.from(latestState.values()).filter(row => row.action === "BAN" || row.action === "PREVENTIVE_BAN");
-  const filtered = query ? currentBans.filter(row => row.playerName.toLowerCase().includes(query.toLowerCase()) || row.steamId.includes(query)) : currentBans;
+  const filtered = query ? currentBans.filter(row => (row.playerName || "").toLowerCase().includes(query.toLowerCase()) || row.steamId.includes(query)) : currentBans;
   return filtered.slice(0, 25);
 }
 
@@ -41,6 +41,9 @@ export const data = new SlashCommandBuilder()
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
   const focused = interaction.options.getFocused();
   const banned = await getBannedPlayers(focused);
+  if (/^7656119\d{10}$/.test(focused.trim()) && !banned.some(b => b.steamId === focused.trim())) {
+    await interaction.respond([{ name: `Consultar e desbanir SteamID ${focused.trim()} no servidor`, value: focused.trim() }, ...banned.slice(0, 24).map(b => ({ name: `${b.playerName || b.steamId}`.slice(0, 100), value: b.steamId }))]); return;
+  }
   if (banned.length === 0) { await interaction.respond([{ name: "Nenhum jogador banido encontrado", value: "none" }]); return; }
   await interaction.respond(banned.map(b => ({
     name: `${b.action === "PREVENTIVE_BAN" ? "🛡️ PREVENTIVO" : "🔨 BAN"} • ${b.playerName} — ${b.steamId} (${b.banDuration === "perm" ? "Permanente" : b.banDuration ?? "?"})`.slice(0, 100),
@@ -50,7 +53,8 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const steamId = interaction.options.getString("jogador", true);
+  if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.BanMembers)) { await interaction.editReply("❌ Sem permissão para desbanir jogadores."); return; }
+  const steamId = interaction.options.getString("jogador", true).trim();
   if (steamId === "none") { await interaction.editReply("❌ Nenhum jogador banido selecionado."); return; }
   try {
     const result = await unbanPlayer({

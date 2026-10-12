@@ -1,3 +1,5 @@
+import { activeBan, executeRconRequired } from "../core/systemActions.js";
+import { removeRustBan } from "../core/rustUnban.js";
 import { redirectVipToWebsite } from "./vipWebLinks.js";
 import {
   ActionRowBuilder,
@@ -30,6 +32,7 @@ import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raff
 import { startDiscordModeration } from "./moderation.js";
 import { startSeason2DiscordRankSync } from "./season2DiscordRankSync.js";
 import { startSeason1DiscordRankCleanup } from "./season1RankCleanup.js";
+import * as menuCommand from "./commands/menu.js";
 import * as banirCommand from "./commands/banir.js";
 import * as banpreventivoCommand from "./commands/banpreventivo.js";
 import * as kickarCommand from "./commands/kickar.js";
@@ -67,6 +70,7 @@ interface BotCommand {
 }
 
 const commands = new Collection<string, BotCommand>();
+commands.set(menuCommand.data.name, menuCommand);
 commands.set(banirCommand.data.name, banirCommand);
 commands.set(banpreventivoCommand.data.name, banpreventivoCommand);
 commands.set(kickarCommand.data.name, kickarCommand);
@@ -92,6 +96,13 @@ commands.set(wipeCommand.data.name, wipeCommand);
 commands.set(testeftpCommand.data.name, testeftpCommand);
 commands.set(enviarjsonCommand.data.name, enviarjsonCommand);
 commands.set(wipedatasCommand.data.name, wipedatasCommand);
+menuCommand.configureMenu([...commands.values(), {
+  data: { name: "ticket", toJSON: () => ({ name: "ticket", description: "Abrir um ticket de atendimento" }) },
+  execute: async interaction => { await handleTicketCreate(interaction as unknown as Parameters<typeof handleTicketCreate>[0]); },
+}, {
+  data: { name: "loja", toJSON: () => ({ name: "loja", description: "Abrir a loja oficial de VIPs" }) },
+  execute: async interaction => { await interaction.reply({ content: "**Loja oficial:** https://www.guerrafriarust.com.br/loja", flags: 64 }); },
+}]);
 ajudaCommand.configureHelp([...commands.values()].map(command => command.data.toJSON()));
 
 export async function startBot(): Promise<void> {
@@ -298,11 +309,10 @@ function startBanExpiryChecker(client: Client): void {
     const now = new Date();
     const expired = await db.select().from(modLogsTable).where(and(eq(modLogsTable.action, "BAN"), isNotNull(modLogsTable.banExpiresAt), lte(modLogsTable.banExpiresAt, now)));
     if (!expired.length) return;
-    const unbanned = await db.select({ steamId: modLogsTable.steamId }).from(modLogsTable).where(and(eq(modLogsTable.action, "SYSTEM_UNBAN"), gt(modLogsTable.createdAt, new Date(now.getTime() - 35 * 86400000))));
-    const unbannedSet = new Set(unbanned.map(r => r.steamId));
     for (const ban of expired) {
-      if (unbannedSet.has(ban.steamId)) continue;
-      await executeRconCommand(`unban ${ban.steamId}`);
+      const current = await activeBan(ban.steamId);
+      if (!current || current.id !== ban.id) continue;
+      await removeRustBan(ban.steamId, executeRconRequired);
       await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema" });
       const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
       if (logChannelId) { const ch = await client.channels.fetch(logChannelId).catch(() => null) as TextChannel | null; if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed({ playerName: ban.playerName ?? "Desconhecido", steamId: ban.steamId, originalReason: ban.reason ?? "—", duration: "temporário" })] }); }
