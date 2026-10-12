@@ -20,7 +20,7 @@ async function open(config={}){
  return {replies,click:id=>collect(id),select:(id,value)=>collect(id,[value])};
 }
 test('confirmation bans principal and unique duo with separate reasons, once',async()=>{
- calls.length=0;const panel=await open();assert.equal(calls.length,0);assert.equal(panel.replies[0].components.length,5);
+ calls.length=0;const panel=await open({count:'2',members:'76561190000000002'});assert.equal(calls.length,0);assert.equal(panel.replies[0].components.length,5);await panel.click('ban_panel_roster');
  await panel.click('ban_panel_confirm');assert.equal(calls.length,2);assert.equal(calls[0].reason,'Cheat / Trapaça');assert.match(calls[1].reason,/Banido por associação/);assert.equal(calls[1].association.steamId,calls[0].steamId);
  await panel.click('ban_panel_confirm');assert.equal(calls.length,2);
 });
@@ -47,4 +47,11 @@ test('team count must be an integer and include the main player',async()=>{
 test('a failed team ban does not hide failures or stop notifications for later members',async()=>{
  calls.length=0;globalThis.__banFail='76561190000000003';globalThis.__noticeFail='76561190000000002';
  try {const panel=await open({count:'4',members:'76561190000000002\n76561190000000003\n76561190000000004'});await panel.select('ban_panel_reason','team_limit');await panel.click('ban_panel_roster');await panel.click('ban_panel_confirm');assert.equal(calls.length,4);assert.match(panel.replies.at(-1),/3\/4/);assert.match(panel.replies.at(-1),/Servidor recusou o ban/);assert.match(panel.replies.at(-1),/sem confirmação da notificação/);} finally {delete globalThis.__banFail;delete globalThis.__noticeFail;}
+});
+
+test('slash ban only requests the player; reason is visible in the panel',async()=>{
+ assert.deepEqual(command.data.toJSON().options.map(o=>o.name),['jogador']);const panel=await open();assert.match(panel.replies[0].content,/Motivo: Cheat/);const options=panel.replies[0].components[0].toJSON().components[0].options;assert.ok(options.some(o=>o.value==='team_limit'));
+});
+test('other players can be selected from the roster picker before association bans',async()=>{
+ calls.length=0;const panel=await open();await panel.click('ban_panel_choose');assert.match(panel.replies.at(-1).content,/Selecione os outros jogadores/);await panel.select('ban_panel_count','2');await panel.select('ban_panel_members','76561190000000002');await panel.click('ban_panel_back');await panel.click('ban_panel_confirm');assert.equal(calls.length,2);assert.ok(calls[1].association);
 });

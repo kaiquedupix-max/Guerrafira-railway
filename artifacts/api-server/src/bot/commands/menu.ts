@@ -36,7 +36,7 @@ export function menuEntries(available: Command[] = commands): Entry[] {
     const walk = (node: Option, path: string[]) => {
       const children = (node.options ?? []).filter(o => o.type === 1 || o.type === 2);
       if (children.length) for (const child of children) walk(child, [...path, child.name]);
-      else entries.push({ command, definition, path, fields: definition.name === "banir" ? (node.options ?? []).filter(o => o.name === "jogador" || o.name === "detalhes") : node.options ?? [], label: [definition.name, ...path].join(" ") });
+      else entries.push({ command, definition, path, fields: definition.name === "banir" ? (node.options ?? []).filter(o => o.name === "jogador") : node.options ?? [], label: [definition.name, ...path].join(" ") });
     };
     walk(definition, []);
   }

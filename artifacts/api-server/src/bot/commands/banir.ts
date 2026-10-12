@@ -67,54 +67,8 @@ export const data = new SlashCommandBuilder()
     opt
       .setName("jogador")
       .setDescription("Pesquise pelo nome ou informe o SteamID64")
-      .setRequired(false)
       .setRequired(true)
       .setAutocomplete(true)
-  )
-  .addStringOption(opt =>
-    opt
-      .setName("duracao")
-      .setDescription("Duração do banimento")
-      .setRequired(false)
-      .addChoices(
-        { name: "3 Dias", value: "3d" },
-        { name: "7 Dias", value: "7d" },
-        { name: "Permanente", value: "perm" },
-      )
-  )
-  .addStringOption(opt =>
-    opt
-      .setName("motivo")
-      .setDescription("Motivo padronizado do banimento")
-      .setRequired(false)
-      .addChoices(...STANDARD_BAN_REASONS.map(({ name, value }) => ({ name, value })))
-  )
-  .addStringOption(opt =>
-    opt
-      .setName("banir_duo")
-      .setDescription("Banir também o duo/time atual por associação?")
-      .setRequired(false)
-      .addChoices(
-        { name: "Sim — banir por associação", value: "sim" },
-        { name: "Não — banir somente este jogador", value: "nao" },
-      )
-  )
-  .addStringOption(opt =>
-    opt
-      .setName("duracao_duo")
-      .setDescription("Duração do banimento do duo/time por associação")
-      .setRequired(false)
-      .addChoices(
-        { name: "3 Dias", value: "3d" },
-        { name: "7 Dias", value: "7d" },
-        { name: "Permanente", value: "perm" },
-      )
-  )
-  .addStringOption(opt =>
-    opt
-      .setName("detalhes")
-      .setDescription("Detalhes adicionais do motivo (obrigatório se escolher Outro)")
-      .setRequired(false)
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers);
 
@@ -136,7 +90,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
   await interaction.respond(suggestions.slice(0, 25));
 }
 
-type BanSelection = { duration: BanDuration; reasonKey: string; shouldBanDuo: boolean; associationDuration: BanDuration; teamCount?: number; teamMembers?: TeamMember[] };
+type BanSelection = { duration: BanDuration; reasonKey: string; shouldBanDuo: boolean; associationDuration: BanDuration; teamCount?: number; teamMembers?: TeamMember[]; details?: string };
 export async function resolveTeamRoster(mainSteamId: string, countText: string, membersText: string): Promise<TeamMember[]> {
   const count = Number(countText.trim());
   if (!Number.isSafeInteger(count) || count < 2) throw new ActionError("Informe a quantidade total de membros, incluindo o jogador principal (mínimo 2).");
@@ -166,18 +120,27 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   };
   const durations = [{ label: "3 dias", value: "3d" }, { label: "7 dias", value: "7d" }, { label: "Permanente", value: "perm" }];
   let detectedMembers: TeamMember[] = [];
+  let choosingMembers = false;
+  let candidates: TeamMember[] = [];
   const menu = (id: string, label: string, options: { label: string; value: string }[], value: string) =>
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id).setPlaceholder(label).addOptions(options.map(o => ({ ...o, default: o.value === value }))));
-  const panel = () => ({ content: selection.reasonKey === "team_limit"
+  const panel = () => choosingMembers ? {
+    content: "**Selecione os outros jogadores que serão banidos**\nO jogador principal já está incluído. Informe a quantidade total e marque os demais membros. Para pesquisar por nome ou incluir mais jogadores, use Informar nomes.\nSelecionados: " + (selection.teamMembers?.map(m => m.name).join(", ") || "somente o principal"),
+    components: [
+      menu("ban_panel_count", "Quantos membros no total, incluindo o principal?", Array.from({length: 24}, (_, n) => ({label: String(n + 2) + " membros", value: String(n + 2)})), String(selection.teamCount || "")),
+      ...(candidates.length ? [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId("ban_panel_members").setPlaceholder("Marque os outros jogadores").setMinValues(0).setMaxValues(candidates.length).addOptions(candidates.map(m => ({label: (m.name + " — " + m.steamId).slice(0,100), value: m.steamId, default: selection.teamMembers?.some(x => x.steamId === m.steamId) || false}))))] : []),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ban_panel_roster").setLabel("Informar nomes / SteamIDs").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId("ban_panel_back").setLabel("Revisar banimento").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId("ban_panel_cancel").setLabel("Cancelar").setStyle(ButtonStyle.Secondary))
+    ]
+  } : ({ content: selection.reasonKey === "team_limit"
     ? `**Violação do limite de time**\nClique em Configurar membros e informe quantos jogadores há no time, incluindo o principal. Todos receberão o motivo de violação de limite de time e uma notificação individual no chat.\n${selection.teamMembers ? `**${selection.teamCount} jogadores confirmados:**\n${selection.teamMembers.map(m => `• ${m.name} (${m.steamId})`).join("\n").slice(0, 1200)}` : "Nenhum time confirmado ainda."}`
-    : "Selecione as opções e confirme o banimento do jogador e do duo/time por associação.", components: [
+    : `**Motivo: ${STANDARD_BAN_REASONS.find(r => r.value === selection.reasonKey)?.label}**\nDuração: ${selection.duration.toUpperCase()}\n${selection.teamMembers ? "Jogadores: " + selection.teamMembers.map(m => m.name).join(", ") : "Escolha o motivo abaixo e selecione os outros jogadores, se houver."}`, components: [
     menu("ban_panel_reason", "Motivo", STANDARD_BAN_REASONS.map(r => ({ label: r.label, value: r.value })), selection.reasonKey),
     menu("ban_panel_duration", "Duração do jogador", durations, selection.duration),
     ...(selection.reasonKey === "team_limit" ? [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ban_panel_roster").setLabel("Configurar membros do time").setStyle(ButtonStyle.Primary))] : [
       menu("ban_panel_team", "Duo/time", [{ label: "Banir duo/time por associação", value: "sim" }, { label: "Somente o jogador", value: "nao" }], selection.shouldBanDuo ? "sim" : "nao"),
       menu("ban_panel_team_duration", "Duração por associação", durations, selection.associationDuration),
     ]),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ban_panel_confirm").setLabel("Confirmar banimento").setStyle(ButtonStyle.Danger).setDisabled(selection.reasonKey === "team_limit" && !selection.teamMembers), new ButtonBuilder().setCustomId("ban_panel_cancel").setLabel("Cancelar").setStyle(ButtonStyle.Secondary))
+    new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ban_panel_choose").setLabel("Escolher jogadores").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId("ban_panel_details").setLabel("Detalhes do motivo").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId("ban_panel_confirm").setLabel("Confirmar banimento").setStyle(ButtonStyle.Danger).setDisabled((selection.reasonKey === "team_limit" || selection.shouldBanDuo) && !selection.teamMembers), new ButtonBuilder().setCustomId("ban_panel_cancel").setLabel("Cancelar").setStyle(ButtonStyle.Secondary))
   ] });
   const message = await interaction.editReply(panel());
   const collector = message.createMessageComponentCollector({ time: 300000, filter: i => i.user.id === interaction.user.id && i.customId.startsWith("ban_panel_") });
@@ -185,6 +148,22 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   collector.on("collect", async i => {
     try {
       if (finished) { await i.deferUpdate(); return; }
+      if (i.customId === "ban_panel_choose") {
+        await i.deferUpdate();
+        const main = interaction.options.getString("jogador", true);
+        const players = await searchPlayers("", 25);
+        detectedMembers = uniqueTeamMembers(await getTeamMembers(main).catch(() => []), main);
+        candidates = uniqueTeamMembers([...detectedMembers, ...players.map(p => ({steamId:p.steamId,name:p.playerName}))], main).slice(0,25);
+        choosingMembers = true;
+        if (!finished) await interaction.editReply(panel()); return;
+      }
+      if (i.customId === "ban_panel_back") { choosingMembers = false; await i.update(panel()); return; }
+      if (i.customId === "ban_panel_details") {
+        const modalId = "ban_details_" + i.id;
+        await i.showModal(new ModalBuilder().setCustomId(modalId).setTitle("Detalhes do motivo").addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("details").setLabel("Detalhes adicionais (obrigatório para Outro)").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(250))));
+        const submitted = await i.awaitModalSubmit({time:300000,filter:m=>m.customId===modalId&&m.user.id===interaction.user.id}).catch(()=>null);
+        if (submitted) {await submitted.deferUpdate(); if (!finished) { selection.details=submitted.fields.getTextInputValue("details").trim(); await interaction.editReply(panel()); }} return;
+      }
       if (i.customId === "ban_panel_roster") {
         const modalId = `ban_roster_${i.id}`;
         await i.showModal(new ModalBuilder().setCustomId(modalId).setTitle("Banir time por limite de membros").addComponents(
@@ -204,6 +183,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         return;
       }
       if (i.isStringSelectMenu()) {
+        if (i.customId === "ban_panel_count") selection.teamCount = Number(i.values[0]);
+        if (i.customId === "ban_panel_members") {
+          const main = interaction.options.getString("jogador", true);
+          selection.teamMembers = [{steamId:main,name:main}, ...candidates.filter(m => i.values.includes(m.steamId))];
+        }
         if (i.customId === "ban_panel_reason") selection.reasonKey = i.values[0];
         if (i.customId === "ban_panel_duration") selection.duration = i.values[0] as BanDuration;
         if (i.customId === "ban_panel_team_duration") selection.associationDuration = i.values[0] as BanDuration;
@@ -213,6 +197,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         if (!finished) await interaction.editReply(panel()); return;
       }
       if (i.customId === "ban_panel_confirm" && selection.reasonKey === "team_limit" && !selection.teamMembers) { await i.reply({ content: "Configure a quantidade e os membros antes de confirmar.", flags: MessageFlags.Ephemeral }); return; }
+      if (i.customId === "ban_panel_confirm" && (selection.reasonKey === "team_limit" || selection.shouldBanDuo) && (!selection.teamMembers || selection.teamMembers.length !== selection.teamCount)) { await i.reply({content:"Escolha os jogadores e informe a quantidade total correspondente antes de confirmar.",flags:MessageFlags.Ephemeral}); return; }
       finished = true; collector.stop("finished");
       await i.update({ content: i.customId === "ban_panel_cancel" ? "Banimento cancelado." : "Aplicando banimentos…", components: [] });
       if (i.customId === "ban_panel_confirm") await applyBan(interaction, { ...selection });
@@ -228,7 +213,7 @@ async function applyBan(interaction: ChatInputCommandInteraction, selection: Ban
   try {
     const steamId = interaction.options.getString("jogador", true).trim();
     const { duration, reasonKey, shouldBanDuo, associationDuration } = selection;
-    const details = interaction.options.getString("detalhes")?.trim() ?? "";
+    const details = selection.details ?? interaction.options.getString("detalhes")?.trim() ?? "";
 
     if (shouldBanDuo && !associationDuration) {
       throw new ActionError("Escolha a duração do banimento do duo/time por associação.");
@@ -256,7 +241,7 @@ async function applyBan(interaction: ChatInputCommandInteraction, selection: Ban
 
     if (shouldBanDuo) {
       try {
-        associatedMembers = uniqueTeamMembers(await getTeamMembers(steamId), steamId);
+        associatedMembers = uniqueTeamMembers(selection.teamMembers ?? await getTeamMembers(steamId), steamId);
       } catch {
         throw new ActionError("Não foi possível consultar o duo/time. Nenhum banimento foi iniciado.");
       }
