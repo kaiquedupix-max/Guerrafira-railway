@@ -1,3 +1,4 @@
+import { startNetworkStatus } from "./networkStatus.js";
 import { activeBan, executeRconRequired } from "../core/systemActions.js";
 import { removeRustBan } from "../core/rustUnban.js";
 import { redirectVipToWebsite } from "./vipWebLinks.js";
@@ -132,6 +133,7 @@ export async function startBot(): Promise<void> {
       sendable: Boolean(welcomeChannel?.isSendable()),
     }, "Welcome system initialized");
     setDiscordClient(c);
+    startNetworkStatus(c);
     c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
     await registerSlashCommands(c);
     startSeason2DiscordRankSync(c);
@@ -150,7 +152,7 @@ export async function startBot(): Promise<void> {
       if (interaction.isButton()) {
         const id = interaction.customId;
         if (id.startsWith("vip_") || id === "pix_copy") { await redirectVipToWebsite(interaction); return; }
-        if (id === "status_connect") { await handleConnectButton(interaction); return; }
+        if (id === "status_connect" || id === "status_connect_trio") { await handleConnectButton(interaction); return; }
         if (id === "ticket_create") { await handleTicketCreate(interaction); return; }
         if (id === "ticket_close") { await handleTicketClose(interaction); return; }
         if (id === "raffle_join") { await handleRaffleJoin(interaction); return; }
@@ -253,7 +255,9 @@ export async function startBot(): Promise<void> {
 }
 
 async function handleConnectButton(interaction: Parameters<typeof handleTicketCreate>[0]): Promise<void> {
-  const host = "jogar.guerrafriarust.com.br"; const gamePort = "28015";
+  const trio = interaction.customId === "status_connect_trio";
+  const host = (trio ? process.env.TRIO_RUST_SERVER_HOST : process.env.RUST_SERVER_HOST) || (trio ? "" : "jogar.guerrafriarust.com.br"); const gamePort = (trio ? process.env.TRIO_RUST_SERVER_PORT : process.env.RUST_SERVER_PORT) || "28015";
+  if (!host) { await interaction.reply({content:"Endereço do Trio ainda não configurado.",ephemeral:true}); return; }
   await interaction.reply({ embeds: [{ color: 0x2ecc71, title: "🎮  Conectar ao Servidor", description: `Clique no link abaixo ou cole no console do jogo (F1):\n\n**\`steam://connect/${host}:${gamePort}\`**\n\nF1 → \`client.connect ${host}:${gamePort}\``, footer: { text: "Guerra Fria" } }], ephemeral: true });
 }
 

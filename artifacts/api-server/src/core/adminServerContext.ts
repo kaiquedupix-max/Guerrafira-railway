@@ -11,7 +11,7 @@ export const adminServerMiddleware:RequestHandler=(req,res,next)=>{
  context.run(server,next);
 };
 export function hostSettings(){const trio=adminServer()==="trio";return{
- panelUrl:String((trio?process.env.TRIO_PANEL_URL:process.env.ELGAE_PANEL_URL)||process.env.ELGAE_PANEL_URL||"").replace(/\/$/,""),
- serverId:String(trio?process.env.TRIO_PANEL_SERVER_ID||"ad506a79":process.env.ELGAE_SERVER_ID||""),
- apiKey:String((trio?process.env.TRIO_PANEL_API_KEY:process.env.ELGAE_API_KEY)||process.env.ELGAE_API_KEY||"")
+ panelUrl:String((trio?process.env.TRIO_PANEL_URL:process.env.ELGAE_PANEL_URL)||"").replace(/\/$/,""),
+ serverId:String(trio?process.env.TRIO_PANEL_SERVER_ID||"":process.env.ELGAE_SERVER_ID||""),
+ apiKey:String((trio?process.env.TRIO_PANEL_API_KEY:process.env.ELGAE_API_KEY)||"")
 };}
