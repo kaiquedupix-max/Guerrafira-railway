@@ -4,9 +4,11 @@ import { auditWipe, buildWipePlan, diagnoseHost, executeProceduralWipe, executeW
 import { cancelActiveMapVoteRuntime, createMapVote, executeSelectedMapVoteNow, type MapImageUpload } from "../bot/commands/criarmapa.js";
 import { discordClient } from "../bot/client.js";
 import { db, pool, mapVotesTable, mapVoteBallotsTable } from "@workspace/db";
-import { desc } from "drizzle-orm";
+import { desc, sql, and, eq } from "drizzle-orm";
 import { getWipeLockState, setWipeLock } from "../core/wipeLock.js";
 
+import { adminServer } from "../core/adminServerContext.js";
+const voteServerFilter = () => sql`COALESCE(${mapVotesTable.mapsJson}::jsonb->0->>'serverId', 'solo-duo') = ${adminServer()}`;
 const router = Router(); router.use(requireAdmin);
 const kindOf = (value: unknown): WipeKind => value === "general" ? "general" : "map";
 const modeOf = (value: unknown): "seed"|"link" => value === "link" ? "link" : "seed";
@@ -18,7 +20,8 @@ async function cancelPendingAutomaticVotes(reason: string): Promise<number> {
     `SELECT id, message_id
        FROM map_votes
       WHERE status IN ('active','selected')
-        AND applied_at IS NULL`,
+        AND applied_at IS NULL AND COALESCE(maps_json::jsonb->0->>'serverId','solo-duo')=$1`,
+    [adminServer()],
   );
 
   for (const vote of pending.rows) cancelActiveMapVoteRuntime(vote.message_id);
@@ -28,8 +31,8 @@ async function cancelPendingAutomaticVotes(reason: string): Promise<number> {
       `UPDATE map_votes
           SET status='manual_closed', applied_at=NOW(), failure_reason=$1
         WHERE status IN ('active','selected')
-          AND applied_at IS NULL`,
-      [reason],
+          AND applied_at IS NULL AND id=ANY($2::int[]) AND COALESCE(maps_json::jsonb->0->>'serverId','solo-duo')=$3`,
+      [reason,pending.rows.map(v=>v.id),adminServer()],
     );
   }
 
@@ -58,7 +61,7 @@ router.get("/wipe/plan", async (req,res) => {
 
 router.get("/wipe/status",async(_req,res)=>{
   try{
-    const rows=await db.select().from(mapVotesTable).orderBy(desc(mapVotesTable.createdAt)).limit(10);
+    const rows=await db.select().from(mapVotesTable).where(voteServerFilter()).orderBy(desc(mapVotesTable.createdAt)).limit(10);
     const ballots=await db.select().from(mapVoteBallotsTable);
     res.setHeader("Cache-Control","no-store");
     res.json({serverNow:Date.now(),timeZone:"America/Sao_Paulo",votes:rows.map(row=>{
@@ -90,7 +93,7 @@ router.post("/wipe/vote",async(req,res)=>{
 
     // A agenda do backend é autoritativa. O horário calculado no navegador nunca pode
     // alterar o banco nem antecipar um wipe por diferença de timezone/cache.
-    const result=await createMapVote(client,{createdBy:res.locals.admin.userId,date,maps,imageFiles});
+    const result=await createMapVote(client,{createdBy:res.locals.admin.userId,date,maps,imageFiles,serverId:adminServer()});
     const officialWipeAt=result.wipeAt+OFFICIAL_AFTER_FLOW_MS;
     await auditWipe("MAP_VOTE_CREATED",{id:res.locals.admin.userId,name:res.locals.admin.username},`Votação ${result.id} criada pelo painel; fluxo técnico ${new Date(result.wipeAt).toISOString()}; wipe oficial ${new Date(officialWipeAt).toISOString()}.`);
     res.status(201).json({...result,flowAt:result.wipeAt,officialWipeAt,timeZone:"America/Sao_Paulo"});
@@ -105,6 +108,8 @@ router.post("/wipe/vote/:id/execute-now",async(req,res)=>{
     const client=discordClient();
     if(!client)return void res.status(503).json({error:"Bot do Discord ainda não está conectado."});
     const actor={id:res.locals.admin.userId,name:res.locals.admin.username};
+    const [vote]=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.id,voteId),voteServerFilter())).limit(1);
+    if(!vote)return void res.status(404).json({error:"Votação não encontrada neste servidor."});
     const result=await executeSelectedMapVoteNow(client,voteId,actor);
     await auditWipe("SELECTED_MAP_WIPE_NOW",actor,`Votação ${voteId}; vencedor ${result.winnerName}; execução imediata solicitada pelo painel.`);
     res.json(result);
