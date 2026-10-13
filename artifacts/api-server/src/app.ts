@@ -1,3 +1,5 @@
+import { serverConnectPage } from "./core/serverConnectPage.js";
+import { parseServerId } from "./core/servers.js";
 import express, { type Express } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -28,6 +30,7 @@ app.use(express.urlencoded({ extended: true }));
 
 const leaderboardPage = leaderboardHtml.replace("</body>", '<a href="/api/admin/auth/login" style="position:fixed;right:18px;bottom:18px;z-index:9999;text-decoration:none;background:#6d28d9;color:white;border:1px solid #a78bfa;padding:11px 15px;border-radius:11px;font:800 11px system-ui;box-shadow:0 14px 36px #0008">🛡️ Entrar com Discord</a></body>');
 
+app.get("/conectar", (req,res) => { const server=parseServerId(req.query.server); if(!server)return void res.status(400).send("Selecione Solo/Duo ou Trio.");try{res.type("html").send(serverConnectPage(server));}catch(error){res.status(503).send(error instanceof Error?error.message:"Conexão indisponível.");} });
 app.get("/", (_req, res) => res.status(200).type("html").send(leaderboardPage));
 app.get("/leaderboard", (_req, res) => res.status(200).type("html").send(leaderboardPage));
 app.get("/season:seasonNumber", (req, res) => {

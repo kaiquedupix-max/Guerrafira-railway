@@ -24,7 +24,7 @@ Consultas ao Rust:
 - Trio: `TRIO_RCON_HOST`, `TRIO_RCON_PORT`, `TRIO_RCON_PASSWORD`.
 
 A presença atualiza a cada 30 segundos. Os bots dedicados mostram os online
-somente no próprio servidor. O principal soma as conexões dos dois servidores,
+somente no próprio servidor. O principal mostra jogadores online / slots totais, somando os dois servidores,
 sem incluir a fila. Se um servidor não responder, a presença mostra a soma
 parcial com `+` e identifica a conexão indisponível.
 
@@ -45,7 +45,9 @@ própria votação ativa. Avisos de votação, vencedor, parada e retorno identi
 servidor e wipe de mapa. O Trio não utiliza credenciais do painel do Duo como
 alternativa. O wipe do Trio não reseta o leaderboard compartilhado do Duo.
 
-A agenda existente foi mantida: segunda/sexta, votação encerra às 18h de Brasília;
+Agenda: Solo/Duo às segundas e sextas; Trio somente às quartas, 18h30 de Brasília.
+No Coolify: TRIO_WIPE_DAYS=3, TRIO_WIPE_HOUR=18, TRIO_WIPE_MINUTE=30.
+A votação encerra às 18h de Brasília;
 o fluxo técnico inicia às 18h25. A confirmação de retorno depende da hospedagem.
 O horário público de referência permanece 18h30. Encerrar a votação manualmente
 não antecipa o wipe, e votos antigos atrasados não são executados fora da janela.
@@ -75,3 +77,7 @@ Testes automatizados com Discord, RCON e hospedagem simulados cobrem soma dos
 online, estados indisponíveis, alvo persistido, configuração isolada do Trio,
 restauração de votos antigos e execuções simultâneas nos dois servidores.
 Não foi executado wipe real nem login com credenciais de produção nesta sessão.
+
+O card antigo do bot principal é removido no próximo início. O canal de status
+fica com os cards dos bots Duo e Trio, com botões de conexão próprios. O controle
+de slots não escreve mais na presença do bot principal.

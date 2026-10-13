@@ -1,4 +1,5 @@
-import { ActivityType, Client, EmbedBuilder, Events, GatewayIntentBits } from "discord.js";
+import { wipeScheduleLabel } from "../core/wipeCalendar.js";
+import { ActivityType, Client, EmbedBuilder, Events, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { executeServerRcon } from "./utils/serverRcon.js";
 import { GUERRA_FRIA_SERVERS, type GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
@@ -17,8 +18,19 @@ export function parseOnlineSnapshot(server: GuerraFriaServerId, raw: string | nu
 }
 export function networkPresence(snapshots: OnlineSnapshot[]): string {
   const total = snapshots.reduce((sum, s) => sum + s.players, 0);
+  const slots = snapshots.reduce((sum,s)=>sum+s.maxPlayers,0);
   const missing = snapshots.filter(s => !s.online).map(s => GUERRA_FRIA_SERVERS[s.server].shortName);
-  return missing.length ? `${total}+ online • ${missing.join("/")} indisponível` : `${total} jogadores online • Guerra Fria`;
+  return missing.length ? `${total}+/${slots}+ online • ${missing.join("/")} indisponível` : `${total}/${slots} jogadores online • Guerra Fria`;
+}
+export function statusCardPayload(snapshot: OnlineSnapshot) {
+  const name=GUERRA_FRIA_SERVERS[snapshot.server].shortName;
+  const marker=`Guerra Fria • Status ${name}`;
+  const embed = new EmbedBuilder().setTitle(`Guerra Fria ${name} • Status`).setColor(snapshot.online ? 0x2ecc71 : 0xf59e0b).setDescription(snapshot.online ? `**${snapshot.players}/${snapshot.maxPlayers} jogadores online**\nFila: ${snapshot.queued}` : "Conexão com o servidor indisponível. Quantidade de jogadores não confirmada.").addFields({name:"Wipe de mapa",value:wipeScheduleLabel(snapshot.server)}).setFooter({ text: marker }).setTimestamp();
+  const host = process.env[snapshot.server === "trio" ? "TRIO_RUST_SERVER_HOST" : "RUST_SERVER_HOST"] || (snapshot.server === "solo-duo" ? "jogar.guerrafriarust.com.br" : "");
+  const connectUrl = new URL("https://www.guerrafriarust.com.br/conectar");
+  connectUrl.searchParams.set("server",snapshot.server);
+  const components = host ? [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("🎮 Conectar ao servidor").setURL(connectUrl.toString()))] : [];
+  return { embeds: [embed], components };
 }
 export function startNetworkStatus(main: Client): void {
   const clients = new Map<GuerraFriaServerId, Client>();
@@ -45,10 +57,10 @@ export function startNetworkStatus(main: Client): void {
           const channel = await client.channels.fetch(channelId);
           if (!channel?.isSendable()) continue;
           const marker = `Guerra Fria • Status ${name}`;
-          const embed = new EmbedBuilder().setTitle(`Guerra Fria ${name} • Status`).setColor(snapshot.online ? 0x2ecc71 : 0xf59e0b).setDescription(snapshot.online ? `**${snapshot.players}/${snapshot.maxPlayers} jogadores online**\nFila: ${snapshot.queued}` : "Conexão com o servidor indisponível. Quantidade de jogadores não confirmada.").setFooter({ text: marker }).setTimestamp();
           const known = messageIds.get(snapshot.server);
           const previous = known ? await channel.messages.fetch(known).catch(() => null) : (await channel.messages.fetch({ limit: 100 })).find(m => m.author.id === client.user!.id && m.embeds.some(e => e.footer?.text === marker));
-          const message = previous ? await previous.edit({ embeds: [embed] }) : await channel.send({ embeds: [embed] });
+          const payload = statusCardPayload(snapshot);
+          const message = previous ? await previous.edit(payload) : await channel.send(payload);
           messageIds.set(snapshot.server, message.id);
         } catch (error) { logger.error({ error, server: snapshot.server }, "Status channel update failed"); }
       }
@@ -66,7 +78,22 @@ export function startNetworkStatus(main: Client): void {
     client.once(Events.ClientReady, () => { logger.info({ server, botId: client.user?.id }, "Dedicated status bot online"); refresh().catch(error => logger.error({ error }, "Network status update failed")); });
     client.login(token).catch(error => logger.error({ error, server }, "Dedicated status bot login failed"));
   }
+  removeLegacyStatus(main).catch(error => logger.error({error},"Legacy status cleanup failed"));
   refresh().catch(error => logger.error({ error }, "Network status update failed"));
   const timer = setInterval(() => refresh().catch(error => logger.error({ error }, "Network status update failed")), 30_000);
   timer.unref();
+}
+
+export async function removeLegacyStatus(main:Client):Promise<void>{
+ const channelId=process.env.DISCORD_STATUS_CHANNEL_ID;if(!channelId)return;
+ const channel=await main.channels.fetch(channelId);if(!channel?.isSendable())return;
+ let before:string|undefined;
+ for(;;){const messages=await channel.messages.fetch({limit:100,...(before?{before}:{})});if(!messages.size)break;
+  for(const message of messages.values()){
+   if(message.author.id!==main.user?.id)continue;
+   if(!message.embeds.some(e=>/Atualizado automaticamente a cada 60s|Status automático/.test(e.footer?.text||"")))continue;
+   await message.delete();
+  }
+  before=messages.last()!.id;if(messages.size<100)break;
+ }
 }

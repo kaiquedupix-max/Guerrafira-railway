@@ -1,3 +1,4 @@
+import { serverWipeWindow } from "../core/wipeCalendar.js";
 import { Router, type IRouter } from "express";
 import WebSocket from "ws";
 
@@ -24,24 +25,7 @@ export function selectedServer(value: unknown): ServerId {
   return String(value || "").toLowerCase() === "trio" ? "trio" : "solo-duo";
 }
 
-function wipeWindow(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(now);
-  const get = (t: string) => parts.find(p => p.type === t)?.value || "";
-  const local = new Date(`${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:00-03:00`);
-  const candidates: Date[] = [];
-  for (let d = -7; d <= 7; d++) {
-    const x = new Date(local.getTime() + d * 86400000);
-    const day = x.getDay();
-    if (day === 1 || day === 5) { x.setHours(18, 30, 0, 0); candidates.push(x); }
-  }
-  return {
-    last: candidates.filter(x => x <= local).sort((a,b) => b.getTime() - a.getTime())[0]?.toISOString() || null,
-    next: candidates.filter(x => x > local).sort((a,b) => a.getTime() - b.getTime())[0]?.toISOString() || null,
-  };
-}
+function wipeWindow(now = new Date()) { const window=serverWipeWindow("trio",now);return {last:window.last?new Date(window.last).toISOString():null,next:window.next?new Date(window.next).toISOString():null}; }
 
 function trioCommand(command: string): Promise<string | null> {
   if (!trioReady()) return Promise.resolve(null);

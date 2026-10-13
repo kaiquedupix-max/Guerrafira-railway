@@ -139,7 +139,7 @@ export async function startBot(): Promise<void> {
     startSeason2DiscordRankSync(c);
     startSeason1DiscordRankCleanup(c);
     await ensureGameAnnouncementPlugin();
-    startRconSync(); startBanExpiryChecker(c); startStatusUpdater(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
+    startRconSync(); startBanExpiryChecker(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
     startDuoVipRestoration(c);
     await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
   });

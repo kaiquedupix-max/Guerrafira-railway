@@ -1,3 +1,4 @@
+import { datedWipeSchedule, serverWipeWindow, localWipeDate, wipeScheduleLabel } from "../../core/wipeCalendar.js";
 import { adminServer, withAdminServer, hostSettings } from "../../core/adminServerContext.js";
 import { GUERRA_FRIA_SERVERS, parseServerId, type GuerraFriaServerId } from "../../core/servers.js";
 import {
@@ -116,31 +117,20 @@ export const data = new SlashCommandBuilder()
   .addAttachmentOption(o => o.setName("imagem3").setDescription("Imagem opcional do Mapa 3"));
 
 export function nextScheduledWipe(now = new Date()): { voteEndsAt: number; wipeAt: number } {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year:"numeric", month:"2-digit", day:"2-digit" }).formatToParts(now).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
-  const base = new Date(Date.UTC(Number(parts.year), Number(parts.month)-1, Number(parts.day), 21, 0));
-  for (let add=0; add<8; add++) {
-    const candidate = new Date(base.getTime()+add*86_400_000); const day=candidate.getUTCDay();
-    if ((day===1||day===5) && candidate.getTime()>now.getTime()) return { voteEndsAt:candidate.getTime(), wipeAt:candidate.getTime()+WIPE_DELAY_MS };
-  }
-  throw new Error("Não foi possível calcular o próximo wipe.");
+ const next=serverWipeWindow(adminServer(),new Date(now.getTime()+30*60000)).next;
+ if(!next)throw new Error("Não foi possível calcular o próximo wipe.");
+ return datedWipeSchedule(adminServer(),localWipeDate(new Date(next)));
 }
-
 export function scheduleForDate(date:string):{voteEndsAt:number;wipeAt:number}{
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error("Informe a data no formato AAAA-MM-DD.");
-  const [year,month,day]=date.split("-").map(Number);
-  const voteAt=Date.UTC(year,month-1,day,21,0,0);
-  const check=new Date(voteAt);
-  if(check.getUTCFullYear()!==year||check.getUTCMonth()!==month-1||check.getUTCDate()!==day)throw new Error("Data inválida.");
-  const dow=check.getUTCDay();
-  if(dow!==1&&dow!==5)throw new Error("O wipe só pode ser agendado para segunda ou sexta-feira.");
-  if(voteAt<=Date.now()+5*60_000)throw new Error("Escolha um wipe futuro com pelo menos 5 minutos de antecedência do encerramento da votação.");
-  return{voteEndsAt:voteAt,wipeAt:voteAt+WIPE_DELAY_MS};
+ const schedule=datedWipeSchedule(adminServer(),date);
+ if(schedule.voteEndsAt<=Date.now()+5*60000)throw new Error("Escolha um wipe futuro com pelo menos 5 minutos de antecedência do encerramento da votação.");
+ return schedule;
 }
 
 function headerEmbed(endsAt: number, server: GuerraFriaServerId = "solo-duo") {
   return new EmbedBuilder().setColor(0xe53935).setTitle(`🗺️ ${GUERRA_FRIA_SERVERS[server].name} — WIPE DE MAPA`)
     .setDescription(
-      "**Vote no mapa que você deseja para o próximo wipe! Blueprints serão preservados.**\n\n" +
+      `**Vote no mapa que você deseja para o próximo wipe! Blueprints serão preservados.**\n**Agenda:** ${wipeScheduleLabel(server)}\n\n` +
       "📦 **Como votar**\nClique no botão correspondente ao seu mapa favorito. Cada pessoa pode votar apenas uma vez.\n\n" +
       "⭐ **Bônus para cargos especiais**\n" +
       `${VIP_MENTION} e ${BOOSTER_MENTION} têm seu voto contado como **2 votos** em vez de 1.\n` +
@@ -615,7 +605,8 @@ async function processScheduledWipes(client:Client):Promise<void>{
     const now=new Date();
     const pendingScheduleRows=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt)));
     for(const pending of pendingScheduleRows){
-      const canonicalWipeAt=new Date(pending.endsAt.getTime()+WIPE_DELAY_MS);
+      let canonicalWipeAt:Date;
+      try { const target=normalizeMap(JSON.parse(pending.mapsJson)[0],0).serverId || "solo-duo"; canonicalWipeAt=new Date(datedWipeSchedule(target,localWipeDate(pending.endsAt)).wipeAt); } catch(error) { await db.update(mapVotesTable).set({status:"failed",failureReason:error instanceof Error?error.message:"Agenda incompatível"}).where(eq(mapVotesTable.id,pending.id)); continue; }
       if(!pending.wipeAt||pending.wipeAt.getTime()!==canonicalWipeAt.getTime()){
         await db.update(mapVotesTable).set({wipeAt:canonicalWipeAt}).where(eq(mapVotesTable.id,pending.id));
         pending.wipeAt=canonicalWipeAt;

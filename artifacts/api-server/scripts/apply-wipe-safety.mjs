@@ -6,6 +6,8 @@ const file = new URL("../src/bot/commands/criarmapa.ts", import.meta.url);
 let src = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 
 function replaceOnce(from, to, label) {
+  if(label==='canonical pending schedule repair' && src.includes('canonicalWipeAt=new Date(datedWipeSchedule(target,localWipeDate(pending.endsAt)).wipeAt);') && src.includes('if(!pending.wipeAt||pending.wipeAt.getTime()!==canonicalWipeAt.getTime())'))return;
+  if(label==='same-day schedule validation' && src.includes('datedWipeSchedule(adminServer(),date)'))return;
   if (src.includes(to)) return;
   if (!src.includes(from)) throw new Error(`Wipe safety patch failed: ${label} source not found`);
   src = src.replace(from, to);
@@ -93,4 +95,3 @@ replaceOnce(
 
 fs.writeFileSync(file, src);
 console.log("Wipe safety patch applied: vote closes 18:00 BRT on wipe day; technical flow 18:25; force-finish never changes wipe time.");
-

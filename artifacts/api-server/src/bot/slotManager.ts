@@ -9,7 +9,7 @@
  *     in steps of 5, never below the configured minimum or online players.
  *   - Runtime min/max limits configured by the admin panel are always respected.
  */
-import { ActivityType, type Client } from "discord.js";
+import { type Client } from "discord.js";
 import { pool } from "@workspace/db";
 import { getServerInfo, executeRconCommand } from "./utils/rcon.js";
 import { logger } from "../lib/logger.js";
@@ -150,15 +150,7 @@ export async function updateSlotControlSettings(input: {
   return { settings: await getSlotControlSettings(), applied, serverPlayers: players };
 }
 
-function updatePresence(client: Client, players: number, slots: number): void {
-  if (!client.user) return;
-  client.user.setPresence({
-    activities: [{ name: `🎮 Guerra Fria 2X | 👥 ${players}/${slots} jogadores online`, type: ActivityType.Playing }],
-    status: "online",
-  });
-}
-
-export function startSlotManager(client: Client): void {
+export function startSlotManager(_client: Client): void {
   async function tick() {
     const info = await getServerInfo();
     if (!info) return;
@@ -169,7 +161,6 @@ export function startSlotManager(client: Client): void {
     if (settings.mode === "manual") {
       const target = Math.max(settings.manualSlots, players);
       if (currentSlots !== target) await setSlots(target);
-      updatePresence(client, players, currentSlots ?? target);
       return;
     }
 
@@ -198,8 +189,6 @@ export function startSlotManager(client: Client): void {
         }
       }
     }
-
-    updatePresence(client, players, currentSlots ?? info.maxPlayers ?? minSlots);
   }
 
   setTimeout(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), 10_000);
