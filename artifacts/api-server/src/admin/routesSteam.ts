@@ -1,8 +1,9 @@
+import { syncBoosterServers } from "../bot/utils/boosterServers.js";
 import { replaceLinkedSteamV2 } from "../bot/utils/linkedSteamV2.js";
 import { Router } from "express";
 import { db, boosterLinksTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { executeRconRequired, ActionError } from "../core/systemActions.js";
+import { ActionError } from "../core/systemActions.js";
 import { setBoosterAccess, unlinkSteamAccess } from "../core/accessActions.js";
 import { requireAdmin } from "./guard.js";
 
@@ -19,8 +20,12 @@ router.post("/change", async (req, res) => {
   const [owner] = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId)).limit(1);
   if (owner && owner.discordUserId !== discordUserId) return res.status(409).json({ error: "SteamID já vinculado a outro Discord." });
   if (current?.active && current.steamId !== steamId) {
-    await executeRconRequired(`c.usergroup remove ${current.steamId} bs`);
-    try { await executeRconRequired(`c.usergroup add ${steamId} bs`); } catch (error) { await executeRconRequired(`c.usergroup add ${current.steamId} bs`).catch(() => {}); throw error; }
+    if (await syncBoosterServers(current.steamId, false) === null) throw new ActionError("Um dos servidores não confirmou a remoção do Booster anterior.", 503);
+    if (await syncBoosterServers(steamId, true) === null) {
+      await syncBoosterServers(steamId, false).catch(() => null);
+      await syncBoosterServers(current.steamId, true).catch(() => null);
+      throw new ActionError("Um dos servidores não confirmou o novo Booster.", 503);
+    }
   }
   await replaceLinkedSteamV2(discordUserId, steamId);
   res.json({ ok: true });
