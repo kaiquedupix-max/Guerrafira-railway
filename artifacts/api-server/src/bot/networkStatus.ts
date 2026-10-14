@@ -12,8 +12,8 @@ export function parseOnlineSnapshot(server: GuerraFriaServerId, raw: string | nu
   if (!raw) return unavailable;
   try {
     const data = JSON.parse(raw);
-    const players = Number(data.Players ?? data.players ?? data.PlayerCount);
-    const capacity = Number(data.MaxPlayers ?? data.maxPlayers ?? data.Capacity);
+    const players = Number(data.Players ?? data.players ?? data.PlayerCount ?? data.playerCount);
+    const capacity = Number(data.MaxPlayers ?? data.maxPlayers ?? data.maxplayers ?? data.Capacity);
     if (!Number.isSafeInteger(players) || players < 0 || !Number.isFinite(capacity) || capacity <= 0) return unavailable;
     return { server, online: true, players, maxPlayers: capacity, queued: Math.max(0, Number(data.Queued ?? data.queued ?? 0) || 0) };
   } catch { return unavailable; }
@@ -25,8 +25,13 @@ export function snapshotWithHostState(snapshot: OnlineSnapshot, hostState: strin
 }
 export async function getStatusSnapshot(server: GuerraFriaServerId): Promise<OnlineSnapshot> {
   const raw = await executeServerRcon(server, "serverinfo").catch(() => null);
-  const snapshot = parseOnlineSnapshot(server, raw);
+  let snapshot = parseOnlineSnapshot(server, raw);
   if (snapshot.online) return snapshot;
+  // Only repeat this read-only query after the transport has reset a failed socket.
+  if (!raw) {
+    snapshot = parseOnlineSnapshot(server, await executeServerRcon(server, "serverinfo").catch(() => null));
+    if (snapshot.online) return snapshot;
+  }
   const state = await withAdminServer(server, () => getHostPowerState()).catch(() => null);
   return snapshotWithHostState(snapshot, state);
 }
