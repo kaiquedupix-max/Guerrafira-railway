@@ -1,5 +1,5 @@
 import { wipeScheduleLabel } from "../core/wipeCalendar.js";
-import { ActivityType, Client, EmbedBuilder, Events, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
+import { ActivityType, Client, EmbedBuilder, Events, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction } from "discord.js";
 import { executeServerRcon } from "./utils/serverRcon.js";
 import { GUERRA_FRIA_SERVERS, type GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
@@ -26,11 +26,30 @@ export function statusCardPayload(snapshot: OnlineSnapshot) {
   const name=GUERRA_FRIA_SERVERS[snapshot.server].shortName;
   const marker=`Guerra Fria • Status ${name}`;
   const embed = new EmbedBuilder().setTitle(`Guerra Fria ${name} • Status`).setColor(snapshot.online ? 0x2ecc71 : 0xf59e0b).setDescription(snapshot.online ? `**${snapshot.players}/${snapshot.maxPlayers} jogadores online**\nFila: ${snapshot.queued}` : "Conexão com o servidor indisponível. Quantidade de jogadores não confirmada.").addFields({name:"Wipe de mapa",value:wipeScheduleLabel(snapshot.server)}).setFooter({ text: marker }).setTimestamp();
-  const host = process.env[snapshot.server === "trio" ? "TRIO_RUST_SERVER_HOST" : "RUST_SERVER_HOST"] || (snapshot.server === "solo-duo" ? "jogar.guerrafriarust.com.br" : "");
-  const connectUrl = new URL("https://www.guerrafriarust.com.br/conectar");
-  connectUrl.searchParams.set("server",snapshot.server);
-  const components = host ? [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("🎮 Conectar ao servidor").setURL(connectUrl.toString()))] : [];
+  const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("🎮 Conectar ao servidor")
+      .setCustomId(snapshot.server === "trio" ? "status_connect_trio" : "status_connect"),
+  )];
   return { embeds: [embed], components };
+}
+// Public game endpoints; these are not the RCON or hosting-panel ports.
+const GAME_ENDPOINTS: Record<GuerraFriaServerId, string> = {
+  "solo-duo": "jogar.guerrafriarust.com.br:28015",
+  trio: "jogar.guerrafriarust.com.br:28115",
+};
+export function statusConnectReply(server: GuerraFriaServerId) {
+  const address = GAME_ENDPOINTS[server];
+  return {
+    content: `**Guerra Fria ${GUERRA_FRIA_SERVERS[server].shortName}**\n\n**IP do servidor:**\n\`\`\`text\n${address}\n\`\`\`\n**Copie o comando e cole no console do Rust (F1):**\n\`\`\`text\nclient.connect ${address}\n\`\`\``,
+    flags: MessageFlags.Ephemeral as const,
+  };
+}
+export async function handleStatusConnectButton(interaction: ButtonInteraction, server?: GuerraFriaServerId): Promise<boolean> {
+  const target = interaction.customId === "status_connect" ? "solo-duo"
+    : interaction.customId === "status_connect_trio" ? "trio" : null;
+  if (!target || server && target !== server) return false;
+  await interaction.reply(statusConnectReply(target));
+  return true;
 }
 export function startNetworkStatus(main: Client): void {
   const clients = new Map<GuerraFriaServerId, Client>();
@@ -74,6 +93,11 @@ export function startNetworkStatus(main: Client): void {
     seen.add(token);
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
     clients.set(server, client);
+    client.on(Events.InteractionCreate, async interaction => {
+      if (!interaction.isButton()) return;
+      try { await handleStatusConnectButton(interaction, server); }
+      catch (error) { logger.error({ error, server }, "Status connect button failed"); }
+    });
     client.on(Events.Error, error => logger.error({ error, server }, "Status bot error"));
     client.once(Events.ClientReady, () => { logger.info({ server, botId: client.user?.id }, "Dedicated status bot online"); refresh().catch(error => logger.error({ error }, "Network status update failed")); });
     client.login(token).catch(error => logger.error({ error, server }, "Dedicated status bot login failed"));

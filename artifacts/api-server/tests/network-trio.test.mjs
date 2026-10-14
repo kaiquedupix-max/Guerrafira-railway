@@ -87,5 +87,19 @@ test('cleanup removes only the old status card owned by the principal bot',async
  await status.removeLegacyStatus({user:{id:'main'},channels:{fetch:async()=>({isSendable:()=>true,messages:{fetch:async()=>cards}})}});assert.deepEqual(deleted,['old']);
 });
 test('each dedicated status card includes its own connection button and wipe schedule',()=>{
- for(const id of ['solo-duo','trio']){const payload=status.statusCardPayload(snapshot(id,0));const button=payload.components[0].toJSON().components[0];assert.equal(new URL(button.url).searchParams.get('server'),id);assert.match(button.label,/Conectar/);if(id==='trio')assert.match(payload.embeds[0].toJSON().fields[0].value,/quarta-feira às 18h30/);}
+ for(const id of ['solo-duo','trio']){const payload=status.statusCardPayload(snapshot(id,0));const button=payload.components[0].toJSON().components[0];assert.equal(button.custom_id,id==='trio'?'status_connect_trio':'status_connect');assert.equal(button.url,undefined);assert.match(button.label,/Conectar/);if(id==='trio')assert.match(payload.embeds[0].toJSON().fields[0].value,/quarta-feira às 18h30/);}
+});
+
+test('connection buttons reply privately with the exact public game address and F1 command',async()=>{
+ for(const [server,port] of [['solo-duo',28015],['trio',28115]]){
+  const replies=[];
+  const customId=server==='trio'?'status_connect_trio':'status_connect';
+  assert.equal(await status.handleStatusConnectButton({customId,reply:async data=>replies.push(data)},server),true);
+  assert.equal(replies.length,1);
+  assert.ok(replies[0].content.includes('client.connect jogar.guerrafriarust.com.br:'+port));
+  assert.equal(replies[0].flags,64);
+  assert.doesNotMatch(replies[0].content,/https?:|steam:\/\//);
+  assert.equal(await status.handleStatusConnectButton({customId,reply:async()=>assert.fail('wrong bot handled this button')},server==='trio'?'solo-duo':'trio'),false);
+ }
+ assert.equal(await status.handleStatusConnectButton({customId:'other',reply:async()=>assert.fail()}),false);
 });
