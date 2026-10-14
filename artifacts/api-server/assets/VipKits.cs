@@ -11,7 +11,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("VipKits", "Guerra Fria", "2.1.0")]
+    [Info("VipKits", "Guerra Fria", "2.1.1")]
     [Description("Menu de kits com permissoes e cooldown persistente.")]
     public class VipKits : RustPlugin
     {
@@ -214,7 +214,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("vipkits.audit")]
         private void Audit(ConsoleSystem.Arg arg) {
             if (arg.Connection != null && arg.Connection.authLevel < 2) return;
-            arg.ReplyWith(JsonConvert.SerializeObject(new { version = "2.1.0", loaded = claimsLoaded, kits = settings.Kits.Count, items = settings.Kits.Sum(k => k.Items.Count), players = claims.Count, cooldowns = claims.Values.Sum(v => v.Count), usageEntries = uses.Values.Sum(v => v.Count), totalUses = uses.Values.Sum(v => v.Values.Sum()), permissions = settings.Kits.Select(k => new { kit = k.Id, permission = k.Permission, groups = string.IsNullOrEmpty(k.Permission) ? new string[0] : permission.GetPermissionGroups(k.Permission) }).ToArray() }));
+            arg.ReplyWith(JsonConvert.SerializeObject(new { version = "2.1.1", loaded = claimsLoaded, kits = settings.Kits.Count, items = settings.Kits.Sum(k => k.Items.Count), players = claims.Count, cooldowns = claims.Values.Sum(v => v.Count), usageEntries = uses.Values.Sum(v => v.Count), totalUses = uses.Values.Sum(v => v.Values.Sum()), permissions = settings.Kits.Select(k => new { kit = k.Id, permission = k.Permission, groups = string.IsNullOrEmpty(k.Permission) ? new string[0] : permission.GetPermissionGroups(k.Permission) }).ToArray() }));
         }
         private bool LimitReached(BasePlayer p, Kit k) { Dictionary<string,int> u; int n; return k.MaximumUses > 0 && uses.TryGetValue(p.UserIDString,out u) && u.TryGetValue(k.Id,out n) && n >= k.MaximumUses; }
         private void OnServerSave() { SaveData(); }
@@ -710,6 +710,11 @@ namespace Oxide.Plugins
             if (!p.IsAlive() || p.IsSleeping()) { p.ChatMessage("Voce precisa estar vivo e acordado."); return; }
             if (!busy.Add(p.userID)) return;
             var created = new List<Item>(); bool delivered = false;
+            // Keep original stacks so a failed delivery can be rolled back without
+            // consuming cooldown or leaving partially merged rewards behind.
+            var originalAmounts = p.inventory.containerMain.itemList
+                .Concat(p.inventory.containerBelt.itemList).Concat(p.inventory.containerWear.itemList)
+                .ToDictionary(item => item, item => item.amount);
             try
             {
                 if (WipeRemaining(k) > 0) { p.ChatMessage("Kit bloqueado apos o wipe. Libera em " + WaitText(WipeRemaining(k)) + "."); return; }
@@ -738,11 +743,16 @@ namespace Oxide.Plugins
                         }
                     }
                 }
-                bool configuredSpace = targets.Distinct().All(target => target.capacity - target.itemList.Count >= targets.Count(x => x == target));
-                bool fallbackSpace = p.inventory.containerMain.capacity - p.inventory.containerMain.itemList.Count + p.inventory.containerBelt.capacity - p.inventory.containerBelt.itemList.Count >= created.Count;
-                if (!configuredSpace && !fallbackSpace) { p.ChatMessage("Libere espaco na mochila, cintura e roupas para receber o kit."); return; }
+                // Let Rust apply its actual stack limits and container rules.
+                // Counting reward rows rejects large resource kits even when they fit.
                 for (int i = 0; i < created.Count; i++) {
-                    if (!created[i].MoveToContainer(targets[i], positions[i], false) && !created[i].MoveToContainer(targets[i], -1, false) && !created[i].MoveToContainer(p.inventory.containerMain, -1, false) && !created[i].MoveToContainer(p.inventory.containerBelt, -1, false)) { p.ChatMessage("Nao foi possivel entregar o kit. Libere espaco e tente novamente."); return; }
+                    if (!created[i].MoveToContainer(targets[i], positions[i], true)
+                        && !created[i].MoveToContainer(targets[i], -1, true)
+                        && !created[i].MoveToContainer(p.inventory.containerMain, -1, true)
+                        && !created[i].MoveToContainer(p.inventory.containerBelt, -1, true)) {
+                        p.ChatMessage("Nao foi possivel entregar o kit completo. Verifique o espaco ou avise a administracao se o inventario estiver vazio.");
+                        return;
+                    }
                 }
                 if (used == null) uses[p.UserIDString] = used = new Dictionary<string,int>();
                 used[k.Id] = count + 1;
@@ -754,7 +764,14 @@ namespace Oxide.Plugins
             }
             finally
             {
-                if (!delivered) foreach (var item in created) item.Remove();
+                if (!delivered) {
+                    foreach (var item in created) item.Remove();
+                    foreach (var original in originalAmounts) {
+                        if (original.Key.parent == null) continue;
+                        original.Key.amount = original.Value;
+                        original.Key.MarkDirty();
+                    }
+                }
                 busy.Remove(p.userID); Show(p, page);
             }
         }
