@@ -1,4 +1,6 @@
 import { serverWipeWindow } from "../core/wipeCalendar.js";
+import { withAdminServer } from "../core/adminServerContext.js";
+import { getHostResourceSnapshot } from "../core/hostWipe.js";
 import { Router, type IRouter } from "express";
 import WebSocket from "ws";
 
@@ -89,6 +91,15 @@ async function trioServerInfo() {
   } catch { return null; }
 }
 
+async function trioHostState(): Promise<string | null> {
+  try {
+    const resource = await withAdminServer("trio", () => getHostResourceSnapshot());
+    return String(resource.state || "").toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
 router.get("/status/servers", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json({
@@ -113,14 +124,19 @@ router.get("/status/data", async (req, res, next) => {
       updatedAt: new Date().toISOString(),
     });
   }
-  const info = await trioServerInfo();
+  const [info, hostState] = await Promise.all([trioServerInfo(), trioHostState()]);
+  const hostOnline = hostState === "running" || hostState === "starting";
+  const online = Boolean(info) || hostOnline;
+  const state = online ? "running" : hostState === "offline" ? "offline" : "unavailable";
   return void res.json({
     serverId: "trio", serverName: "Guerra Fria Trio", configured: true, comingSoon: false,
-    online: Boolean(info), state: info ? "running" : "offline",
+    online, state,
     hostname: info?.hostname || "Guerra Fria Trio", players: info?.players ?? 0,
     maxPlayers: info?.maxPlayers ?? 0, queued: info?.queued ?? 0, joining: info?.joining ?? 0,
     sleepers: info?.sleepers ?? 0, map: info?.map || "—", gameTime: info?.gameTime || "—",
     uptimeMs: 0, lastWipe: wipe.last, nextWipe: wipe.next, updatedAt: new Date().toISOString(),
+    statusSource: info ? "rcon" : hostOnline ? "host" : "unavailable",
+    rconAvailable: Boolean(info), hostState,
   });
 });
 
