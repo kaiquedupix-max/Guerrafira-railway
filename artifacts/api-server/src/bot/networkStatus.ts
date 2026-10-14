@@ -1,10 +1,12 @@
+import { withAdminServer } from "../core/adminServerContext.js";
+import { getHostPowerState } from "../core/hostWipe.js";
 import { wipeScheduleLabel } from "../core/wipeCalendar.js";
 import { ActivityType, Client, EmbedBuilder, Events, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, type ButtonInteraction } from "discord.js";
 import { executeServerRcon } from "./utils/serverRcon.js";
 import { GUERRA_FRIA_SERVERS, type GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
 
-export type OnlineSnapshot = { server: GuerraFriaServerId; online: boolean; players: number; maxPlayers: number; queued: number };
+export type OnlineSnapshot = { server: GuerraFriaServerId; online: boolean; players: number; maxPlayers: number; queued: number; populationAvailable?: boolean; hostState?: string };
 export function parseOnlineSnapshot(server: GuerraFriaServerId, raw: string | null): OnlineSnapshot {
   const unavailable = { server, online: false, players: 0, maxPlayers: 0, queued: 0 };
   if (!raw) return unavailable;
@@ -16,16 +18,35 @@ export function parseOnlineSnapshot(server: GuerraFriaServerId, raw: string | nu
     return { server, online: true, players, maxPlayers: capacity, queued: Math.max(0, Number(data.Queued ?? data.queued ?? 0) || 0) };
   } catch { return unavailable; }
 }
+export function snapshotWithHostState(snapshot: OnlineSnapshot, hostState: string | null): OnlineSnapshot {
+  if (snapshot.online) return snapshot;
+  const state = hostState?.toLowerCase();
+  return { ...snapshot, online: state === "running", populationAvailable: false, hostState: state || "unavailable" };
+}
+export async function getStatusSnapshot(server: GuerraFriaServerId): Promise<OnlineSnapshot> {
+  const raw = await executeServerRcon(server, "serverinfo").catch(() => null);
+  const snapshot = parseOnlineSnapshot(server, raw);
+  if (snapshot.online) return snapshot;
+  const state = await withAdminServer(server, () => getHostPowerState()).catch(() => null);
+  return snapshotWithHostState(snapshot, state);
+}
+export function serverPresence(snapshot: OnlineSnapshot): string {
+  const name = GUERRA_FRIA_SERVERS[snapshot.server].shortName;
+  if (snapshot.populationAvailable === false && snapshot.online) return `${name} • online • contagem indisponível`;
+  if (snapshot.hostState === "starting") return `${name} • iniciando`;
+  if (snapshot.hostState === "offline") return `${name} • offline`;
+  return snapshot.online ? `${snapshot.players}/${snapshot.maxPlayers} online • ${name}` : `${name} • conexão indisponível`;
+}
 export function networkPresence(snapshots: OnlineSnapshot[]): string {
   const total = snapshots.reduce((sum, s) => sum + s.players, 0);
   const slots = snapshots.reduce((sum,s)=>sum+s.maxPlayers,0);
-  const missing = snapshots.filter(s => !s.online).map(s => GUERRA_FRIA_SERVERS[s.server].shortName);
-  return missing.length ? `${total}+/${slots}+ online • ${missing.join("/")} indisponível` : `${total}/${slots} jogadores online • Guerra Fria`;
+  const missing = snapshots.filter(s => !s.online || s.populationAvailable === false).map(s => GUERRA_FRIA_SERVERS[s.server].shortName);
+  return missing.length ? `${total}+/${slots}+ online • contagem ${missing.join("/")} indisponível` : `${total}/${slots} jogadores online • Guerra Fria`;
 }
 export function statusCardPayload(snapshot: OnlineSnapshot) {
   const name=GUERRA_FRIA_SERVERS[snapshot.server].shortName;
   const marker=`Guerra Fria • Status ${name}`;
-  const embed = new EmbedBuilder().setTitle(`Guerra Fria ${name} • Status`).setColor(snapshot.online ? 0x2ecc71 : 0xf59e0b).setDescription(snapshot.online ? `**${snapshot.players}/${snapshot.maxPlayers} jogadores online**\nFila: ${snapshot.queued}` : "Conexão com o servidor indisponível. Quantidade de jogadores não confirmada.").addFields({name:"Wipe de mapa",value:wipeScheduleLabel(snapshot.server)}).setFooter({ text: marker }).setTimestamp();
+  const embed = new EmbedBuilder().setTitle(`Guerra Fria ${name} • Status`).setColor(snapshot.online ? 0x2ecc71 : 0xf59e0b).setDescription(snapshot.online ? snapshot.populationAvailable === false ? "**Servidor online**\nA hospedagem confirmou que está em execução. Contagem de jogadores indisponível no momento." : `**${snapshot.players}/${snapshot.maxPlayers} jogadores online**\nFila: ${snapshot.queued}` : snapshot.hostState === "starting" ? "**Servidor iniciando**" : snapshot.hostState === "offline" ? "**Servidor offline**" : "Conexão com o servidor indisponível. Quantidade de jogadores não confirmada.").addFields({name:"Wipe de mapa",value:wipeScheduleLabel(snapshot.server)}).setFooter({ text: marker }).setTimestamp();
   const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("🎮 Conectar ao servidor")
       .setCustomId(snapshot.server === "trio" ? "status_connect_trio" : "status_connect"),
@@ -60,16 +81,13 @@ export function startNetworkStatus(main: Client): void {
     busy = true;
     try {
       const servers: GuerraFriaServerId[] = ["solo-duo", "trio"];
-      const snapshots = await Promise.all(servers.map(async server => {
-        try { return parseOnlineSnapshot(server, await executeServerRcon(server, "serverinfo")); }
-        catch { return parseOnlineSnapshot(server, null); }
-      }));
+      const snapshots = await Promise.all(servers.map(getStatusSnapshot));
       main.user!.setPresence({ status: snapshots.every(s => s.online) ? "online" : "idle", activities: [{ name: networkPresence(snapshots), type: ActivityType.Watching }] });
       for (const snapshot of snapshots) {
         const client = clients.get(snapshot.server);
         if (!client?.isReady()) continue;
         const name = GUERRA_FRIA_SERVERS[snapshot.server].shortName;
-        client.user!.setPresence({ status: snapshot.online ? "online" : "idle", activities: [{ type: ActivityType.Watching, name: snapshot.online ? `${snapshot.players}/${snapshot.maxPlayers} online • ${name}` : `${name} • conexão indisponível` }] });
+        client.user!.setPresence({ status: snapshot.online ? "online" : "idle", activities: [{ type: ActivityType.Watching, name: serverPresence(snapshot) }] });
         const channelId = process.env[snapshot.server === "trio" ? "TRIO_STATUS_CHANNEL_ID" : "DUO_STATUS_CHANNEL_ID"]?.trim();
         if (!channelId) continue;
         try {

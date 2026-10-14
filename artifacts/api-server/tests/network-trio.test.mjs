@@ -7,7 +7,7 @@ const state=globalThis.__serverTest={rows:[],hosts:[],inserted:[],notices:[]};
 state.db={select(){const chain={from(){return chain;},where(){return chain;},then(yes,no){return Promise.resolve(state.rows.shift()||[]).then(yes,no);},limit:async()=>state.rows.shift()||[]};return chain;},update(){return{set(){return{where:async()=>{}}}};},insert(){return{values(row){state.inserted.push(row);return{returning:async()=>[{id:101}]};}};}};
 const mocks={
  '@workspace/db':'export const db=globalThis.__serverTest.db,pool={query:async()=>({rows:[]})};export const mapVotesTable={},mapVoteBallotsTable={},vipSubscriptionsTable={},boosterLinksTable={};',
- 'hostWipe.js':'const s=globalThis.__serverTest;export const diagnoseHost=async()=>{s.hosts.push(s.context());return {capabilities:{proceduralStartup:true},levelUrlVariable:"LEVEL_URL"};};export const executePreparedProceduralWipe=async()=>s.hosts.push(s.context()),executePreparedWipe=async()=>s.hosts.push(s.context()),prepareProceduralWipeBackup=async()=>"backup";',
+ 'hostWipe.js':'const s=globalThis.__serverTest;export const getHostPowerState=async()=>globalThis.__serverTest.hostState||"unknown";export const diagnoseHost=async()=>{s.hosts.push(s.context());return {capabilities:{proceduralStartup:true},levelUrlVariable:"LEVEL_URL"};};export const executePreparedProceduralWipe=async()=>s.hosts.push(s.context()),executePreparedWipe=async()=>s.hosts.push(s.context()),prepareProceduralWipeBackup=async()=>"backup";',
  'wipeLock.js':'export const getWipeLockState=async()=>({unlocked:true});',
  'gameAnnouncement.js':'export const sendGameAnnouncement=async()=>globalThis.__serverTest.notices.push(globalThis.__serverTest.context());',
  'logger.js':'export const logger={info(){},warn(){},error(){}};',
@@ -102,4 +102,18 @@ test('connection buttons reply privately with the exact public game address and 
   assert.equal(await status.handleStatusConnectButton({customId,reply:async()=>assert.fail('wrong bot handled this button')},server==='trio'?'solo-duo':'trio'),false);
  }
  assert.equal(await status.handleStatusConnectButton({customId:'other',reply:async()=>assert.fail()}),false);
+});
+
+test('Discord reports host-confirmed running Trio as online without inventing a player count',async()=>{
+ state.hostState='running';
+ const result=await status.getStatusSnapshot('trio');
+ assert.equal(result.online,true);assert.equal(result.populationAvailable,false);
+ assert.match(status.serverPresence(result),/Trio.*online.*contagem indisponível/);
+ assert.match(status.statusCardPayload(result).embeds[0].toJSON().description,/Servidor online/);
+ assert.doesNotMatch(status.serverPresence(result),/0\/0/);
+ assert.match(status.networkPresence([snapshot('solo-duo',26),result]),/^26\+\/200\+/);
+ for(const host of ['offline','starting','unknown']){
+ state.hostState=host;const current=await status.getStatusSnapshot('trio');assert.equal(current.online,false);
+ }
+ state.hostState='running';assert.equal(status.snapshotWithHostState(snapshot('trio',12),'offline').players,12);
 });
