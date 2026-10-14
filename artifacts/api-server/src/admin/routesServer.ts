@@ -13,7 +13,6 @@ import { createHostFolder, deleteHostFiles, getHostFileDownloadUrl, hostConsoleS
 
 const router = Router();
 router.use(requireAdmin);
-router.use((req,res,next)=>{if(adminServer()==="trio"&&req.path==="/slot-control")return void res.status(409).json({error:"O controle automático de slots permanece exclusivo do Solo/Duo."});next();});
 initLiveOps();
 const steamRe = /^7656119\d{10}$/;
 const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);

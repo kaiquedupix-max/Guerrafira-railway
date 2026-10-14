@@ -12,6 +12,8 @@
 import { type Client } from "discord.js";
 import { pool } from "@workspace/db";
 import { getServerInfo, executeRconCommand } from "./utils/rcon.js";
+import { adminServer, withAdminServer } from "../core/adminServerContext.js";
+import type { GuerraFriaServerId } from "../core/servers.js";
 import { logger } from "../lib/logger.js";
 
 const DEFAULT_MIN_SLOTS = Math.max(1, parseInt(process.env.SERVER_MIN_SLOTS ?? "100", 10) || 100);
@@ -32,7 +34,8 @@ export interface SlotControlSettings {
   updatedAt: string | null;
 }
 
-let currentSlots: number | null = null;
+const slotsByServer: Record<GuerraFriaServerId, number | null> = { "solo-duo": null, trio: null };
+const settingsId = () => adminServer() === "trio" ? 2 : 1;
 let tableReady = false;
 
 async function ensureSettingsTable(): Promise<void> {
@@ -72,17 +75,19 @@ export async function getSlotControlSettings(): Promise<SlotControlSettings> {
     manual_slots: number;
     updated_by: string | null;
     updated_at: Date | null;
-  }>(`SELECT mode, min_slots, max_slots, manual_slots, updated_by, updated_at FROM server_slot_settings WHERE id = 1`);
+  }>(`SELECT mode, min_slots, max_slots, manual_slots, updated_by, updated_at FROM server_slot_settings WHERE id = $1`, [settingsId()]);
   const row = result.rows[0];
+  // An unconfigured Trio keeps its live capacity until an admin saves settings.
+  const info = !row && adminServer() === "trio" ? await getServerInfo().catch(() => null) : null;
   const minSlots = clamp(Number(row?.min_slots) || DEFAULT_MIN_SLOTS, 1, HARD_MAX);
   const maxSlots = clamp(Number(row?.max_slots) || DEFAULT_MAX_SLOTS, minSlots, HARD_MAX);
-  const manualSlots = clamp(Number(row?.manual_slots) || minSlots, 1, HARD_MAX);
+  const manualSlots = clamp(Number(row?.manual_slots) || info?.maxPlayers || minSlots, 1, HARD_MAX);
   return {
-    mode: row?.mode === "manual" ? "manual" : "automatic",
+    mode: row?.mode === "manual" || !row && adminServer() === "trio" ? "manual" : "automatic",
     minSlots,
     maxSlots,
     manualSlots,
-    currentSlots,
+    currentSlots: info?.maxPlayers ?? slotsByServer[adminServer()],
     updatedBy: row?.updated_by ?? null,
     updatedAt: row?.updated_at ? new Date(row.updated_at).toISOString() : null,
   };
@@ -90,14 +95,14 @@ export async function getSlotControlSettings(): Promise<SlotControlSettings> {
 
 async function setSlots(newSlots: number): Promise<boolean> {
   const target = Math.max(1, Math.min(HARD_MAX, Math.round(newSlots)));
-  const before = currentSlots;
+  const before = slotsByServer[adminServer()];
   for (let attempt = 1; attempt <= 3; attempt++) {
     const result = await executeRconCommand(`server.maxplayers ${target}`).catch(() => null);
     if (result !== null) {
       await new Promise(resolve => setTimeout(resolve, 500));
       const confirmed = await getServerInfo().catch(() => null);
       if (confirmed?.maxPlayers === target) {
-        currentSlots = target;
+        slotsByServer[adminServer()] = target;
         logger.info({ from: before, to: target, attempt }, "Server slots updated and confirmed");
         return true;
       }
@@ -131,18 +136,20 @@ export async function updateSlotControlSettings(input: {
   }
 
   await pool.query(
-    `UPDATE server_slot_settings
-       SET mode=$1, min_slots=$2, max_slots=$3, manual_slots=$4, updated_by=$5, updated_at=NOW()
-     WHERE id=1`,
-    [mode, minSlots, maxSlots, manualSlots, input.updatedBy ?? null],
+    `INSERT INTO server_slot_settings (id, mode, min_slots, max_slots, manual_slots, updated_by)
+     VALUES ($6, $1, $2, $3, $4, $5)
+     ON CONFLICT (id) DO UPDATE SET mode=EXCLUDED.mode, min_slots=EXCLUDED.min_slots,
+       max_slots=EXCLUDED.max_slots, manual_slots=EXCLUDED.manual_slots,
+       updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+    [mode, minSlots, maxSlots, manualSlots, input.updatedBy ?? null, settingsId()],
   );
 
   let applied = true;
   if (mode === "manual") {
     applied = await setSlots(manualSlots);
   } else if (info) {
-    const real = info.maxPlayers || currentSlots || minSlots;
-    currentSlots = real;
+    const real = info.maxPlayers || slotsByServer[adminServer()] || minSlots;
+    slotsByServer[adminServer()] = real;
     if (real < minSlots) applied = await setSlots(minSlots);
     else if (real > maxSlots && maxSlots >= players) applied = await setSlots(maxSlots);
   }
@@ -152,11 +159,17 @@ export async function updateSlotControlSettings(input: {
 
 export function startSlotManager(_client: Client): void {
   async function tick() {
+    if (adminServer() === "trio") {
+      await ensureSettingsTable();
+      const saved = await pool.query("SELECT id FROM server_slot_settings WHERE id = $1", [settingsId()]);
+      if (!saved.rows.length) return;
+    }
     const info = await getServerInfo();
     if (!info) return;
     const settings = await getSlotControlSettings();
     const { players, queued } = info;
-    currentSlots = info.maxPlayers || currentSlots || settings.minSlots;
+    let currentSlots = info.maxPlayers || slotsByServer[adminServer()] || settings.minSlots;
+    slotsByServer[adminServer()] = currentSlots;
 
     if (settings.mode === "manual") {
       const target = Math.max(settings.manualSlots, players);
@@ -169,6 +182,8 @@ export function startSlotManager(_client: Client): void {
 
     if (currentSlots < minSlots) await setSlots(minSlots);
     else if (currentSlots > maxSlots && maxSlots >= players) await setSlots(maxSlots);
+
+    currentSlots = slotsByServer[adminServer()] ?? currentSlots;
 
     // Enquanto houver pelo menos 5 pessoas na fila, abre +5 a cada ciclo.
     // Assim, se depois da abertura a fila continuar em 5+, o próximo ciclo
@@ -191,7 +206,15 @@ export function startSlotManager(_client: Client): void {
     }
   }
 
-  setTimeout(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), 10_000);
-  setInterval(() => tick().catch(err => logger.error({ err }, "Slot manager tick error")), INTERVAL);
+  const running = new Set<GuerraFriaServerId>();
+  const runTicks = () => Promise.all((["solo-duo", "trio"] as const).map(server => {
+    if (running.has(server)) return;
+    running.add(server);
+    return withAdminServer(server, () => tick()
+      .catch(err => logger.error({ err, server }, "Slot manager tick error"))
+      .finally(() => running.delete(server)));
+  }));
+  setTimeout(runTicks, 10_000);
+  setInterval(runTicks, INTERVAL);
   logger.info({ defaultMin: DEFAULT_MIN_SLOTS, defaultMax: DEFAULT_MAX_SLOTS, queueThreshold: QUEUE_THRESHOLD, slotIncrement: SLOT_INCREMENT, intervalMs: INTERVAL }, "Slot manager started with persistent queue-threshold control and automatic shrink");
 }
