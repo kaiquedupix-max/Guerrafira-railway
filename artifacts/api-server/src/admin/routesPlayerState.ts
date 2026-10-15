@@ -1,4 +1,4 @@
-import { subscriptionServer } from "../routes/storeOrders.js";
+import { subscriptionServers } from "../routes/storeOrders.js";
 import { adminServer } from "../core/adminServerContext.js";
 import { Router } from "express";
 import { db, boosterLinksTable, modLogsTable, vipSubscriptionsTable } from "@workspace/db";
@@ -29,7 +29,8 @@ router.get("/:steamId", async (req, res) => {
 
   const latestVerification = history.find(x => x.action === "VERIFICAR" || x.action === "REMOVER_VERIFICADO");
   const verified = latestVerification?.action === "VERIFICAR";
-  const scopedVips = await Promise.all(vips.map(async vip => ({ vip, server: await subscriptionServer(vip.source) })));
+  const scopes=await subscriptionServers(vips.map(v=>v.source));
+  const scopedVips = vips.map(vip=>({vip,server:scopes.get(vip.source)}));
   const activeVip = scopedVips.find(x => x.server === adminServer() && new Date(x.vip.expiresAt).getTime() > now)?.vip ?? null;
 
   const latestBanState = history.find(x => x.action === "BAN" || x.action === "PREVENTIVE_BAN" || x.action === "DESBANIR" || x.action === "SYSTEM_UNBAN");

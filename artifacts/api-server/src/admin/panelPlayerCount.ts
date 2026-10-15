@@ -30,10 +30,13 @@ export const panelPlayerCountJs = String.raw`
     for(const v of candidates){ const n=Number(v); if(Number.isFinite(n)&&n>=0) return n; }
     return null;
   }
+  let running=false;
   async function update(){
+    if(running || document.hidden || !$('serverControl')?.classList.contains('active')) return;
+    running=true;
     ensureCards();
     const onlineEl=$('serverPlayersOnline'), joiningEl=$('serverPlayersJoining');
-    if(!onlineEl&&!joiningEl) return;
+    if(!onlineEl&&!joiningEl) {running=false;return;}
     try{
       const d=await getOverview();
       const server=d.server||{}, summary=d.summary||{};
@@ -54,9 +57,9 @@ export const panelPlayerCountJs = String.raw`
       if(detail) detail.textContent='Falha ao consultar';
       const joiningDetail=$('serverJoiningDetail');
       if(joiningDetail) joiningDetail.textContent='Falha ao consultar';
-    }
+    }finally{running=false}
   }
-  const observer=new MutationObserver(()=>{ensureCards();update()});
+  const observer=new MutationObserver(ensureCards);
   document.addEventListener('DOMContentLoaded',()=>{
     observer.observe(document.body,{childList:true,subtree:true});
     update();

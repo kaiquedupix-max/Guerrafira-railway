@@ -25,3 +25,14 @@ export async function subscriptionServer(source:string):Promise<'solo-duo'|'trio
  if(!match)return 'solo-duo';
  return (await storeOrder(Number(match[1])))?.server_id==='trio'?'trio':'solo-duo';
 }
+
+export async function subscriptionServers(sources:string[]):Promise<Map<string,'solo-duo'|'trio'>> {
+ const result=new Map<string,'solo-duo'|'trio'>(),ids:number[]=[];
+ for(const source of new Set(sources)){
+   const scoped=/^purchase:\d+:(solo-duo|trio)$/.exec(source);
+   result.set(source,source==='manual:trio'||scoped?.[1]==='trio'?'trio':'solo-duo');
+   const legacy=/^purchase:(\d+)$/.exec(source);if(legacy)ids.push(Number(legacy[1]));
+ }
+ if(ids.length){await ensureStoreOrders();const {rows}=await pool.query('SELECT payment_id,server_id FROM store_orders WHERE payment_id=ANY($1::int[])',[ids]);for(const row of rows)result.set('purchase:'+row.payment_id,row.server_id==='trio'?'trio':'solo-duo');}
+ return result;
+}

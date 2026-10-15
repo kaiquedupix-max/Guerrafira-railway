@@ -25,7 +25,7 @@ export async function resolveGuerraFriaDisplayNameByStoredName(name: string): Pr
   if (!client || !guildId) return raw;
   const guild = await client.guilds.fetch(guildId).catch(() => null);
   if (!guild) return raw;
-  await guild.members.fetch().catch(() => null);
+  if(!guild.members.cache.size)await guild.members.fetch({limit:100}).catch(() => null);
   const q = raw.toLowerCase();
   const member = guild.members.cache.find(m =>
     m.user.username.toLowerCase() === q ||

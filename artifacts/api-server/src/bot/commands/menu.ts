@@ -90,7 +90,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       const pages = Math.ceil(entries.length / 25);
       page = Math.max(0, Math.min(page, pages - 1));
       const select = new StringSelectMenuBuilder().setCustomId(id("command")).setPlaceholder("Escolha o que você quer fazer").addOptions(
-        entries.slice(page * 25, (page + 1) * 25).map((e, offset) => ({ label: e.label.slice(0, 100), description: (e.path.length ? e.fields.length ? "Selecione e preencha as opções" : "Selecione para abrir" : e.definition.description).slice(0, 100), value: String(page * 25 + offset) })));
+        entries.slice(page * 25, (page + 1) * 25).map((e, offset) => ({ label: ({banir:"Banir jogador • Steam + IP",desbanir:"Desbanir jogador • Steam + IP",banpreventivo:"Bloquear até verificação",kickar:"Expulsar do servidor",mute:"Silenciar jogador",unmute:"Remover silêncio",duo:"Consultar time",listaplayer:"Pesquisar jogadores"}[e.definition.name]||e.label).slice(0, 100), description: (e.path.length ? e.fields.length ? "Selecione e preencha as opções" : "Selecione para abrir" : e.definition.description).slice(0, 100), value: String(page * 25 + offset) })));
       await interaction.editReply({ content: `**Guerra Fria • Menu do bot**\nEscolha uma função. Página ${page + 1}/${pages}.\nAs funções disponíveis seguem as permissões dos seus cargos.`, embeds: [], components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select), row(button(id("prev"), "Anterior").setDisabled(page === 0), button(id("next"), "Próxima").setDisabled(page === pages - 1), cancel)] });
       const chosen = await wait();
       if (chosen.customId === id("cancel")) { await chosen.update({ content: "Menu fechado.", components: [] }); return; }

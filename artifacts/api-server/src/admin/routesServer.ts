@@ -1,4 +1,5 @@
-import {adminServer} from "../core/adminServerContext.js";
+import { cachedRead } from "../core/readCache.js";
+import {adminServer,withAdminServer} from "../core/adminServerContext.js";
 import { Router } from "express";
 import { executeRconCommand, getOnlinePlayers, getServerInfo } from "../bot/utils/rcon.js";
 import { ActionError, executeRconRequired } from "../core/systemActions.js";
@@ -20,9 +21,13 @@ type CatalogItem={id:number;shortname:string;name:string;category?:string;stack?
 const itemCaches:Record<string,{items:CatalogItem[];at:number}>={"solo-duo":{items:[],at:0},trio:{items:[],at:0}};
 type RestartWarning={timer:ReturnType<typeof setTimeout>;executeAt:number;requestedBy:string};
 const restarts:Record<string,RestartWarning|null>={"solo-duo":null,trio:null};
-let telemetry={rxMbps:0,txMbps:0,baselineRxMbps:0,suspected:false,consecutiveSpikes:0,normalSamples:0,thresholdMbps:Number(process.env.DDOS_ALERT_MBPS)||50,updatedAt:0};
+function createTelemetry(){
+const telemetry={rxMbps:0,txMbps:0,baselineRxMbps:0,suspected:false,consecutiveSpikes:0,normalSamples:0,thresholdMbps:Number(process.env.DDOS_ALERT_MBPS)||50,updatedAt:0};
 let previousNetwork:{at:number;rx:number;tx:number}|null=null;
 let lastResource:Awaited<ReturnType<typeof getHostResourceSnapshot>>|null=null;
+
+return {telemetry,get previousNetwork(){return previousNetwork},set previousNetwork(value){previousNetwork=value},get lastResource(){return lastResource},set lastResource(value){lastResource=value}};}
+const samples={"solo-duo":createTelemetry(),trio:createTelemetry()};
 
 const powerActor = (res: any) => ({
   id: String(res.locals.admin?.userId || "ADMIN_PANEL"),
@@ -33,8 +38,9 @@ async function restartWarning(message: string): Promise<void> {
 }
 
 async function sampleTelemetry():Promise<void>{
+  const sample=samples[adminServer()],telemetry=sample.telemetry;let {previousNetwork}=sample;
   try{
-    const current=await getHostResourceSnapshot(),now=Date.now();lastResource=current;
+    const current=await getHostResourceSnapshot(),now=Date.now();sample.lastResource=current;
     if(previousNetwork&&now>previousNetwork.at&&current.networkRxBytes>=previousNetwork.rx&&current.networkTxBytes>=previousNetwork.tx){
       const seconds=(now-previousNetwork.at)/1000;
       telemetry.rxMbps=(current.networkRxBytes-previousNetwork.rx)*8/seconds/1_000_000;
@@ -46,13 +52,18 @@ async function sampleTelemetry():Promise<void>{
       if(!telemetry.suspected&&telemetry.consecutiveSpikes>=3){telemetry.suspected=true;void notifySubscribedAdmins({kind:"system",title:"Possível ataque de rede",message:`Tráfego de entrada anormal: ${telemetry.rxMbps.toFixed(1)} Mbps. Verifique a proteção DDoS da hospedagem.`,severity:"critical"}).catch(()=>{})}
       if(telemetry.suspected&&telemetry.normalSamples>=6)telemetry.suspected=false;
     }
-    previousNetwork={at:now,rx:current.networkRxBytes,tx:current.networkTxBytes};telemetry.updatedAt=now;
+    sample.previousNetwork={at:now,rx:current.networkRxBytes,tx:current.networkTxBytes};telemetry.updatedAt=now;
   }catch{}
 }
-setTimeout(()=>sampleTelemetry().catch(()=>{}),1_000);setInterval(()=>sampleTelemetry().catch(()=>{}),10_000);
+const sampleServers=()=>{for(const server of ["solo-duo","trio"] as const)void withAdminServer(server,()=>cachedRead("telemetry-sample",sampleTelemetry,9000,0)).catch(()=>{});};
+setTimeout(sampleServers,1000).unref();setInterval(sampleServers,10000).unref();
 
 router.get("/power/status", async (_req, res) => {
-  try { if(adminServer()==="solo-duo"&&!lastResource)await sampleTelemetry();const resource=adminServer()==="trio"?await getHostResourceSnapshot():lastResource||await getHostResourceSnapshot();res.json({ state: resource.state,uptime:resource.uptime,network:{rxMbps:adminServer()==="trio"?null:telemetry.rxMbps,txMbps:adminServer()==="trio"?null:telemetry.txMbps,rxBytes:resource.networkRxBytes,txBytes:resource.networkTxBytes},security:{status:adminServer()==="trio"?"unavailable":telemetry.suspected?"suspected":"normal",thresholdMbps:Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8),updatedAt:telemetry.updatedAt,note:"Detector de anomalia local; a confirmação de DDoS depende da hospedagem."}, scheduledRestart: restarts[adminServer()] ? { executeAt: restarts[adminServer()]!.executeAt, requestedBy: restarts[adminServer()]!.requestedBy } : null }); }
+  try {const sample=samples[adminServer()],telemetry=sample.telemetry;
+    if(!sample.lastResource)await cachedRead("telemetry-sample",sampleTelemetry,9000,0);
+    const resource=sample.lastResource||await getHostResourceSnapshot();
+    res.json({state:resource.state,uptime:resource.uptime,network:{rxMbps:telemetry.rxMbps,txMbps:telemetry.txMbps,rxBytes:resource.networkRxBytes,txBytes:resource.networkTxBytes},security:{status:telemetry.suspected?"suspected":"normal",thresholdMbps:Math.max(telemetry.thresholdMbps,telemetry.baselineRxMbps*8),updatedAt:telemetry.updatedAt,note:"Detector de anomalia por servidor; a confirmação depende da hospedagem."},scheduledRestart:restarts[adminServer()]?{executeAt:restarts[adminServer()]!.executeAt,requestedBy:restarts[adminServer()]!.requestedBy}:null});}
+
   catch (error: any) { res.status(502).json({ error: error?.message || "Não foi possível consultar o servidor." }); }
 });
 
@@ -100,8 +111,8 @@ router.post("/host-files/upload",async(req,res)=>{try{const result=await uploadH
 router.post("/host-files/delete",async(req,res)=>{try{await deleteHostFiles(req.body?.directory,req.body?.files);res.json({ok:true})}catch(error:any){res.status(400).json({error:error?.message||"Não foi possível apagar."})}});
 
 router.get("/online", async (_req, res) => {
-  const [players, info] = await Promise.all([getOnlinePlayers().catch(() => []), getServerInfo().catch(() => null)]);
-  res.json({ players, info });
+  const [players, info] = await Promise.allSettled([getOnlinePlayers(), getServerInfo()]);
+  res.status(players.status==="rejected"&&info.status==="rejected"?503:200).json({players:players.status==="fulfilled"?players.value:[],info:info.status==="fulfilled"?info.value:null,playersAvailable:players.status==="fulfilled"});
 });
 
 router.get("/slot-control", async (_req, res) => {
@@ -183,12 +194,12 @@ router.post("/chat", async (req, res) => {
   const safeMessage = message.replace(/"/g, "'");
 
   const formatted = `<color=red>[Administração]</color> <color=orange>${safeAdmin}:</color> <color=#D8B4FE>${safeMessage}</color>`;
-  addModeratorChat(`Administração • ${safeAdmin}`, message);
 
   let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
   if (result === null) result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
 
   if (result === null) return void res.status(503).json({ error: "O RCON não confirmou o envio da mensagem ao jogo." });
+  addModeratorChat(`Administração • ${safeAdmin}`, message);
   res.json({ ok: true, rcon: true });
 });
 router.get("/events", (_req, res) => res.json({ events: getLiveEvents() }));

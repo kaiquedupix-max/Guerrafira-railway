@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+<ItemGroup><PackageReference Include="Newtonsoft.Json" Version="13.0.3" /></ItemGroup>
+<ItemGroup><Compile Include="Stubs.cs" /><Compile Include="Program.cs" /><Compile Include="../../../../rust-plugins/GuerraFriaModeration.cs" /></ItemGroup>
+</Project>
