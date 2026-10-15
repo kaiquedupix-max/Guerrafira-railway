@@ -2,7 +2,7 @@ import { addServerOption, runForCommandServer, serverCommands } from "../core/di
 import { addTrioRconEventHandler } from "./utils/serverRcon.js";
 import { adminServer, withAdminServer } from "../core/adminServerContext.js";
 import { startNetworkStatus, handleStatusConnectButton } from "./networkStatus.js";
-import { activeBan, executeRconRequired } from "../core/systemActions.js";
+import { activeBan, executeRconRequired, startNetworkBanSync } from "../core/systemActions.js";
 import { removeRustBan } from "../core/rustUnban.js";
 import { redirectVipToWebsite } from "./vipWebLinks.js";
 import {
@@ -118,6 +118,7 @@ menuCommand.configureMenu([...commands.values(), {
 ajudaCommand.configureHelp([...commands.values()].map(command => command.data.toJSON()));
 
 export async function startBot(): Promise<void> {
+  startNetworkBanSync();
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) { logger.warn("DISCORD_BOT_TOKEN not set — bot will not start"); return; }
   const intents = [
@@ -336,7 +337,7 @@ function startBanExpiryChecker(client: Client): void {
       await db.insert(modLogsTable).values({ serverId: ban.serverId, action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema" });
       const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
       if (logChannelId) { const ch = await client.channels.fetch(logChannelId).catch(() => null) as TextChannel | null; if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed({ playerName: ban.playerName ?? "Desconhecido", steamId: ban.steamId, originalReason: ban.reason ?? "—", duration: "temporário" })] }); }
-      });
+      }).catch(error => logger.error({ error, steamId: ban.steamId, server: ban.serverId }, "Ban expiry pending; retrying next cycle"));
     }
   }
   setInterval(() => check().catch(err => logger.error({ err }, "Ban expiry check error")), 60_000);
