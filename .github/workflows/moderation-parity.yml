@@ -7,6 +7,8 @@ on:
       - 'artifacts/api-server/src/**'
       - 'artifacts/api-server/tests/**'
       - 'lib/db/**'
+      - 'nixpacks.toml'
+      - 'package.json'
       - 'rust-plugins/GuerraFriaModeration.cs'
       - 'artifacts/api-server/assets/**'
       - '.github/workflows/moderation-parity.yml'
@@ -31,9 +33,26 @@ jobs:
           --health-retries 12
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Nixpacks Node plan despite C# plugin tests
+        run: |
+          curl -fsSL https://github.com/railwayapp/nixpacks/releases/download/v1.41.0/nixpacks-v1.41.0-x86_64-unknown-linux-musl.tar.gz -o /tmp/nixpacks.tar.gz
+          mkdir -p /tmp/gf-nixpacks
+          tar -xzf /tmp/nixpacks.tar.gz -C /tmp/gf-nixpacks
+          /tmp/gf-nixpacks/nixpacks plan . --format json > /tmp/gf-build-plan.json
+          python3 - <<'PYTHON'
+          import json
+          plan=json.load(open('/tmp/gf-build-plan.json'))
+          setup=json.dumps(plan['phases']['setup'])
+          install=' '.join(plan['phases']['install']['cmds'])
+          assert 'nodejs_22' in setup, setup
+          assert 'dotnet' not in setup, setup
+          assert 'pnpm-10_x' in setup or '10.11.0' in install, (setup, install)
+          assert '--prod=false' in install, install
+          print('Nixpacks selects Node 22 and pnpm 10; development dependencies included')
+          PYTHON
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.11.0
       - uses: actions/setup-node@v4
         with:
           node-version: 22

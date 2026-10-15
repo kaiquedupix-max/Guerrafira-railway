@@ -1,8 +1,10 @@
-[phases.setup]
-nixPkgs = ["nodejs_20", "nodePackages.pnpm"]
+providers = ["node"]
+
+[variables]
+NIXPACKS_NODE_VERSION = "22"
 
 [phases.install]
-cmds = ["pnpm install --no-frozen-lockfile"]
+cmds = ["pnpm install --frozen-lockfile --prod=false"]
 
 [phases.build]
 cmds = [
