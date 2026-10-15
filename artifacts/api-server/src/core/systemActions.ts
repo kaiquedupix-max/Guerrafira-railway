@@ -1,4 +1,4 @@
-import { adminServer } from "./adminServerContext.js";
+import { adminServer, withAdminServer } from "./adminServerContext.js";
 import { getPlayerBySteamId } from "../bot/utils/players.js";
 import { getOnlinePlayers } from "../bot/utils/rcon.js";
 import { EmbedBuilder } from "discord.js";
@@ -75,13 +75,13 @@ async function sendGameModerationNotice(command: string, steamId: string, type: 
   });
 }
 
-export async function banPlayer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string; evidenceUrl?: string; skipRcon?: boolean; association?: { steamId: string; playerName: string } }) {
+async function banPlayerOnServer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string; evidenceUrl?: string; skipRcon?: boolean; expiresAtOverride?: Date | null; association?: { steamId: string; playerName: string } }) {
   const row = await player(input.steamId);
   const name = safe(input.playerName || row?.playerName || `Jogador offline (${input.steamId})`, 100);
   const reason = safe(input.reason);
   if (!reason) throw new ActionError("Motivo obrigatório.");
   const days = input.duration === "3d" ? 3 : input.duration === "7d" ? 7 : input.duration === "30d" ? 30 : 0;
-  const expiresAt = days ? new Date(Date.now() + days * 86400000) : null;
+  const expiresAt = input.expiresAtOverride !== undefined ? input.expiresAtOverride : days ? new Date(Date.now() + days * 86400000) : null;
   const evidenceUrl = String(input.evidenceUrl || "").trim();
 
   if (!input.skipRcon) {
@@ -125,9 +125,9 @@ export async function banPlayer(input: { steamId: string; duration: BanDuration;
   return { playerName: name, expiresAt, gameNotified };
 }
 
-export async function preventiveBanPlayer(input: { steamId: string; reason: string; actor: ActionActor; playerName?: string }) {
+async function preventiveBanOnServer(input: { steamId: string; reason: string; actor: ActionActor; playerName?: string }) {
   const current = await activeBan(input.steamId);
-  if (current) throw new ActionError("Este jogador já possui um banimento ativo.", 409);
+  if (current) return { playerName: current.playerName, expiresAt: current.banExpiresAt, gameNotified: true, preventive: current.action === "PREVENTIVE_BAN" };
   const row = await player(input.steamId);
   const name = safe(input.playerName || row?.playerName || `Jogador offline (${input.steamId})`, 100);
   const reason = safe(input.reason);
@@ -174,7 +174,7 @@ export async function activeBan(steamId: string) {
   return state?.action === "BAN" || state?.action === "PREVENTIVE_BAN" ? state : null;
 }
 
-export async function unbanPlayer(input: { steamId: string; reason: string; actor: ActionActor }) {
+async function unbanPlayerOnServer(input: { steamId: string; reason: string; actor: ActionActor }) {
   const ban = await activeBan(input.steamId);
   // A ban applied through Rust or a plugin may have no local audit entry.
   const row = await player(input.steamId);
@@ -242,4 +242,118 @@ export async function unverifyPlayer(input: { steamId: string; discordUserId?: s
     throw new ActionError("Não foi possível remover o cargo no Discord; a alteração no Rust foi revertida.", 503);
   }
   await db.insert(modLogsTable).values({ serverId: adminServer(), action: "REMOVER_VERIFICADO", steamId: input.steamId, playerName: row?.playerName || input.steamId, reason: input.discordUserId ? `Discord: ${input.discordUserId}` : "Remoção administrativa", adminId: input.actor.id, adminName: input.actor.name });
+}
+
+type NetworkBanKind = "ban" | "preventive" | "unban";
+type NetworkBanInput = {
+  steamId: string; reason: string; actor: ActionActor; playerName?: string;
+  duration?: BanDuration; evidenceUrl?: string; skipRcon?: boolean;
+  association?: { steamId: string; playerName: string };
+  expiresAtOverride?: Date | null;
+};
+const networkBanActions = ["BAN", "PREVENTIVE_BAN", "DESBANIR", "SYSTEM_UNBAN", "BAN_SYNC_PENDING", "UNBAN_SYNC_PENDING"];
+
+async function applyNetworkBanAction(kind: NetworkBanKind, input: NetworkBanInput) {
+  if (kind === "unban") return unbanPlayerOnServer(input);
+  if (kind === "preventive") return preventiveBanOnServer(input);
+  return banPlayerOnServer({ ...input, duration: input.duration || "perm" });
+}
+
+
+const networkBanLocks = new Map<string, Promise<unknown>>();
+async function withNetworkBanLock<T>(steamId: string, run: () => Promise<T>): Promise<T> {
+  const previous = networkBanLocks.get(steamId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(run);
+  networkBanLocks.set(steamId, next);
+  try { return await next; }
+  finally { if (networkBanLocks.get(steamId) === next) networkBanLocks.delete(steamId); }
+}
+
+async function networkBanActionUnlocked(kind: NetworkBanKind, input: NetworkBanInput) {
+  if (!steamRe.test(input.steamId)) throw new ActionError("SteamID inválido.");
+  if (!safe(input.reason)) throw new ActionError("Motivo obrigatório.");
+  const origin = adminServer();
+  const expiresAt = kind === "ban" && input.duration !== "perm"
+    ? new Date(Date.now() + (input.duration === "3d" ? 3 : input.duration === "7d" ? 7 : 30) * 86400000) : null;
+  const shared = { ...input, reason: safe(input.reason), expiresAtOverride: expiresAt };
+  const servers = ["solo-duo", "trio"] as const;
+  const outcomes = await Promise.allSettled(servers.map(server => withAdminServer(server, () =>
+    applyNetworkBanAction(kind, { ...shared, skipRcon: server === origin && input.skipRcon === true })
+  )));
+  const failed: string[] = [];
+  for (let i = 0; i < servers.length; i++) {
+    const outcome = outcomes[i];
+    if (outcome.status === "fulfilled") continue;
+    const server = servers[i];
+    // A preventive ban already confirmed on this server needs no retry.
+    if (kind === "preventive" && outcome.reason instanceof ActionError && outcome.reason.status === 409) continue;
+    failed.push(server === "trio" ? "Trio" : "Solo/Duo");
+    await db.insert(modLogsTable).values({
+      serverId: server, action: kind === "unban" ? "UNBAN_SYNC_PENDING" : "BAN_SYNC_PENDING",
+      steamId: input.steamId, playerName: safe(input.playerName || input.steamId, 100),
+      reason: JSON.stringify({ kind, input: { ...shared, skipRcon: false } }),
+      adminId: input.actor.id, adminName: input.actor.name,
+      banDuration: input.duration || "perm", banExpiresAt: expiresAt, publicVisible: false,
+    });
+    logger.error({ error: outcome.reason, server, steamId: input.steamId, kind }, "Network ban action queued for retry");
+  }
+  if (failed.length) throw new ActionError(
+    "Ação ainda não confirmada em " + failed.join(" e ") + ". Os servidores que responderam já foram atualizados; a sincronização pendente será repetida automaticamente.", 503);
+  const result = outcomes.find(x => x.status === "fulfilled");
+  if (!result || result.status !== "fulfilled") throw new ActionError("Nenhum servidor confirmou a ação.", 503);
+  return { ...result.value, servers: [...servers] };
+}
+
+async function networkBanAction(kind: NetworkBanKind, input: NetworkBanInput) {
+  return withNetworkBanLock(input.steamId, () => networkBanActionUnlocked(kind, input));
+}
+
+export async function banPlayer(input: Parameters<typeof banPlayerOnServer>[0]) {
+  return networkBanAction("ban", input) as Promise<Awaited<ReturnType<typeof banPlayerOnServer>> & { servers: string[] }>;
+}
+export async function preventiveBanPlayer(input: Parameters<typeof preventiveBanOnServer>[0]) {
+  return networkBanAction("preventive", input) as Promise<Awaited<ReturnType<typeof preventiveBanOnServer>> & { servers: string[] }>;
+}
+export async function unbanPlayer(input: Parameters<typeof unbanPlayerOnServer>[0]) {
+  return networkBanAction("unban", input) as Promise<Awaited<ReturnType<typeof unbanPlayerOnServer>> & { servers: string[] }>;
+}
+
+let syncingNetworkBans = false;
+export async function syncPendingNetworkBans(): Promise<void> {
+  if (syncingNetworkBans) return;
+  syncingNetworkBans = true;
+  try {
+    const pending = await db.select().from(modLogsTable)
+      .where(inArray(modLogsTable.action, ["BAN_SYNC_PENDING", "UNBAN_SYNC_PENDING"]))
+      .orderBy(desc(modLogsTable.id)).limit(200);
+    for (const job of pending) {
+      try {
+        await withNetworkBanLock(job.steamId, () => withAdminServer(job.serverId === "trio" ? "trio" : "solo-duo", async () => {
+          const [latest] = await db.select().from(modLogsTable).where(and(
+            eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.steamId, job.steamId),
+            inArray(modLogsTable.action, networkBanActions),
+          )).orderBy(desc(modLogsTable.id)).limit(1);
+          if (latest?.id === job.id) {
+            const payload = JSON.parse(job.reason || "{}") as { kind: NetworkBanKind; input: NetworkBanInput };
+            if (!["ban", "preventive", "unban"].includes(payload.kind) || payload.input?.steamId !== job.steamId)
+              throw new Error("Invalid network ban retry payload");
+            const expiresAt = job.banExpiresAt ? new Date(job.banExpiresAt) : null;
+            if (payload.kind === "ban" && expiresAt && expiresAt.getTime() <= Date.now()) {
+              await unbanPlayerOnServer({ ...payload.input, reason: "Banimento temporário expirado durante sincronização" });
+            } else {
+              await applyNetworkBanAction(payload.kind, { ...payload.input, skipRcon: false, expiresAtOverride: expiresAt });
+            }
+          }
+          await db.update(modLogsTable).set({ action: "BAN_SYNC_DONE" }).where(eq(modLogsTable.id, job.id));
+        }));
+      } catch (error) { logger.warn({ error, steamId: job.steamId, server: job.serverId }, "Network ban sync will retry"); }
+    }
+  } finally { syncingNetworkBans = false; }
+}
+let networkBanSyncStarted = false;
+export function startNetworkBanSync(): void {
+  if (networkBanSyncStarted) return;
+  networkBanSyncStarted = true;
+  void syncPendingNetworkBans().catch(error => logger.error({ error }, "Network ban sync failed"));
+  setInterval(() => { void syncPendingNetworkBans().catch(error => logger.error({ error }, "Network ban sync failed")); }, 30_000).unref();
 }

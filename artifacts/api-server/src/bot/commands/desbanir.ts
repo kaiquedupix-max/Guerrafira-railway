@@ -1,4 +1,3 @@
-import { adminServer } from "../../core/adminServerContext.js";
 import {
   SlashCommandBuilder,
   PermissionFlagsBits,
@@ -6,7 +5,7 @@ import {
   type ChatInputCommandInteraction,
   type AutocompleteInteraction,
 } from "discord.js";
-import { desc, inArray, and, eq } from "drizzle-orm";
+import { desc, inArray } from "drizzle-orm";
 import { db, modLogsTable } from "@workspace/db";
 import { ActionError, unbanPlayer } from "../../core/systemActions.js";
 
@@ -24,7 +23,7 @@ async function moderationActor(interaction: ChatInputCommandInteraction) {
 
 async function getBannedPlayers(query: string) {
   const history = await db.select().from(modLogsTable)
-    .where(and(eq(modLogsTable.serverId, adminServer()), inArray(modLogsTable.action, ["BAN", "PREVENTIVE_BAN", "SYSTEM_UNBAN", "DESBANIR"])))
+    .where(inArray(modLogsTable.action, ["BAN", "PREVENTIVE_BAN", "SYSTEM_UNBAN", "DESBANIR"]))
     .orderBy(desc(modLogsTable.createdAt), desc(modLogsTable.id));
   const latestState = new Map<string, typeof history[0]>();
   for (const row of history) if (!latestState.has(row.steamId)) latestState.set(row.steamId, row);
@@ -63,7 +62,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       reason: interaction.options.getString("motivo", true),
       actor: await moderationActor(interaction),
     });
-    await interaction.editReply(`✅ **${result.playerName}** foi desbanido com confirmação do servidor.`);
+    await interaction.editReply(`✅ **${result.playerName}** foi desbanido no **Duo e Trio**, com confirmação dos dois servidores.`);
   } catch (error) {
     await interaction.editReply(`❌ ${error instanceof ActionError ? error.message : "Falha interna ao desbanir."}`);
   }

@@ -43,7 +43,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       reason: interaction.options.getString("motivo", true),
       actor: await moderationActor(interaction),
     });
-    await interaction.editReply(`🛡️ **${result.playerName}** foi banido preventivamente.\nO bloqueio permanece até revisão manual. Ao tentar entrar, o jogador será orientado a acessar **discord.gg/guerrafria** e abrir um ticket para **verificação**.`);
+    await interaction.editReply(`🛡️ **${result.playerName}** foi banido preventivamente no **Duo e Trio**.\nO bloqueio permanece até revisão manual. Ao tentar entrar, o jogador será orientado a acessar **discord.gg/guerrafria** e abrir um ticket para **verificação**.`);
   } catch (error) {
     await interaction.editReply(`❌ ${error instanceof ActionError ? error.message : "Falha interna ao aplicar o banimento preventivo."}`);
   }
