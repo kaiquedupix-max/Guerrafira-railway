@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 const child = spawn(process.execPath, ["artifacts/api-server/dist/index.mjs"], {
- env: { ...process.env, PORT: "3210", DISCORD_BOT_TOKEN: "", DUO_STATUS_BOT_TOKEN: "", TRIO_STATUS_BOT_TOKEN: "", TRIO_DISCORD_BOT_TOKEN: "" },
+ env: { ...process.env, PORT: "3210", NODE_ENV: process.env.NODE_ENV || "production", DISCORD_BOT_TOKEN: "", DUO_STATUS_BOT_TOKEN: "", TRIO_STATUS_BOT_TOKEN: "", TRIO_DISCORD_BOT_TOKEN: "" },
  stdio: ["ignore", "pipe", "pipe"],
 });
 child.stdout.pipe(process.stdout);

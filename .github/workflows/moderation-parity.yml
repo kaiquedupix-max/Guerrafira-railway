@@ -51,3 +51,8 @@ jobs:
         run: node artifacts/api-server/scripts/startup-smoke.mjs
         env:
           DATABASE_URL: postgresql://postgres:test-password@localhost:5432/guerra_test
+      - name: Start built application with development logging
+        run: node artifacts/api-server/scripts/startup-smoke.mjs
+        env:
+          DATABASE_URL: postgresql://postgres:test-password@localhost:5432/guerra_test
+          NODE_ENV: development

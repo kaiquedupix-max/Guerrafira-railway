@@ -25,20 +25,30 @@ pool.on("error", (error) => {
   console.error("[db] PostgreSQL pool connection error:", error);
 });
 
-// Also migrate on startup: hosts without a pre-deploy hook must not run
-// moderation against an unscoped audit schema. Existing records belong to Duo.
-const migrationClient = await pool.connect();
-try {
-  await migrationClient.query("BEGIN");
-  // Limit only this migration; normal application queries retain their settings.
-  await migrationClient.query("SET LOCAL statement_timeout = '15s'");
-  await migrationClient.query("ALTER TABLE mod_logs ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'");
-  await migrationClient.query("COMMIT");
-} catch (error) {
-  await migrationClient.query("ROLLBACK").catch(() => {});
-  throw error;
-} finally {
-  migrationClient.release();
+// Run explicitly from the application entry point after module initialization.
+// Async database work during imports can stall bundled circular dependencies.
+let schemaReady: Promise<void> | null = null;
+export function ensureDatabaseSchema(): Promise<void> {
+  if (schemaReady) return schemaReady;
+  schemaReady = (async () => {
+    const client = await pool.connect();
+    try {
+      const existing = await client.query(
+        "SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('mod_logs') AND attname = 'server_id' AND NOT attisdropped"
+      );
+      if (existing.rowCount) return;
+      await client.query("BEGIN");
+      await client.query("SET LOCAL statement_timeout = '15s'");
+      await client.query("ALTER TABLE mod_logs ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'");
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  })().catch(error => { schemaReady = null; throw error; });
+  return schemaReady;
 }
 
 export const db = drizzle(pool, { schema });
