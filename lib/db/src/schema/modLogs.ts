@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 
 export const modLogsTable = pgTable("mod_logs", {
   id: serial("id").primaryKey(),
+  serverId: text("server_id").notNull().default("solo-duo"),
   action: text("action").notNull(), // BAN | KICK | VERIFICAR | SYSTEM_UNBAN
   steamId: text("steam_id").notNull(),
   playerName: text("player_name").notNull(),

@@ -1,3 +1,5 @@
+import { addServerOption, runForCommandServer, serverCommands } from "../core/discordServerContext.js";
+import { withAdminServer } from "../core/adminServerContext.js";
 import { startNetworkStatus, handleStatusConnectButton } from "./networkStatus.js";
 import { activeBan, executeRconRequired } from "../core/systemActions.js";
 import { removeRustBan } from "../core/rustUnban.js";
@@ -97,6 +99,14 @@ commands.set(wipeCommand.data.name, wipeCommand);
 commands.set(testeftpCommand.data.name, testeftpCommand);
 commands.set(enviarjsonCommand.data.name, enviarjsonCommand);
 commands.set(wipedatasCommand.data.name, wipedatasCommand);
+for (const [name, command] of commands) {
+  if (!serverCommands.has(name)) continue;
+  addServerOption(command.data);
+  commands.set(name, { ...command,
+    execute: interaction => runForCommandServer(interaction, () => command.execute(interaction)),
+    ...(command.autocomplete ? { autocomplete: (interaction: AutocompleteInteraction) => runForCommandServer(interaction, () => command.autocomplete!(interaction)) } : {}),
+  });
+}
 menuCommand.configureMenu([...commands.values(), {
   data: { name: "ticket", toJSON: () => ({ name: "ticket", description: "Abrir um ticket de atendimento" }) },
   execute: async interaction => { await handleTicketCreate(interaction as unknown as Parameters<typeof handleTicketCreate>[0]); },
@@ -312,12 +322,14 @@ function startBanExpiryChecker(client: Client): void {
     const expired = await db.select().from(modLogsTable).where(and(eq(modLogsTable.action, "BAN"), isNotNull(modLogsTable.banExpiresAt), lte(modLogsTable.banExpiresAt, now)));
     if (!expired.length) return;
     for (const ban of expired) {
+      await withAdminServer(ban.serverId === "trio" ? "trio" : "solo-duo", async () => {
       const current = await activeBan(ban.steamId);
-      if (!current || current.id !== ban.id) continue;
+      if (!current || current.id !== ban.id) return;
       await removeRustBan(ban.steamId, executeRconRequired);
-      await db.insert(modLogsTable).values({ action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema" });
+      await db.insert(modLogsTable).values({ serverId: ban.serverId, action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema" });
       const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
       if (logChannelId) { const ch = await client.channels.fetch(logChannelId).catch(() => null) as TextChannel | null; if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed({ playerName: ban.playerName ?? "Desconhecido", steamId: ban.steamId, originalReason: ban.reason ?? "—", duration: "temporário" })] }); }
+      });
     }
   }
   setInterval(() => check().catch(err => logger.error({ err }, "Ban expiry check error")), 60_000);

@@ -1,3 +1,5 @@
+import { adminServer, withAdminServer } from "../../core/adminServerContext.js";
+import { executeRconRequired } from "../../core/systemActions.js";
 import {
   SlashCommandBuilder,
   PermissionFlagsBits,
@@ -22,8 +24,7 @@ async function moderatorName(interaction:ChatInputCommandInteraction):Promise<st
   return member?.displayName?.trim()||interaction.user.globalName?.trim()||interaction.user.username?.trim()||"Administrador";
 }
 async function dispatchRustCommand(command:string):Promise<void>{
-  const pending=executeRconCommand(command);
-  await Promise.race([pending.then(()=>undefined),new Promise<void>(resolve=>setTimeout(resolve,1200))]);
+  await executeRconRequired(command);
 }
 
 export const data=new SlashCommandBuilder()
@@ -50,8 +51,8 @@ export async function execute(interaction:ChatInputCommandInteraction):Promise<v
     const playerName=safe(player?.playerName||`Jogador (${steamId})`,100);
     const adminName=await moderatorName(interaction);
     await dispatchRustCommand(`unmute ${steamId}`);
-    await db.insert(modLogsTable).values({action:"UNMUTE",steamId,playerName,reason,adminId:interaction.user.id,adminName});
-    void dispatchRustCommand(`say <color=#00FF88>[JOGADOR DESMUTADO]</color> | <color=#FF8800>${safeChat(playerName,80)}</color> teve o mute removido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${safeChat(adminName,60)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason,140)}</color>`);
+    await db.insert(modLogsTable).values({serverId: adminServer(),action:"UNMUTE",steamId,playerName,reason,adminId:interaction.user.id,adminName});
+    void dispatchRustCommand(`say <color=#00FF88>[JOGADOR DESMUTADO]</color> | <color=#FF8800>${safeChat(playerName,80)}</color> teve o mute removido. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${safeChat(adminName,60)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason,140)}</color>`).catch(error => logger.warn({ error }, "Unmute announcement failed"));
     await interaction.editReply(`✅ O mute de **${playerName}** foi removido.\n📝 Motivo: ${reason}`);
   }catch(error){
     logger.error({error},"Unmute command failed");

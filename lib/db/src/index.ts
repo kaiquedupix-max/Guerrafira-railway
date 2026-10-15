@@ -25,6 +25,10 @@ pool.on("error", (error) => {
   console.error("[db] PostgreSQL pool connection error:", error);
 });
 
+// Also migrate on startup: hosts without a pre-deploy hook must not run
+// moderation against an unscoped audit schema. Existing records belong to Duo.
+await pool.query({ text: "ALTER TABLE mod_logs ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'", query_timeout: 15000 });
+
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

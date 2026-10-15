@@ -1,3 +1,5 @@
+import { adminServer, withAdminServer } from "../../core/adminServerContext.js";
+import { executeRconRequired } from "../../core/systemActions.js";
 import {
   SlashCommandBuilder,
   PermissionFlagsBits,
@@ -38,8 +40,7 @@ async function moderatorName(interaction: ChatInputCommandInteraction): Promise<
   return member?.displayName?.trim() || interaction.user.globalName?.trim() || interaction.user.username?.trim() || "Administrador";
 }
 async function dispatchRustCommand(command: string): Promise<void> {
-  const pending = executeRconCommand(command);
-  await Promise.race([pending.then(() => undefined), new Promise<void>(resolve => setTimeout(resolve, 1200))]);
+  await executeRconRequired(command);
 }
 
 let expiryWorkerStarted = false;
@@ -52,13 +53,15 @@ export function startMuteExpiryChecker(): void {
         eq(modLogsTable.action, "MUTE"), isNotNull(modLogsTable.banExpiresAt), lte(modLogsTable.banExpiresAt, new Date()),
       )).orderBy(desc(modLogsTable.id)).limit(100);
       for (const mute of expired) {
+        await withAdminServer(mute.serverId === "trio" ? "trio" : "solo-duo", async () => {
         const [newer] = await db.select({ id: modLogsTable.id, action: modLogsTable.action }).from(modLogsTable).where(and(
-          eq(modLogsTable.steamId, mute.steamId), gt(modLogsTable.id, mute.id), inArray(modLogsTable.action, ["MUTE", "UNMUTE", "SYSTEM_UNMUTE"]),
+          eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.steamId, mute.steamId), gt(modLogsTable.id, mute.id), inArray(modLogsTable.action, ["MUTE", "UNMUTE", "SYSTEM_UNMUTE"]),
         )).orderBy(desc(modLogsTable.id)).limit(1);
-        if (newer) continue;
+        if (newer) return;
         await dispatchRustCommand(`unmute ${mute.steamId}`);
-        await db.insert(modLogsTable).values({ action: "SYSTEM_UNMUTE", steamId: mute.steamId, playerName: mute.playerName, reason: "Tempo do mute encerrado automaticamente", adminId: "system", adminName: "Sistema Guerra Fria", publicVisible: false });
-        logger.info({ steamId: mute.steamId }, "Timed mute expired and native Rust unmute dispatched");
+        await db.insert(modLogsTable).values({serverId: adminServer(), action: "SYSTEM_UNMUTE", steamId: mute.steamId, playerName: mute.playerName, reason: "Tempo do mute encerrado automaticamente", adminId: "system", adminName: "Sistema Guerra Fria", publicVisible: false });
+        logger.info({ steamId: mute.steamId, serverId: mute.serverId }, "Timed mute expired and native Rust unmute confirmed");
+        });
       }
     } catch (error) { logger.error({ error }, "Mute expiry checker failed"); }
   };
@@ -96,8 +99,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const adminName = await moderatorName(interaction);
     const expiresAt = new Date(Date.now() + durationMs(duration));
     await dispatchRustCommand(`mute ${steamId}`);
-    await db.insert(modLogsTable).values({ action: "MUTE", steamId, playerName, reason: `${reason} | Duração: ${duration}`, adminId: interaction.user.id, adminName, banDuration: duration, banExpiresAt: expiresAt });
-    void dispatchRustCommand(`say <color=#FFB000>[JOGADOR MUTADO]</color> | <color=#FF8800>${safeChat(playerName,80)}</color> foi mutado. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${safeChat(adminName,60)}</color> | <color=#FFD166>Tempo:</color> <color=#FFFFFF>${safeChat(durationLabel(duration),40)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason,140)}</color>`);
+    await db.insert(modLogsTable).values({serverId: adminServer(), action: "MUTE", steamId, playerName, reason: `${reason} | Duração: ${duration}`, adminId: interaction.user.id, adminName, banDuration: duration, banExpiresAt: expiresAt });
+    void dispatchRustCommand(`say <color=#FFB000>[JOGADOR MUTADO]</color> | <color=#FF8800>${safeChat(playerName,80)}</color> foi mutado. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${safeChat(adminName,60)}</color> | <color=#FFD166>Tempo:</color> <color=#FFFFFF>${safeChat(durationLabel(duration),40)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason,140)}</color>`).catch(error => logger.warn({ error }, "Mute announcement failed"));
     await interaction.editReply(`✅ **${playerName}** foi mutado por **${durationLabel(duration)}**.\n📝 Motivo: ${reason}`);
   } catch(error) {
     logger.error({ error }, "Mute command failed");

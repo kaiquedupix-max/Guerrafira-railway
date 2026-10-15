@@ -1,4 +1,6 @@
-import { db, playersTable } from "@workspace/db";
+import { adminServer } from "../../core/adminServerContext.js";
+import { getOnlinePlayers } from "./rcon.js";
+import { db, playersTable, modLogsTable } from "@workspace/db";
 import { eq, ilike, desc, count, sql, or } from "drizzle-orm";
 import type { RconPlayer } from "./rcon.js";
 
@@ -26,6 +28,20 @@ export async function setAllOffline(): Promise<void> {
 }
 
 export async function searchPlayers(query: string, limit = 25) {
+  if (adminServer() === "trio") {
+    const q = query.trim().toLowerCase();
+    const [online, history] = await Promise.all([
+      getOnlinePlayers(),
+      db.select().from(modLogsTable).where(eq(modLogsTable.serverId, "trio")).orderBy(desc(modLogsTable.id)).limit(2000),
+    ]);
+    const rows = new Map<string, { id: number; steamId: string; playerName: string; isOnline: boolean; firstSeen: Date; lastSeen: Date }>();
+    for (const row of history) if (/^7656119\d{10}$/.test(row.steamId) && !rows.has(row.steamId)) rows.set(row.steamId, {
+      id: row.id, steamId: row.steamId, playerName: row.playerName, isOnline: false, firstSeen: row.createdAt, lastSeen: row.createdAt,
+    });
+    for (const p of online) rows.set(p.steamId, { id: 0, steamId: p.steamId, playerName: p.name, isOnline: true, firstSeen: new Date(), lastSeen: new Date() });
+    return [...rows.values()].filter(p => !q || p.playerName.toLowerCase().includes(q) || p.steamId.includes(q))
+      .sort((a, b) => Number(b.isOnline) - Number(a.isOnline)).slice(0, limit);
+  }
   const trimmed = query.trim();
 
   if (!trimmed) {
@@ -50,6 +66,7 @@ export async function searchPlayers(query: string, limit = 25) {
 }
 
 export async function getAllPlayers(limit = 25) {
+  if (adminServer() === "trio") return searchPlayers("", limit);
   return db
     .select()
     .from(playersTable)
@@ -58,6 +75,10 @@ export async function getAllPlayers(limit = 25) {
 }
 
 export async function getPlayersPage(query: string, page: number, pageSize = 10) {
+  if (adminServer() === "trio") {
+    const rows = await searchPlayers(query, 1000);
+    return { rows: rows.slice(page * pageSize, (page + 1) * pageSize), total: rows.length };
+  }
   const offset = page * pageSize;
   const trimmed = query.trim();
   const condition = trimmed
@@ -79,6 +100,7 @@ export async function getPlayersPage(query: string, page: number, pageSize = 10)
 }
 
 export async function getPlayerBySteamId(steamId: string) {
+  if (adminServer() === "trio") return (await searchPlayers(steamId, 1)).find(p => p.steamId === steamId) ?? null;
   const [player] = await db
     .select()
     .from(playersTable)

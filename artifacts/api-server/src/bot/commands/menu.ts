@@ -36,7 +36,7 @@ export function menuEntries(available: Command[] = commands): Entry[] {
     const walk = (node: Option, path: string[]) => {
       const children = (node.options ?? []).filter(o => o.type === 1 || o.type === 2);
       if (children.length) for (const child of children) walk(child, [...path, child.name]);
-      else entries.push({ command, definition, path, fields: definition.name === "banir" ? (node.options ?? []).filter(o => o.name === "jogador") : node.options ?? [], label: [definition.name, ...path].join(" ") });
+      else entries.push({ command, definition, path, fields: definition.name === "banir" ? (node.options ?? []).filter(o => o.name === "jogador" || o.name === "servidor") : node.options ?? [], label: [definition.name, ...path].join(" ") });
     };
     walk(definition, []);
   }
@@ -113,7 +113,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         return suggestions;
       };
       let back = false;
-      for (const field of entry.fields) {
+      const fields = [...entry.fields].sort((a, b) => Number(b.name === "servidor") - Number(a.name === "servidor"));
+      for (const field of fields) {
         let complete = false, error = "";
         const searchable = Boolean(field.autocomplete && entry.command.autocomplete);
         let initialSuggestions: { name: string; value: string | number }[] = [];

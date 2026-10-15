@@ -33,7 +33,7 @@ router.post("/grant", async (req, res) => {
 
   const admin = res.locals.admin as { userId: string; username: string };
   const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
-  await db.insert(modLogsTable).values({ action: "VIP_CONCEDER", steamId, playerName: steamId, reason: `VIP ${tier} por ${days} dias`, adminId: admin.userId, adminName });
+  await db.insert(modLogsTable).values({ serverId: adminServer(), action: "VIP_CONCEDER", steamId, playerName: steamId, reason: `VIP ${tier} por ${days} dias`, adminId: admin.userId, adminName });
   res.json({ ok: true });
 });
 
@@ -49,7 +49,7 @@ router.post("/revoke", async (req, res) => {
 
   const admin = res.locals.admin as { userId: string; username: string };
   const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
-  await db.insert(modLogsTable).values({ action: "VIP_REMOVER", steamId: sub.steamId, playerName: sub.steamId, reason: `VIP ${sub.vipTier} removido pelo painel`, adminId: admin.userId, adminName });
+  await db.insert(modLogsTable).values({ serverId: adminServer(), action: "VIP_REMOVER", steamId: sub.steamId, playerName: sub.steamId, reason: `VIP ${sub.vipTier} removido pelo painel`, adminId: admin.userId, adminName });
   res.json({ ok: true });
 });
 

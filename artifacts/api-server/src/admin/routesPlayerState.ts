@@ -1,6 +1,8 @@
+import { subscriptionServer } from "../routes/storeOrders.js";
+import { adminServer } from "../core/adminServerContext.js";
 import { Router } from "express";
 import { db, boosterLinksTable, modLogsTable, vipSubscriptionsTable } from "@workspace/db";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, and } from "drizzle-orm";
 import { ActionError, unverifyPlayer } from "../core/systemActions.js";
 import { requireAdmin } from "./guard.js";
 
@@ -16,7 +18,7 @@ router.get("/:steamId", async (req, res) => {
   const [links, vips, history] = await Promise.all([
     db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId)).limit(1),
     db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.steamId, steamId)).orderBy(desc(vipSubscriptionsTable.expiresAt)),
-    db.select().from(modLogsTable).where(eq(modLogsTable.steamId, steamId)).orderBy(desc(modLogsTable.createdAt)).limit(200),
+    db.select().from(modLogsTable).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.steamId, steamId))).orderBy(desc(modLogsTable.createdAt)).limit(200),
   ]);
 
   const removedWarningIds = new Set(history
@@ -27,7 +29,8 @@ router.get("/:steamId", async (req, res) => {
 
   const latestVerification = history.find(x => x.action === "VERIFICAR" || x.action === "REMOVER_VERIFICADO");
   const verified = latestVerification?.action === "VERIFICAR";
-  const activeVip = vips.find(v => new Date(v.expiresAt).getTime() > now) ?? null;
+  const scopedVips = await Promise.all(vips.map(async vip => ({ vip, server: await subscriptionServer(vip.source) })));
+  const activeVip = scopedVips.find(x => x.server === adminServer() && new Date(x.vip.expiresAt).getTime() > now)?.vip ?? null;
 
   const latestBanState = history.find(x => x.action === "BAN" || x.action === "PREVENTIVE_BAN" || x.action === "DESBANIR" || x.action === "SYSTEM_UNBAN");
   const banned = latestBanState?.action === "BAN" || latestBanState?.action === "PREVENTIVE_BAN";

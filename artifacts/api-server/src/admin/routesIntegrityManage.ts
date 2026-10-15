@@ -1,6 +1,7 @@
+import { adminServer } from "../core/adminServerContext.js";
 import { Router } from "express";
 import { db, modLogsTable } from "@workspace/db";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, and } from "drizzle-orm";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName, resolveGuerraFriaDisplayNameByStoredName } from "./permissions.js";
 import { getSteamProfileSummaries } from "./steamProfiles.js";
@@ -9,7 +10,7 @@ const router = Router();
 router.use(requireAdmin);
 
 router.get("/records", async (_req, res) => {
-  const rows = await db.select().from(modLogsTable).orderBy(desc(modLogsTable.createdAt)).limit(3000);
+  const rows = await db.select().from(modLogsTable).where(eq(modLogsTable.serverId, adminServer())).orderBy(desc(modLogsTable.createdAt)).limit(3000);
   const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
   const steamProfiles = await getSteamProfileSummaries(filtered.map(x => String(x.steamId || "")));
   const adminNames = new Map<string, string>();
@@ -45,16 +46,16 @@ router.post("/records/:id/visibility", async (req, res) => {
   const visible = req.body?.visible === true;
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Registro inválido." });
 
-  const [record] = await db.select().from(modLogsTable).where(eq(modLogsTable.id, id)).limit(1);
+  const [record] = await db.select().from(modLogsTable).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.id, id))).limit(1);
   if (!record || !["WARN", "BAN", "VERIFICAR"].includes(String(record.action || "").toUpperCase())) {
     return res.status(404).json({ error: "Registro público não encontrado." });
   }
 
-  await db.update(modLogsTable).set({ publicVisible: visible }).where(eq(modLogsTable.id, id));
+  await db.update(modLogsTable).set({ publicVisible: visible }).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.id, id)));
 
   const admin = res.locals.admin as { userId: string; username: string };
   const adminName = await getGuerraFriaDisplayName(admin.userId, admin.username);
-  await db.insert(modLogsTable).values({
+  await db.insert(modLogsTable).values({ serverId: adminServer(),
     action: visible ? "PUBLIC_RECORD_RESTORE" : "PUBLIC_RECORD_HIDE",
     steamId: record.steamId,
     playerName: record.playerName,

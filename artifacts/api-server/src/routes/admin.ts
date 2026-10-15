@@ -22,7 +22,7 @@ import seasonUnifiedRegistrationsRoutes from "../admin/routesSeasonRegistrations
 import { requireFinanceAccess } from "../admin/financeGuard.js";
 const router = Router();
 router.use(adminServerMiddleware);
-router.use((req,res,next)=>{if(adminServer()==="trio"&&/^\/(player-state|integrity|leaderboard|moderation)(?:\/|$)/.test(req.path))return void res.status(409).json({error:"Este recurso usa dados exclusivos do Solo/Duo. Selecione Solo/Duo para administrá-lo."});next();});
+router.use((req,res,next)=>{if(adminServer()==="trio"&&/^\/(leaderboard)(?:\/|$)/.test(req.path))return void res.status(409).json({error:"Este recurso usa dados exclusivos do Solo/Duo. Selecione Solo/Duo para administrá-lo."});next();});
 router.use((req, _res, next) => {
   const auth = req.get("authorization") ?? "";
   if (auth.toLowerCase().startsWith("bearer ")) {

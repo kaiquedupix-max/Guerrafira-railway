@@ -1,3 +1,6 @@
+import { adminServer } from "./adminServerContext.js";
+import { getPlayerBySteamId } from "../bot/utils/players.js";
+import { getOnlinePlayers } from "../bot/utils/rcon.js";
 import { EmbedBuilder } from "discord.js";
 import { desc, eq, and, inArray } from "drizzle-orm";
 import { db, modLogsTable, playersTable } from "@workspace/db";
@@ -22,9 +25,14 @@ export async function executeRconRequired(command: string, attempts = 3): Promis
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const result = await executeRconCommand(command);
-      if (result !== null) return result;
+      if (result !== null) {
+        if (/unknown command|command not found|permission denied|not authorized|failed to ban|invalid steam/i.test(result)) {
+          throw new ActionError("O Rust rejeitou o comando. Nenhuma alteração foi registrada.", 503);
+        }
+        return result;
+      }
       last = new Error("RCON retornou sem confirmação");
-    } catch (error) { last = error; }
+    } catch (error) { if (error instanceof ActionError) throw error; last = error; }
     if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, attempt * 600));
   }
   logger.error({ err: last, command: command.split(" ")[0], attempts }, "Critical RCON action failed");
@@ -33,12 +41,12 @@ export async function executeRconRequired(command: string, attempts = 3): Promis
 
 async function player(steamId: string) {
   if (!steamRe.test(steamId)) throw new ActionError("SteamID inválido.");
-  const [row] = await db.select().from(playersTable).where(eq(playersTable.steamId, steamId)).limit(1);
-  return row;
+  return await getPlayerBySteamId(steamId);
 }
 
 async function log(embed: EmbedBuilder) {
-  const client = discordClient(), channelId = process.env.DISCORD_LOG_CHANNEL_ID;
+  embed.addFields({ name: "Servidor", value: adminServer() === "trio" ? "Trio" : "Solo/Duo", inline: true });
+  const client = discordClient(), channelId = (adminServer() === "trio" ? process.env.TRIO_DISCORD_LOG_CHANNEL_ID : undefined) || process.env.DISCORD_LOG_CHANNEL_ID;
   if (!client || !channelId) return;
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (channel?.isSendable()) await channel.send({ embeds: [embed] }).catch(error => logger.error({ error }, "Moderation log delivery failed"));
@@ -87,7 +95,7 @@ export async function banPlayer(input: { steamId: string; duration: BanDuration;
     300
   );
 
-  await db.insert(modLogsTable).values({
+  await db.insert(modLogsTable).values({ serverId: adminServer(),
     action: "BAN",
     steamId: input.steamId,
     playerName: name,
@@ -126,7 +134,7 @@ export async function preventiveBanPlayer(input: { steamId: string; reason: stri
   if (!reason) throw new ActionError("Motivo obrigatório.");
   const connectionMessage = `[BANIMENTO PREVENTIVO] Motivo: ${reason} | Para liberacao: entre em discord.gg/guerrafria e abra um ticket para VERIFICACAO.`;
   await executeRconRequired(`banid ${input.steamId} "${name}" "${connectionMessage}"`);
-  await db.insert(modLogsTable).values({ action: "PREVENTIVE_BAN", steamId: input.steamId, playerName: name, reason, adminId: input.actor.id, adminName: input.actor.name, banDuration: "perm", banExpiresAt: null });
+  await db.insert(modLogsTable).values({ serverId: adminServer(), action: "PREVENTIVE_BAN", steamId: input.steamId, playerName: name, reason, adminId: input.actor.id, adminName: input.actor.name, banDuration: "perm", banExpiresAt: null });
   const preventiveEmbed = new EmbedBuilder().setColor(0xf59e0b).setTitle("🛡️ Banimento preventivo aplicado").setDescription(
     "O jogador foi bloqueado preventivamente e deverá passar por **verificação administrativa** antes de retornar ao servidor."
   ).addFields(
@@ -142,11 +150,13 @@ export async function preventiveBanPlayer(input: { steamId: string; reason: stri
 }
 
 export async function kickPlayer(input: { steamId: string; reason: string; actor: ActionActor }) {
-  const row = await player(input.steamId);
+  await player(input.steamId); // Validate the SteamID before querying Rust.
+  const online = (await getOnlinePlayers()).find(p => p.steamId === input.steamId);
+  const row = online ? { steamId: online.steamId, playerName: online.name, isOnline: true } : null;
   if (!row?.isOnline) throw new ActionError("Jogador offline ou não encontrado.", 409);
   const reason = safe(input.reason); if (!reason) throw new ActionError("Motivo obrigatório.");
-  await executeRconRequired(`kick "${safe(row.playerName, 100)}" "${reason} | Recurso: discord.gg/guerrafria"`);
-  await db.insert(modLogsTable).values({ action: "KICK", steamId: row.steamId, playerName: row.playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
+  await executeRconRequired(`kick ${row.steamId} "${reason} | Recurso: discord.gg/guerrafria"`);
+  await db.insert(modLogsTable).values({ serverId: adminServer(), action: "KICK", steamId: row.steamId, playerName: row.playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
   await log(new EmbedBuilder().setColor(0xf59e0b).setTitle("👢 Jogador expulso").addFields(
     { name: "Jogador", value: row.playerName, inline: true }, { name: "SteamID", value: `\`${row.steamId}\``, inline: true },
     { name: "Motivo", value: reason }, { name: "Responsável", value: actorLabel(input.actor) }
@@ -159,7 +169,7 @@ export async function kickPlayer(input: { steamId: string; reason: string; actor
 
 export async function activeBan(steamId: string) {
   if (!steamRe.test(steamId)) throw new ActionError("SteamID inválido.");
-  const rows = await db.select().from(modLogsTable).where(and(eq(modLogsTable.steamId, steamId), inArray(modLogsTable.action, ["BAN", "PREVENTIVE_BAN", "DESBANIR", "SYSTEM_UNBAN"]))).orderBy(desc(modLogsTable.createdAt), desc(modLogsTable.id)).limit(1);
+  const rows = await db.select().from(modLogsTable).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.steamId, steamId), inArray(modLogsTable.action, ["BAN", "PREVENTIVE_BAN", "DESBANIR", "SYSTEM_UNBAN"]))).orderBy(desc(modLogsTable.createdAt), desc(modLogsTable.id)).limit(1);
   const state = rows.find(x => x.action === "BAN" || x.action === "PREVENTIVE_BAN" || x.action === "DESBANIR" || x.action === "SYSTEM_UNBAN");
   return state?.action === "BAN" || state?.action === "PREVENTIVE_BAN" ? state : null;
 }
@@ -171,7 +181,7 @@ export async function unbanPlayer(input: { steamId: string; reason: string; acto
   const playerName = ban?.playerName || row?.playerName || `Jogador (${input.steamId})`;
   const reason = safe(input.reason); if (!reason) throw new ActionError("Motivo obrigatório.");
   await removeRustBan(input.steamId, executeRconRequired);
-  await db.insert(modLogsTable).values({ action: "DESBANIR", steamId: input.steamId, playerName: playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
+  await db.insert(modLogsTable).values({ serverId: adminServer(), action: "DESBANIR", steamId: input.steamId, playerName: playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
   await log(new EmbedBuilder().setColor(0x22c55e).setTitle("✅ Jogador desbanido").addFields(
     { name: "Jogador", value: playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Tipo anterior", value: ban?.action === "PREVENTIVE_BAN" ? "Banimento preventivo" : "Banimento", inline: true },
@@ -197,8 +207,8 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
   if (!row) throw new ActionError("Jogador não encontrado no histórico.", 404);
   const member = await memberFor(input.discordUserId);
   const roleId = process.env.DISCORD_VERIFIED_ROLE_ID;
-  const add = (process.env.VERIFIED_GAME_ADD_CMD?.trim() || "c.usergroup add {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
-  const remove = (process.env.VERIFIED_GAME_REMOVE_CMD?.trim() || "c.usergroup remove {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const add = ((adminServer() === "trio" ? process.env.TRIO_VERIFIED_GAME_ADD_CMD : process.env.VERIFIED_GAME_ADD_CMD)?.trim() || "c.usergroup add {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const remove = ((adminServer() === "trio" ? process.env.TRIO_VERIFIED_GAME_REMOVE_CMD : process.env.VERIFIED_GAME_REMOVE_CMD)?.trim() || "c.usergroup remove {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
   await executeRconRequired(add);
   try {
     if (roleId && !member.roles.cache.has(roleId)) await member.roles.add(roleId, `Verificado por ${input.actor.name}`);
@@ -206,7 +216,7 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
     await executeRconRequired(remove).catch(() => {});
     throw new ActionError("Não foi possível atribuir o cargo no Discord; a alteração no Rust foi revertida.", 503);
   }
-  await db.insert(modLogsTable).values({ action: "VERIFICAR", steamId: input.steamId, playerName: row.playerName, reason: `Triagem concluída — Discord: ${member.user.tag}`, adminId: input.actor.id, adminName: input.actor.name });
+  await db.insert(modLogsTable).values({ serverId: adminServer(), action: "VERIFICAR", steamId: input.steamId, playerName: row.playerName, reason: `Triagem concluída — Discord: ${member.user.tag}`, adminId: input.actor.id, adminName: input.actor.name });
   const verifyEmbed = new EmbedBuilder().setColor(0x22c55e).setTitle("🛡️ Jogador verificado").addFields(
     { name: "Jogador", value: row.playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
     { name: "Discord", value: `<@${input.discordUserId}>`, inline: true }, { name: "Responsável", value: actorLabel(input.actor) }
@@ -219,8 +229,8 @@ export async function verifyPlayer(input: { steamId: string; discordUserId: stri
 
 export async function unverifyPlayer(input: { steamId: string; discordUserId?: string; actor: ActionActor }) {
   const row = await player(input.steamId);
-  const add = (process.env.VERIFIED_GAME_ADD_CMD?.trim() || "c.usergroup add {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
-  const remove = (process.env.VERIFIED_GAME_REMOVE_CMD?.trim() || "c.usergroup remove {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const add = ((adminServer() === "trio" ? process.env.TRIO_VERIFIED_GAME_ADD_CMD : process.env.VERIFIED_GAME_ADD_CMD)?.trim() || "c.usergroup add {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
+  const remove = ((adminServer() === "trio" ? process.env.TRIO_VERIFIED_GAME_REMOVE_CMD : process.env.VERIFIED_GAME_REMOVE_CMD)?.trim() || "c.usergroup remove {steamid} vr").replace(/^oxide\./i, "c.").replace(/\{steam[Ii][Dd]\}/g, input.steamId);
   await executeRconRequired(remove);
   try {
     if (input.discordUserId && process.env.DISCORD_VERIFIED_ROLE_ID) {
@@ -231,5 +241,5 @@ export async function unverifyPlayer(input: { steamId: string; discordUserId?: s
     await executeRconRequired(add).catch(() => {});
     throw new ActionError("Não foi possível remover o cargo no Discord; a alteração no Rust foi revertida.", 503);
   }
-  await db.insert(modLogsTable).values({ action: "REMOVER_VERIFICADO", steamId: input.steamId, playerName: row?.playerName || input.steamId, reason: input.discordUserId ? `Discord: ${input.discordUserId}` : "Remoção administrativa", adminId: input.actor.id, adminName: input.actor.name });
+  await db.insert(modLogsTable).values({ serverId: adminServer(), action: "REMOVER_VERIFICADO", steamId: input.steamId, playerName: row?.playerName || input.steamId, reason: input.discordUserId ? `Discord: ${input.discordUserId}` : "Remoção administrativa", adminId: input.actor.id, adminName: input.actor.name });
 }

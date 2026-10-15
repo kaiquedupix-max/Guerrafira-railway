@@ -1,0 +1,30 @@
+name: Duo and Trio moderation
+on:
+  push:
+    branches: [fix/trio-moderation-parity]
+  pull_request:
+    paths:
+      - 'artifacts/api-server/src/**'
+      - 'artifacts/api-server/tests/**'
+      - 'lib/db/**'
+      - '.github/workflows/moderation-parity.yml'
+permissions:
+  contents: read
+jobs:
+  moderation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node --test tests/moderation-parity.test.mjs tests/unban-integration.test.mjs tests/ban-panel.test.mjs tests/menu-unban.test.mjs
+        working-directory: artifacts/api-server
+      - run: node build.mjs
+        working-directory: artifacts/api-server
