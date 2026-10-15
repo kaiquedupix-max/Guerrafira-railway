@@ -1,3 +1,4 @@
+import { ensureDatabaseSchema } from "@workspace/db";
 import app from "./appSafe";
 import { logger } from "./lib/logger";
 import { startBot } from "./bot/index";
@@ -16,15 +17,18 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
-
+async function startApplication(): Promise<void> {
+  logger.info("Preparing database schema before starting the application");
+  await ensureDatabaseSchema();
+  await new Promise<void>((resolve, reject) => {
+    const server = app.listen(port, () => resolve());
+    server.once("error", reject);
+  });
   logger.info({ port }, "Server listening");
-});
+  startBot().catch(err => logger.error({ err }, "Discord bot failed to start"));
+}
 
-startBot().catch((err) => {
-  logger.error({ err }, "Discord bot failed to start");
+startApplication().catch(err => {
+  logger.fatal({ err }, "Application startup failed");
+  process.exit(1);
 });
