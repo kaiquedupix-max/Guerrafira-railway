@@ -4,13 +4,14 @@ import { build } from 'esbuild';
 import { writeFile, unlink } from 'node:fs/promises';
 const calls = [];
 globalThis.__banCalls = calls;
-const result = await build({entryPoints:['src/bot/commands/banir.ts'],bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'mock',setup(b){
+const result = await build({stdin:{contents:'export * from "./src/bot/commands/banir.ts";export * from "./src/core/adminServerContext.ts";',resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'mock',setup(b){
  b.onResolve({filter:/players\.js|\.\/duo\.js|systemActions\.js/},a=>({path:a.path,namespace:'mock'}));
- b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path.includes('players')?'export const searchPlayers=async()=>[];':a.path.includes('duo')?'export const getTeamMembers=async()=>[{steamId:"76561190000000001",name:"Principal"},{steamId:"76561190000000002",name:"Duo"},{steamId:"76561190000000002",name:"Duo"}];':'export class ActionError extends Error {};export const banPlayer=async x=>{globalThis.__banCalls.push(x);if(globalThis.__banFail===x.steamId)throw new ActionError("Servidor recusou o ban");return {playerName:x.association?"Duo":"Principal",expiresAt:null,gameNotified:globalThis.__noticeFail!==x.steamId};};'}));
+ b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path.includes('players')?'export const searchPlayers=async()=>[];':a.path.includes('duo')?'export const getTeamMembers=async()=>[{steamId:"76561190000000001",name:"Principal"},{steamId:"76561190000000002",name:"Duo"},{steamId:"76561190000000002",name:"Duo"}];':'export class ActionError extends Error {};export const banPlayer=async x=>{globalThis.__banCalls.push({...x,server:globalThis.__banReadServer()});if(globalThis.__banFail===x.steamId)throw new ActionError("Servidor recusou o ban");return {playerName:x.association?"Duo":"Principal",expiresAt:null,gameNotified:globalThis.__noticeFail!==x.steamId};};'}));
 }}]});
 const file=new URL('./.ban-panel-bundle.mjs',import.meta.url);
 await writeFile(file,result.outputFiles[0].text);
 const command=await import(file.href);await unlink(file);
+globalThis.__banReadServer=()=>command.adminServer();
 async function open(config={}){
  const handlers={},replies=[];
  const collector={on:(name,fn)=>{handlers[name]=fn;},stop(){}};
@@ -54,4 +55,15 @@ test('slash ban only requests the player; reason is visible in the panel',async(
 });
 test('other players can be selected from the roster picker before association bans',async()=>{
  calls.length=0;const panel=await open();await panel.click('ban_panel_choose');assert.match(panel.replies.at(-1).content,/Selecione os outros jogadores/);await panel.select('ban_panel_count','2');await panel.select('ban_panel_members','76561190000000002');await panel.click('ban_panel_back');await panel.click('ban_panel_confirm');assert.equal(calls.length,2);assert.ok(calls[1].association);
+});
+
+test('a delayed ban confirmation keeps the Trio team selection context',async()=>{
+ calls.length=0;
+ const panel=await command.withAdminServer('trio',()=>open({count:'2',members:'76561190000000002'}));
+ assert.equal(command.adminServer(),'solo-duo');
+ await panel.click('ban_panel_roster');
+ await panel.click('ban_panel_confirm');
+ assert.equal(calls.length,2);
+ assert.ok(calls.every(call=>call.server==='trio'));
+ assert.equal(command.adminServer(),'solo-duo');
 });

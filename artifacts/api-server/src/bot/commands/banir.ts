@@ -1,3 +1,4 @@
+import { adminServer, withAdminServer } from "../../core/adminServerContext.js";
 import {
   SlashCommandBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
@@ -140,12 +141,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       menu("ban_panel_team", "Duo/time", [{ label: "Banir duo/time por associação", value: "sim" }, { label: "Somente o jogador", value: "nao" }], selection.shouldBanDuo ? "sim" : "nao"),
       menu("ban_panel_team_duration", "Duração por associação", durations, selection.associationDuration),
     ]),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ban_panel_choose").setLabel("Escolher jogadores").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId("ban_panel_details").setLabel("Detalhes do motivo").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId("ban_panel_confirm").setLabel("Confirmar banimento").setStyle(ButtonStyle.Danger).setDisabled((selection.reasonKey === "team_limit" || selection.shouldBanDuo) && !selection.teamMembers), new ButtonBuilder().setCustomId("ban_panel_cancel").setLabel("Cancelar").setStyle(ButtonStyle.Secondary))
+    new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("ban_panel_choose").setLabel("Escolher jogadores").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId("ban_panel_details").setLabel("Detalhes do motivo").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId("ban_panel_confirm").setLabel("Banir no Duo e Trio").setStyle(ButtonStyle.Danger).setDisabled((selection.reasonKey === "team_limit" || selection.shouldBanDuo) && !selection.teamMembers), new ButtonBuilder().setCustomId("ban_panel_cancel").setLabel("Cancelar").setStyle(ButtonStyle.Secondary))
   ] });
   const message = await interaction.editReply(panel());
   const collector = message.createMessageComponentCollector({ time: 300000, filter: i => i.user.id === interaction.user.id && i.customId.startsWith("ban_panel_") });
   let finished = false;
-  collector.on("collect", async i => {
+  const selectedServer = adminServer();
+  collector.on("collect", async i => withAdminServer(selectedServer, async () => {
     try {
       if (finished) { await i.deferUpdate(); return; }
       if (i.customId === "ban_panel_choose") {
@@ -204,7 +206,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     } catch {
       await interaction.editReply({ content: "❌ Falha no painel. Consulte os registros antes de tentar novamente.", components: [] }).catch(() => {});
     }
-  });
+  }));
   collector.on("end", () => { if (!finished) interaction.editReply({ content: "Painel expirado. Execute /banir novamente.", components: [] }).catch(() => {}); });
 }
 async function applyBan(interaction: ChatInputCommandInteraction, selection: BanSelection): Promise<void> {
@@ -292,7 +294,7 @@ async function applyBan(interaction: ChatInputCommandInteraction, selection: Ban
             (associatedFailed.length ? `\n⚠️ Falhas: ${associatedFailed.join(" | ")}` : "");
 
     await interaction.editReply(
-      `✅ **${result.playerName}** foi banido com confirmação do servidor.${expiry}\n📝 Motivo: **${reason}**${associationStatus}`
+      `✅ **${result.playerName}** foi banido no **Duo e Trio**, com confirmação dos dois servidores.${expiry}\n📝 Motivo: **${reason}**${associationStatus}`
     );
   } catch (error) {
     await interaction.editReply(

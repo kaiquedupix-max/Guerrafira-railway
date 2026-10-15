@@ -40,7 +40,7 @@ export const panelModerationParityJs = String.raw`
         preventiveBtn.onclick=async()=>{
           const reason=(document.getElementById('actReason')?.value||'').trim();
           if(!reason)return toast('Informe o motivo do banimento preventivo.',true);
-          if(!confirm('Aplicar BANIMENTO PREVENTIVO neste jogador?\n\nEle ficará bloqueado até abrir um ticket e passar por verificação.'))return;
+          if(!confirm('Aplicar BANIMENTO PREVENTIVO neste jogador no Duo e no Trio?\n\nEle ficará bloqueado até abrir um ticket e passar por verificação.'))return;
           preventiveBtn.disabled=true;preventiveBtn.textContent='Aplicando preventivo...';
           try{
             await post('/api/admin/moderation/preventive-ban',{steamId,reason});
@@ -89,7 +89,7 @@ export const panelModerationParityJs = String.raw`
       banBtn.onclick=async()=>{
         const reason=(document.getElementById('actReason')?.value||'').trim();
         if(!reason)return toast('Informe o motivo do desbanimento.',true);
-        if(!confirm('Remover o banimento deste jogador?'))return;
+        if(!confirm('Remover o banimento deste jogador no Duo e no Trio?'))return;
         banBtn.disabled=true;banBtn.textContent='Desbanindo...';
         try{
           await post('/api/admin/moderation/unban',{steamId,reason});
