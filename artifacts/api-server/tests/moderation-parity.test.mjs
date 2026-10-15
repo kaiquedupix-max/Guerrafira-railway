@@ -21,12 +21,12 @@ const built = await build({ stdin: {
  resolveDir: process.cwd(), loader: "ts",
 }, bundle: true, platform: "node", format: "esm", packages: "external", write: false,
  plugins: [{name:"moderation-adapters",setup(b){
- b.onResolve({filter:/^@workspace\/db$|bot\/client\.js|utils\/rcon\.js|utils\/players\.js|admin\/steamProfiles\.js|lib\/logger\.js/},a=>({path:a.path,namespace:"mock"}));
+ b.onResolve({filter:/^@workspace\/db$|bot\/client\.js|utils\/rcon\.js|utils\/players\.js|admin\/steamProfiles\.js|lib\/logger\.js|ipModeration\.js/},a=>({path:a.path,namespace:"mock"}));
  b.onLoad({filter:/.*/,namespace:"mock"},a=>({contents:
  a.path==="@workspace/db" ? "export const db=globalThis.__moderationParity.db,modLogsTable=globalThis.__moderationParity.table,playersTable={};" :
  a.path.includes("players") ? 'export const getPlayerBySteamId=async steamId=>({steamId,playerName:"Tester",isOnline:false});' :
  a.path.includes("rcon") ? "export const executeRconCommand=cmd=>globalThis.__moderationParity.run(cmd);export const getOnlinePlayers=async()=>globalThis.__moderationParity.online;" :
- a.path.includes("client") ? "export const discordClient=()=>null;" :
+ a.path.includes("ipModeration") ? "export const collectPlayerAddresses=async()=>['203.0.113.1'],protectPlayerIp=async()=>true,removePlayerIpBan=async()=>{};" : a.path.includes("client") ? "export const discordClient=()=>null;" :
  a.path.includes("steamProfiles") ? "export const getSteamProfileSummaries=async()=>new Map();" :
  "export const logger={warn(){},error(){}};",
  }));

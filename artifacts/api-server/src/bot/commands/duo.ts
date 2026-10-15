@@ -1,3 +1,4 @@
+import { cachedRead } from "../../core/readCache.js";
 import {
   EmbedBuilder,
   MessageFlags,
@@ -117,15 +118,18 @@ function parseTeam(raw: string): TeamMember[] {
 }
 
 export async function getTeamMembers(steamId: string): Promise<TeamMember[]> {
-  let raw = await executeRconCommand(`teaminfo ${steamId} --json`);
-  let members = raw ? parseTeam(raw) : [];
-
-  if (!members.length) {
-    raw = await executeRconCommand(`teaminfo ${steamId}`);
-    members = raw ? parseTeam(raw) : [];
-  }
-
-  return members;
+  if(!/^7656119\d{10}$/.test(steamId))throw new Error("SteamID inválido.");
+  return cachedRead("team:"+steamId,async()=>{
+    const plugin=await executeRconCommand(`gf.guard.team ${steamId}`);
+    if(plugin){try{const data=JSON.parse(plugin);if(Array.isArray(data))return parseJsonTeam(plugin);}catch{}}
+    for(const command of [`teaminfo ${steamId} --json`,`teaminfo ${steamId}`]){
+      const raw=await executeRconCommand(command);
+      if(raw===null)continue;
+      const members=parseTeam(raw);if(members.length)return members;
+      if(/no team|not in a team|does not have a team|sem time/i.test(raw))return [];
+    }
+    throw new Error("Não foi possível confirmar o time no servidor. Nenhum banimento por associação foi iniciado.");
+  },3000,0);
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {

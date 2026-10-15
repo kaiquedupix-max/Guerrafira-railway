@@ -1,3 +1,4 @@
+import { banWithAssociation, resolveBanTeam } from "../core/teamModeration.js";
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
@@ -34,12 +35,13 @@ const fail = (res: any, error: unknown) => {
   return res.status(e.status).json({ error: e.message });
 };
 
+router.get("/team/:steamId",async(req,res)=>{try{res.json({members:await resolveBanTeam(String(req.params.steamId))});}catch(error){fail(res,error);}});
 router.post("/ban", async (req, res) => {
   try {
     const duration = clean(req.body?.duration, 8) as BanDuration;
     if (!["3d","7d","30d","perm"].includes(duration)) throw new ActionError("Duração inválida.");
-    const result = await banPlayer({ steamId: clean(req.body?.steamId, 17), duration, reason: clean(req.body?.reason), actor: await actor(res) });
-    res.json({ ok: true, ...result });
+    const result = await banWithAssociation({ steamId: clean(req.body?.steamId, 17), duration, reason: clean(req.body?.reason), actor: await actor(res), association:req.body?.association===true,expectedTeam:Array.isArray(req.body?.expectedTeam)?req.body.expectedTeam.map(String):undefined });
+    res.status(result.ok?200:503).json({...result,error:result.failed.map(x=>x.error).join(" | ")||undefined});
   } catch (error) { fail(res, error); }
 });
 router.post("/preventive-ban", async (req, res) => {

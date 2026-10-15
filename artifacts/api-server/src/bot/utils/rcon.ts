@@ -1,3 +1,4 @@
+import { cachedRead } from "../../core/readCache.js";
 import {adminServer} from "../../core/adminServerContext.js";
 import {executeServerRcon} from "./serverRcon.js";
 /** Rust WebRCON client — WebSocket-based RCON + broadcast event system. */
@@ -54,9 +55,11 @@ function _doConnect(): Promise<boolean> {
   return new Promise(resolve => {
     if (ws) { ws.terminate(); ws = null; wsReady = false; }
     const socket = new WebSocket(url);
+    let connected = false;
     const connectTimeout = setTimeout(() => { logger.error("RCON WebSocket connection timed out"); socket.terminate(); resolve(false); }, 8000);
-    socket.on("open", () => { clearTimeout(connectTimeout); ws = socket; wsReady = true; logger.info({ host: process.env.RCON_HOST }, "RCON WebSocket connected"); resolve(true); });
+    socket.on("open", () => { connected = true; clearTimeout(connectTimeout); ws = socket; wsReady = true; logger.info({ host: process.env.RCON_HOST }, "RCON WebSocket connected"); resolve(true); });
     socket.on("message", data => {
+      if (ws !== socket) return;
       try {
         const msg = JSON.parse(data.toString()) as RconResponse;
         if (msg.Message) {
@@ -81,8 +84,8 @@ function _doConnect(): Promise<boolean> {
         }
       } catch {}
     });
-    socket.on("error", err => { logger.error({ err }, "RCON WebSocket error"); wsReady = false; });
-    socket.on("close", () => { logger.warn("RCON WebSocket closed"); ws = null; wsReady = false; for (const [, pending] of pendingResolvers) { clearTimeout(pending.timer); pending.reject(new Error("RCON connection closed")); } pendingResolvers.clear(); });
+    socket.on("error", err => { logger.warn({ err }, "RCON WebSocket error"); if (!connected) { clearTimeout(connectTimeout); resolve(false); } if (ws === socket) wsReady = false; });
+    socket.on("close", () => { if (!connected) { clearTimeout(connectTimeout); resolve(false); } if (ws !== socket) return; logger.warn("RCON WebSocket closed"); ws = null; wsReady = false; for (const [, pending] of pendingResolvers) { clearTimeout(pending.timer); pending.reject(new Error("RCON connection closed")); } pendingResolvers.clear(); });
   });
 }
 
@@ -114,21 +117,29 @@ export async function executeDuoRconCommand(command: string): Promise<string | n
   });
 }
 
-export interface RconPlayer { steamId: string; name: string; ping: number; }
+export interface RconPlayer { steamId: string; name: string; ping: number; ipAddress?: string; }
 export async function getOnlinePlayers(): Promise<RconPlayer[]> {
-  const response = await executeRconCommand("playerlist");
-  if (!response) return [];
-  try {
-    const raw = JSON.parse(response) as Array<{ SteamID: string; DisplayName?: string; Username?: string; Ping: number }>;
-    return raw.map(p => ({ steamId: p.SteamID, name: (p.DisplayName ?? p.Username ?? "Unknown").trim() || "Unknown", ping: p.Ping }));
-  } catch { return []; }
+  return cachedRead("playerlist", async () => {
+    const response = await executeRconCommand("playerlist");
+    if (response === null) throw new Error("RCON indisponível. Lista de jogadores não confirmada.");
+    let raw: any;
+    try { raw = JSON.parse(response); } catch { throw new Error("Lista de jogadores inválida recebida do Rust."); }
+    if (!Array.isArray(raw)) throw new Error("O Rust não retornou a lista de jogadores.");
+    return raw.filter(p => /^7656119\d{10}$/.test(String(p.SteamID ?? p.steamId))).map(p => ({
+      steamId: String(p.SteamID ?? p.steamId), name: String(p.DisplayName ?? p.Username ?? p.name ?? "Jogador").trim() || "Jogador",
+      ping: Number(p.Ping ?? p.ping) || 0, ipAddress: String(p.Address ?? p.IPAddress ?? p.IP ?? ""),
+    }));
+  });
 }
 
 export interface ServerInfo { hostname: string; maxPlayers: number; players: number; queued: number; joining: number; sleepers: number; map: string; gameTime: string; }
 
 export async function getServerInfo(): Promise<ServerInfo | null> {
+  return cachedRead("serverinfo", readServerInfo).catch(() => null);
+}
+async function readServerInfo(): Promise<ServerInfo> {
   const infoRaw = await executeRconCommand("serverinfo");
-  if (!infoRaw) return null;
+  if (!infoRaw) throw new Error("Informações do Rust indisponíveis.");
   try {
     const raw = JSON.parse(infoRaw) as Record<string, unknown>;
     const numberFrom = (...values: unknown[]): number => {
@@ -142,7 +153,7 @@ export async function getServerInfo(): Promise<ServerInfo | null> {
     const hasSleeperField = sleeperFields.some(value => value !== undefined && value !== null && value !== "");
     let sleepers = numberFrom(...sleeperFields);
     if (!hasSleeperField) {
-      const sleepingRaw = await executeRconCommand("sleepingusers");
+      const sleepingRaw = await cachedRead("sleepingusers", () => executeRconCommand("sleepingusers"), 60000);
       if (sleepingRaw) {
         try {
           const parsed = JSON.parse(sleepingRaw);
@@ -168,5 +179,5 @@ export async function getServerInfo(): Promise<ServerInfo | null> {
       map: String(raw.Map ?? "—"),
       gameTime: String(raw.GameTime ?? "—"),
     };
-  } catch (err) { logger.error({ err, infoRaw }, "Failed to parse serverinfo"); return null; }
+  } catch (err) { logger.warn({ err }, "Failed to parse serverinfo"); throw err; }
 }

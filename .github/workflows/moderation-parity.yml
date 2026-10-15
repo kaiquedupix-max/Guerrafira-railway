@@ -7,6 +7,8 @@ on:
       - 'artifacts/api-server/src/**'
       - 'artifacts/api-server/tests/**'
       - 'lib/db/**'
+      - 'rust-plugins/GuerraFriaModeration.cs'
+      - 'artifacts/api-server/assets/**'
       - '.github/workflows/moderation-parity.yml'
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Compile database package (Coolify build step)
         run: pnpm tsc -p lib/db/tsconfig.json
-      - run: node --test tests/moderation-parity.test.mjs tests/liveops-servers.test.mjs tests/trio-rcon.test.mjs tests/unban-integration.test.mjs tests/ban-panel.test.mjs tests/menu-unban.test.mjs
+      - run: node --test tests/*.test.mjs
         working-directory: artifacts/api-server
       - name: Build API (Coolify build step)
         run: pnpm --filter @workspace/api-server run build
@@ -56,3 +58,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:test-password@localhost:5432/guerra_test
           NODE_ENV: development
+
+  rust-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Check plugin protocol, persistence and IP enforcement
+        run: dotnet run --project artifacts/api-server/tests/plugin-runtime/PluginTests.csproj

@@ -1,3 +1,5 @@
+import { warmIpModeration } from "./core/ipModeration.js";
+import { ensurePlayerDirectory, startPlayerDirectory } from "./core/playerDirectory.js";
 import { ensureDatabaseSchema } from "@workspace/db";
 import app from "./appSafe";
 import { logger } from "./lib/logger";
@@ -20,11 +22,14 @@ if (Number.isNaN(port) || port <= 0) {
 async function startApplication(): Promise<void> {
   logger.info("Preparing database schema before starting the application");
   await ensureDatabaseSchema();
+  await ensurePlayerDirectory();
   await new Promise<void>((resolve, reject) => {
     const server = app.listen(port, () => resolve());
     server.once("error", reject);
   });
   logger.info({ port }, "Server listening");
+  startPlayerDirectory();
+  warmIpModeration();
   startBot().catch(err => logger.error({ err }, "Discord bot failed to start"));
 }
 

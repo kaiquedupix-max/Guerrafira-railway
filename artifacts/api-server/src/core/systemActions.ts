@@ -1,3 +1,4 @@
+import { collectPlayerAddresses, protectPlayerIp, removePlayerIpBan } from "./ipModeration.js";
 import { adminServer, withAdminServer } from "./adminServerContext.js";
 import { getPlayerBySteamId } from "../bot/utils/players.js";
 import { getOnlinePlayers } from "../bot/utils/rcon.js";
@@ -75,7 +76,7 @@ async function sendGameModerationNotice(command: string, steamId: string, type: 
   });
 }
 
-async function banPlayerOnServer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string; evidenceUrl?: string; skipRcon?: boolean; expiresAtOverride?: Date | null; association?: { steamId: string; playerName: string } }) {
+async function banPlayerOnServer(input: { steamId: string; duration: BanDuration; reason: string; actor: ActionActor; playerName?: string; evidenceUrl?: string; skipRcon?: boolean; ipAddresses?: string[]; expiresAtOverride?: Date | null; association?: { steamId: string; playerName: string } }) {
   const row = await player(input.steamId);
   const name = safe(input.playerName || row?.playerName || `Jogador offline (${input.steamId})`, 100);
   const reason = safe(input.reason);
@@ -84,6 +85,7 @@ async function banPlayerOnServer(input: { steamId: string; duration: BanDuration
   const expiresAt = input.expiresAtOverride !== undefined ? input.expiresAtOverride : days ? new Date(Date.now() + days * 86400000) : null;
   const evidenceUrl = String(input.evidenceUrl || "").trim();
 
+  const ipProtected = await protectPlayerIp({steamId:input.steamId,reason,expiresAt,ipAddresses:input.ipAddresses});
   if (!input.skipRcon) {
     await executeRconRequired(`banid ${input.steamId} "${name}" "[${input.duration.toUpperCase()}] ${reason} | Recurso: discord.gg/guerrafria"`);
   }
@@ -122,17 +124,18 @@ async function banPlayerOnServer(input: { steamId: string; duration: BanDuration
   const gameNotified = await sendGameModerationNotice(
     `say <color=#FF4444>[JOGADOR BANIDO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido${input.association ? " por associação" : ""}. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 125)}</color>${evidenceUrl ? " | <color=#00E6C3>Provas/motivo: Discord ou www.guerrafriarust.com.br</color>" : ""}`,
     input.steamId, "BAN");
-  return { playerName: name, expiresAt, gameNotified };
+  return { playerName: name, expiresAt, gameNotified, ipProtected };
 }
 
-async function preventiveBanOnServer(input: { steamId: string; reason: string; actor: ActionActor; playerName?: string }) {
+async function preventiveBanOnServer(input: { steamId: string; reason: string; actor: ActionActor; playerName?: string; ipAddresses?: string[] }) {
   const current = await activeBan(input.steamId);
-  if (current) return { playerName: current.playerName, expiresAt: current.banExpiresAt, gameNotified: true, preventive: current.action === "PREVENTIVE_BAN" };
+  if (current) {const ipProtected=await protectPlayerIp({steamId:input.steamId,reason:current.reason||input.reason,expiresAt:current.banExpiresAt,ipAddresses:input.ipAddresses});return { playerName: current.playerName, expiresAt: current.banExpiresAt, gameNotified: true, ipProtected, preventive: current.action === "PREVENTIVE_BAN" };}
   const row = await player(input.steamId);
   const name = safe(input.playerName || row?.playerName || `Jogador offline (${input.steamId})`, 100);
   const reason = safe(input.reason);
   if (!reason) throw new ActionError("Motivo obrigatório.");
   const connectionMessage = `[BANIMENTO PREVENTIVO] Motivo: ${reason} | Para liberacao: entre em discord.gg/guerrafria e abra um ticket para VERIFICACAO.`;
+  const ipProtected=await protectPlayerIp({steamId:input.steamId,reason,expiresAt:null,ipAddresses:input.ipAddresses});
   await executeRconRequired(`banid ${input.steamId} "${name}" "${connectionMessage}"`);
   await db.insert(modLogsTable).values({ serverId: adminServer(), action: "PREVENTIVE_BAN", steamId: input.steamId, playerName: name, reason, adminId: input.actor.id, adminName: input.actor.name, banDuration: "perm", banExpiresAt: null });
   const preventiveEmbed = new EmbedBuilder().setColor(0xf59e0b).setTitle("🛡️ Banimento preventivo aplicado").setDescription(
@@ -146,7 +149,7 @@ async function preventiveBanOnServer(input: { steamId: string; reason: string; a
   const gameNotified = await sendGameModerationNotice(
     `say <color=#FFB000>[BANIMENTO PREVENTIVO]</color> | <color=#FF8800>${safeChat(name, 80)}</color> foi banido preventivamente. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${gameActor(input.actor)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason, 130)}</color> | <color=#00FF88>Para ser desbanido, entre em discord.gg/guerrafria e abra um ticket para VERIFICAÇÃO.</color>`,
     input.steamId, "PREVENTIVE_BAN");
-  return { playerName: name, expiresAt: null, gameNotified, preventive: true };
+  return { playerName: name, expiresAt: null, gameNotified, ipProtected, preventive: true };
 }
 
 export async function kickPlayer(input: { steamId: string; reason: string; actor: ActionActor }) {
@@ -181,6 +184,7 @@ async function unbanPlayerOnServer(input: { steamId: string; reason: string; act
   const playerName = ban?.playerName || row?.playerName || `Jogador (${input.steamId})`;
   const reason = safe(input.reason); if (!reason) throw new ActionError("Motivo obrigatório.");
   await removeRustBan(input.steamId, executeRconRequired);
+  await removePlayerIpBan(input.steamId);
   await db.insert(modLogsTable).values({ serverId: adminServer(), action: "DESBANIR", steamId: input.steamId, playerName: playerName, reason, adminId: input.actor.id, adminName: input.actor.name });
   await log(new EmbedBuilder().setColor(0x22c55e).setTitle("✅ Jogador desbanido").addFields(
     { name: "Jogador", value: playerName, inline: true }, { name: "SteamID", value: `\`${input.steamId}\``, inline: true },
@@ -247,7 +251,7 @@ export async function unverifyPlayer(input: { steamId: string; discordUserId?: s
 type NetworkBanKind = "ban" | "preventive" | "unban";
 type NetworkBanInput = {
   steamId: string; reason: string; actor: ActionActor; playerName?: string;
-  duration?: BanDuration; evidenceUrl?: string; skipRcon?: boolean;
+  duration?: BanDuration; evidenceUrl?: string; skipRcon?: boolean; ipAddresses?: string[];
   association?: { steamId: string; playerName: string };
   expiresAtOverride?: Date | null;
 };
@@ -275,7 +279,8 @@ async function networkBanActionUnlocked(kind: NetworkBanKind, input: NetworkBanI
   const origin = adminServer();
   const expiresAt = kind === "ban" && input.duration !== "perm"
     ? new Date(Date.now() + (input.duration === "3d" ? 3 : input.duration === "7d" ? 7 : 30) * 86400000) : null;
-  const shared = { ...input, reason: safe(input.reason), expiresAtOverride: expiresAt };
+  const ipAddresses = kind === "unban" ? [] : await collectPlayerAddresses(input.steamId);
+  const shared = { ...input, ipAddresses, reason: safe(input.reason), expiresAtOverride: expiresAt };
   const servers = ["solo-duo", "trio"] as const;
   const outcomes = await Promise.allSettled(servers.map(server => withAdminServer(server, () =>
     applyNetworkBanAction(kind, { ...shared, skipRcon: server === origin && input.skipRcon === true })
@@ -301,7 +306,7 @@ async function networkBanActionUnlocked(kind: NetworkBanKind, input: NetworkBanI
     "Ação ainda não confirmada em " + failed.join(" e ") + ". Os servidores que responderam já foram atualizados; a sincronização pendente será repetida automaticamente.", 503);
   const result = outcomes.find(x => x.status === "fulfilled");
   if (!result || result.status !== "fulfilled") throw new ActionError("Nenhum servidor confirmou a ação.", 503);
-  return { ...result.value, servers: [...servers] };
+  return { ...result.value, gameNotified:outcomes.every(x=>x.status==="fulfilled"&&x.value.gameNotified), ipProtected:kind==="unban"||outcomes.every(x=>x.status==="fulfilled"&&"ipProtected" in x.value&&x.value.ipProtected), servers: [...servers] };
 }
 
 async function networkBanAction(kind: NetworkBanKind, input: NetworkBanInput) {

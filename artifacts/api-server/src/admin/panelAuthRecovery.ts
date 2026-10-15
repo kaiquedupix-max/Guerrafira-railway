@@ -49,7 +49,7 @@ export const panelAuthRecoveryJs = String.raw`
     setTimeout(recoverAdmin,250);
     setTimeout(recoverAdmin,800);
     setTimeout(recoverAdmin,1800);
-    setInterval(()=>{ if(verified) recoverAdmin(); },4000);
+    setInterval(()=>{ if(verified && !document.hidden) recoverAdmin(); },60000);
   });
   window.addEventListener('pageshow',recoverAdmin);
   window.addEventListener('focus',recoverAdmin);

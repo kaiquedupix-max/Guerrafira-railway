@@ -1,3 +1,5 @@
+import { removePlayerIpBan } from "../core/ipModeration.js";
+import { startServerChatChannels, chatChannelFor, chatServerFor, parseGameChat } from "./chatChannels.js";
 import { addServerOption, runForCommandServer, serverCommands } from "../core/discordServerContext.js";
 import { addTrioRconEventHandler } from "./utils/serverRcon.js";
 import { adminServer, withAdminServer } from "../core/adminServerContext.js";
@@ -129,31 +131,21 @@ export async function startBot(): Promise<void> {
   ];
   const client = new Client({ intents });
   startDiscordModeration(client);
-  client.once(Events.ClientReady, async (c) => {
-    logger.info({ tag: c.user.tag }, "Discord bot online");
-    const welcomeChannelId = process.env.DISCORD_WELCOME_CHANNEL_ID;
-    const welcomeChannel = welcomeChannelId
-      ? await c.channels.fetch(welcomeChannelId).catch((err) => {
-          logger.error({ err, channelId: welcomeChannelId }, "Welcome channel fetch failed");
-          return null;
-        })
-      : null;
-    logger.info({
-      enabled: process.env.DISCORD_WELCOME_ENABLED === "true",
-      channelId: welcomeChannelId ?? null,
-      channelFound: Boolean(welcomeChannel),
-      sendable: Boolean(welcomeChannel?.isSendable()),
-    }, "Welcome system initialized");
+  client.once(Events.ClientReady, c => {
+    logger.info({tag:c.user.tag},"Discord bot online");
     setDiscordClient(c);
-    startNetworkStatus(c);
-    c.user.setPresence({ status: "online", activities: [{ name: "estatísticas do wipe • /leaderboard", type: ActivityType.Watching }] });
-    await registerSlashCommands(c);
-    startSeason2DiscordRankSync(c);
-    startSeason1DiscordRankCleanup(c);
-    await ensureGameAnnouncementPlugin();
-    startRconSync(); startBanExpiryChecker(c); startSlotManager(c); startLeaderboardChannel(c); setupRconEventBridge(c); startVipExpiryChecker(c); wipedatasCommand.startWipeDatesUpdater(c); await startBoosterSystem(c);
-    startDuoVipRestoration(c);
-    await setupTicketPanel(c); await setupVipStore(c); await checkExpiredRaffles(c);
+    const tasks:[string,()=>unknown][]=[
+      ["network status",()=>startNetworkStatus(c)], ["chat event bridge",()=>setupRconEventBridge(c)],
+      ["chat channels",()=>startServerChatChannels(c)], ["slash commands",()=>registerSlashCommands(c)],
+      ["player sync",()=>startRconSync()], ["ban expiry",()=>startBanExpiryChecker(c)],
+      ["slots",()=>startSlotManager(c)], ["leaderboard channel",()=>startLeaderboardChannel(c)],
+      ["VIP expiry",()=>startVipExpiryChecker(c)], ["wipe dates",()=>wipedatasCommand.startWipeDatesUpdater(c)],
+      ["boosters",()=>startBoosterSystem(c)], ["VIP restoration",()=>startDuoVipRestoration(c)],
+      ["season rank sync",()=>startSeason2DiscordRankSync(c)], ["legacy rank cleanup",()=>startSeason1DiscordRankCleanup(c)],
+      ["tickets",()=>setupTicketPanel(c)], ["VIP store",()=>setupVipStore(c)], ["raffles",()=>checkExpiredRaffles(c)],
+      ["announcements",()=>ensureGameAnnouncementPlugin()],
+    ];
+    for(const [task,run] of tasks)void Promise.resolve().then(run).catch(error=>logger.error({error,task},"Bot subsystem failed to start; other subsystems remain active"));
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -254,9 +246,8 @@ export async function startBot(): Promise<void> {
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return;
 
-    const server = msg.channelId === process.env.TRIO_DISCORD_CHAT_CHANNEL_ID ? "trio" : "solo-duo";
-    const chatChannelId = server === "trio" ? process.env.TRIO_DISCORD_CHAT_CHANNEL_ID : process.env.DISCORD_CHAT_CHANNEL_ID;
-    if (!chatChannelId || msg.channelId !== chatChannelId) return;
+    const server = chatServerFor(msg.channelId);
+    if (!server) return;
     const content = msg.content.trim().replace(/[\r\n"]/g, " ").slice(0, 500); if (!content) return;
     const displayName = (msg.member?.displayName ?? msg.author.username).replace(/[\r\n"]/g, " ");
     await withAdminServer(server, () => executeRconRequired(`say <color=red>[Moderação]</color> <color=orange>${displayName}:</color> <color=green>${content}</color>`)).then(
@@ -293,12 +284,11 @@ function isDuplicate(type: string, message: string): boolean {
 
 function setupRconEventBridge(client: Client): void {
   addTrioRconEventHandler((type, message) => {
-    if (type !== "Chat") return;
     withAdminServer("trio", () => { void handleChatEvent(client, message).catch(error => logger.error({ error }, "Trio chat event failed")); });
   });
   setRconEventHandler(async (type, message) => {
     if (isDuplicate(type, message)) return;
-    if (type === "Chat") { await handleChatEvent(client, message).catch(err => logger.error({ err }, "Chat event error")); return; }
+    if (parseGameChat(message)) { await handleChatEvent(client, message).catch(err => logger.error({ err }, "Chat event error")); return; }
     parseKillEvent(type, message); parseGatherEvent(type, message); parseCraftEvent(type, message);
   });
 }
@@ -313,10 +303,10 @@ function isDuplicateChat(payload: RustChatPayload): boolean {
 }
 
 async function handleChatEvent(client: Client, raw: string): Promise<void> {
-  const chatChannelId = adminServer() === "trio" ? process.env.TRIO_DISCORD_CHAT_CHANNEL_ID : process.env.DISCORD_CHAT_CHANNEL_ID; if (!chatChannelId) return;
-  let payload: RustChatPayload; try { payload = JSON.parse(raw) as RustChatPayload; } catch { return; }
+  const chatChannelId = chatChannelFor(adminServer()); if (!chatChannelId) return;
+  const payload = parseGameChat(raw); if(!payload)return;
   if (!payload.UserId || payload.UserId === "0" || !payload.Message?.trim() || isDuplicateChat(payload)) return;
-  const ch = await client.channels.fetch(chatChannelId).catch(() => null); if (ch?.isSendable()) await ch.send(`💬 **${payload.Username}**: ${payload.Message}`);
+  const ch = await client.channels.fetch(chatChannelId).catch(() => null); if (ch?.isSendable()) await ch.send({content:`💬 **${payload.Username.replace(/[\\*_~`|]/g," ").slice(0,60)}**: ${payload.Message.slice(0,1700)}`,allowedMentions:{parse:[]}});
 }
 
 function startRconSync(): void {
@@ -334,6 +324,7 @@ function startBanExpiryChecker(client: Client): void {
       const current = await activeBan(ban.steamId);
       if (!current || current.id !== ban.id) return;
       await removeRustBan(ban.steamId, executeRconRequired);
+      await removePlayerIpBan(ban.steamId);
       await db.insert(modLogsTable).values({ serverId: ban.serverId, action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema" });
       const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
       if (logChannelId) { const ch = await client.channels.fetch(logChannelId).catch(() => null) as TextChannel | null; if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed({ playerName: ban.playerName ?? "Desconhecido", steamId: ban.steamId, originalReason: ban.reason ?? "—", duration: "temporário" })] }); }
