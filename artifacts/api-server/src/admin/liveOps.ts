@@ -1,3 +1,5 @@
+import { adminServer, withAdminServer } from "../core/adminServerContext.js";
+import { addTrioRconEventHandler } from "../bot/utils/serverRcon.js";
 import { setRconEventHandler } from "../bot/utils/rcon.js";
 import { notifySubscribedAdmins, pushAdminAlert } from "./adminNotifications.js";
 
@@ -19,6 +21,7 @@ type AntiBotEvent = {
   blockedIps?: number;
 };
 
+function createLiveOps(subscribe: (handler: (type: string, raw: string) => void) => void) {
 let started = false;
 let seq = 1;
 const chat: LiveChatItem[] = [];
@@ -207,9 +210,9 @@ function inspectEvent(raw: string) {
   if (/cargo.?plane|cargoplane/.test(s)) markEvent("plane", raw);
 }
 
-export function initLiveOps(): void {
+function initLiveOps(): void {
   if (started) return; started = true;
-  setRconEventHandler((type, raw) => {
+  subscribe((type, raw) => {
     const antiBotEvent = parseAntiBotEvent(raw);
     if (antiBotEvent) registerAntiBotEvent(antiBotEvent);
 
@@ -222,9 +225,20 @@ export function initLiveOps(): void {
   });
 }
 
-export function getLiveChat(): LiveChatItem[] { return chat.slice(-150); }
-export function addModeratorChat(player: string, message: string): void {
+function getLiveChat(): LiveChatItem[] { return chat.slice(-150); }
+function addModeratorChat(player: string, message: string): void {
   chat.push({ id: seq++, at: new Date().toISOString(), type: "moderation", player, message, raw: message });
   trimList(chat, 250);
 }
-export function getLiveEvents(): LiveEvent[] { return Array.from(events.values()); }
+function getLiveEvents(): LiveEvent[] { return Array.from(events.values()); }
+
+return { initLiveOps, getLiveChat, addModeratorChat, getLiveEvents };
+}
+const liveOps = {
+  "solo-duo": createLiveOps(handler => setRconEventHandler((type, raw) => withAdminServer("solo-duo", () => handler(type, raw)))),
+  trio: createLiveOps(handler => { addTrioRconEventHandler((type, raw) => withAdminServer("trio", () => handler(type, raw))); }),
+};
+export function initLiveOps(): void { liveOps["solo-duo"].initLiveOps(); liveOps.trio.initLiveOps(); }
+export function getLiveChat(): LiveChatItem[] { return liveOps[adminServer()].getLiveChat(); }
+export function addModeratorChat(player: string, message: string): void { liveOps[adminServer()].addModeratorChat(player, message); }
+export function getLiveEvents(): LiveEvent[] { return liveOps[adminServer()].getLiveEvents(); }

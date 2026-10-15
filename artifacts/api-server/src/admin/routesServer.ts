@@ -172,7 +172,7 @@ router.get("/items", async (req, res) => {
   res.json({ items, total: cache.items.length });
 });
 
-router.get("/chat", (_req, res) => res.json({ messages: adminServer()==="trio"?[]:getLiveChat() }));
+router.get("/chat", (_req, res) => res.json({ messages: getLiveChat() }));
 router.post("/chat", async (req, res) => {
   const message = clean(req.body?.message, 220);
   if (!message) return void res.status(400).json({ error: "Mensagem vazia." });
@@ -183,7 +183,7 @@ router.post("/chat", async (req, res) => {
   const safeMessage = message.replace(/"/g, "'");
 
   const formatted = `<color=red>[Administração]</color> <color=orange>${safeAdmin}:</color> <color=#D8B4FE>${safeMessage}</color>`;
-  if(adminServer()==="solo-duo")addModeratorChat(`Administração • ${safeAdmin}`, message);
+  addModeratorChat(`Administração • ${safeAdmin}`, message);
 
   let result = await executeRconCommand(`say "${formatted}"`).catch(() => null);
   if (result === null) result = await executeRconCommand(`global.say "${formatted}"`).catch(() => null);
@@ -191,7 +191,7 @@ router.post("/chat", async (req, res) => {
   if (result === null) return void res.status(503).json({ error: "O RCON não confirmou o envio da mensagem ao jogo." });
   res.json({ ok: true, rcon: true });
 });
-router.get("/events", (_req, res) => res.json({ events: adminServer()==="trio"?[]:getLiveEvents() }));
+router.get("/events", (_req, res) => res.json({ events: getLiveEvents() }));
 
 async function runGameCommand(res: any, command: string): Promise<void> {
   try {

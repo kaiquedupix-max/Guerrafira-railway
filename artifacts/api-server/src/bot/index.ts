@@ -1,5 +1,6 @@
 import { addServerOption, runForCommandServer, serverCommands } from "../core/discordServerContext.js";
-import { withAdminServer } from "../core/adminServerContext.js";
+import { addTrioRconEventHandler } from "./utils/serverRcon.js";
+import { adminServer, withAdminServer } from "../core/adminServerContext.js";
 import { startNetworkStatus, handleStatusConnectButton } from "./networkStatus.js";
 import { activeBan, executeRconRequired } from "../core/systemActions.js";
 import { removeRustBan } from "../core/rustUnban.js";
@@ -252,13 +253,15 @@ export async function startBot(): Promise<void> {
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return;
 
-    const chatChannelId = process.env.DISCORD_CHAT_CHANNEL_ID;
+    const server = msg.channelId === process.env.TRIO_DISCORD_CHAT_CHANNEL_ID ? "trio" : "solo-duo";
+    const chatChannelId = server === "trio" ? process.env.TRIO_DISCORD_CHAT_CHANNEL_ID : process.env.DISCORD_CHAT_CHANNEL_ID;
     if (!chatChannelId || msg.channelId !== chatChannelId) return;
-    const content = msg.content.trim(); if (!content) return;
-    const displayName = msg.member?.displayName ?? msg.author.username;
-    await executeRconCommand(`say <color=red>[Moderação]</color> <color=orange>${displayName}:</color> <color=green>${content}</color>`);
-    await msg.react("✅").catch(() => {});
-    logger.info({ author: displayName, content }, "Discord → RCON chat");
+    const content = msg.content.trim().replace(/[\r\n"]/g, " ").slice(0, 500); if (!content) return;
+    const displayName = (msg.member?.displayName ?? msg.author.username).replace(/[\r\n"]/g, " ");
+    await withAdminServer(server, () => executeRconRequired(`say <color=red>[Moderação]</color> <color=orange>${displayName}:</color> <color=green>${content}</color>`)).then(
+      () => msg.react("✅").catch(() => {}),
+      error => { logger.warn({ error, server }, "Discord chat was not confirmed by Rust"); return msg.react("❌").catch(() => {}); },
+    );
   });
   client.on(Events.Error, err => logger.error({ err }, "Discord client error"));
   await client.login(token);
@@ -280,7 +283,7 @@ async function registerSlashCommands(client: Client): Promise<void> {
 
 const recentEvents = new Map<string, number>();
 function isDuplicate(type: string, message: string): boolean {
-  const key = `${type}:${message.slice(0, 120)}`; const now = Date.now();
+  const key = `${adminServer()}:${type}:${message.slice(0, 120)}`; const now = Date.now();
   if (recentEvents.has(key) && now - recentEvents.get(key)! < 3000) return true;
   recentEvents.set(key, now);
   if (recentEvents.size > 200) for (const [k, ts] of recentEvents) if (now - ts > 30000) recentEvents.delete(k);
@@ -288,6 +291,10 @@ function isDuplicate(type: string, message: string): boolean {
 }
 
 function setupRconEventBridge(client: Client): void {
+  addTrioRconEventHandler((type, message) => {
+    if (type !== "Chat") return;
+    withAdminServer("trio", () => { void handleChatEvent(client, message).catch(error => logger.error({ error }, "Trio chat event failed")); });
+  });
   setRconEventHandler(async (type, message) => {
     if (isDuplicate(type, message)) return;
     if (type === "Chat") { await handleChatEvent(client, message).catch(err => logger.error({ err }, "Chat event error")); return; }
@@ -298,14 +305,14 @@ function setupRconEventBridge(client: Client): void {
 interface RustChatPayload { Channel: number; Message: string; UserId: string; Username: string; }
 const recentChatMessages = new Map<string, number>();
 function isDuplicateChat(payload: RustChatPayload): boolean {
-  const now = Date.now(); const key = `${payload.UserId}:${payload.Username.trim().toLowerCase()}:${payload.Message.trim().replace(/\s+/g, " ").toLowerCase()}`;
+  const now = Date.now(); const key = `${adminServer()}:${payload.UserId}:${payload.Username.trim().toLowerCase()}:${payload.Message.trim().replace(/\s+/g, " ").toLowerCase()}`;
   const lastSeen = recentChatMessages.get(key); if (lastSeen && now - lastSeen < 2500) return true;
   recentChatMessages.set(key, now); if (recentChatMessages.size > 500) for (const [savedKey, timestamp] of recentChatMessages) if (now - timestamp > 15000) recentChatMessages.delete(savedKey);
   return false;
 }
 
 async function handleChatEvent(client: Client, raw: string): Promise<void> {
-  const chatChannelId = process.env.DISCORD_CHAT_CHANNEL_ID; if (!chatChannelId) return;
+  const chatChannelId = adminServer() === "trio" ? process.env.TRIO_DISCORD_CHAT_CHANNEL_ID : process.env.DISCORD_CHAT_CHANNEL_ID; if (!chatChannelId) return;
   let payload: RustChatPayload; try { payload = JSON.parse(raw) as RustChatPayload; } catch { return; }
   if (!payload.UserId || payload.UserId === "0" || !payload.Message?.trim() || isDuplicateChat(payload)) return;
   const ch = await client.channels.fetch(chatChannelId).catch(() => null); if (ch?.isSendable()) await ch.send(`💬 **${payload.Username}**: ${payload.Message}`);

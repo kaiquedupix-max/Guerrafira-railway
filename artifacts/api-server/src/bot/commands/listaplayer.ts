@@ -1,3 +1,4 @@
+import { adminServer, withAdminServer } from "../../core/adminServerContext.js";
 /**
  * /listaplayer — lista jogadores cadastrados, com busca e paginação.
  */
@@ -40,7 +41,7 @@ async function buildPage(requestedPage: number, rawSearch: string) {
 
   const embed = new EmbedBuilder()
     .setColor(0x8b5cf6)
-    .setTitle("🎮 Lista de Jogadores — Guerra Fria 2X")
+    .setTitle(`🎮 Lista de Jogadores — ${adminServer() === "trio" ? "Trio" : "Solo/Duo"}`)
     .setFooter({ text: `Página ${page + 1}/${totalPages} • ${total} jogador${total === 1 ? "" : "es"}` })
     .setTimestamp();
 
@@ -80,7 +81,7 @@ async function buildPage(requestedPage: number, rawSearch: string) {
   components.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(`lp_nav:${page - 1}:${encoded}`)
+        .setCustomId(`lp_nav:${adminServer()}:${page - 1}:${encoded}`)
         .setLabel("◀ Anterior")
         .setStyle(ButtonStyle.Primary)
         .setDisabled(page === 0),
@@ -90,7 +91,7 @@ async function buildPage(requestedPage: number, rawSearch: string) {
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(true),
       new ButtonBuilder()
-        .setCustomId(`lp_nav:${page + 1}:${encoded}`)
+        .setCustomId(`lp_nav:${adminServer()}:${page + 1}:${encoded}`)
         .setLabel("Próxima ▶")
         .setStyle(ButtonStyle.Primary)
         .setDisabled(page >= totalPages - 1),
@@ -131,12 +132,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 export async function handleNav(interaction: ButtonInteraction): Promise<void> {
   const parts = interaction.customId.split(":");
-  const parsedPage = Number.parseInt(parts[1] ?? "0", 10);
+  const scoped = parts[1] === "trio" || parts[1] === "solo-duo";
+  const server = parts[1] === "trio" ? "trio" : "solo-duo";
+  const parsedPage = Number.parseInt(parts[scoped ? 2 : 1] ?? "0", 10);
   const page = Number.isFinite(parsedPage) ? Math.max(0, parsedPage) : 0;
-  const search = decodeSearch(parts.slice(2).join(":") || "_");
+  const search = decodeSearch(parts.slice(scoped ? 3 : 2).join(":") || "_");
 
   await interaction.deferUpdate();
-  const { embed, components } = await buildPage(page, search);
+  const { embed, components } = await withAdminServer(server, () => buildPage(page, search));
   await interaction.editReply({ embeds: [embed], components });
 }
 

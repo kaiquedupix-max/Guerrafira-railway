@@ -43,7 +43,7 @@ router.post("/revoke", async (req, res) => {
   const id = Number(req.body?.id);
   if (!Number.isInteger(id)) return void res.status(400).json({ error: "VIP inválido." });
   const [sub] = await db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.id, id)).limit(1);
-  if (!sub) return void res.status(404).json({ error: "VIP não encontrado." });
+  if (!sub || await subscriptionServer(sub.source) !== adminServer()) return void res.status(404).json({ error: "VIP não encontrado neste servidor." });
 
   await revokeVip({ subscriptionId: sub.id, tier: sub.vipTier as VipTier, steamId: sub.steamId, discordUserId: sub.discordUserId, client });
 

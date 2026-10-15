@@ -24,7 +24,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node --test tests/moderation-parity.test.mjs tests/unban-integration.test.mjs tests/ban-panel.test.mjs tests/menu-unban.test.mjs
+      - run: node --test tests/moderation-parity.test.mjs tests/liveops-servers.test.mjs tests/trio-rcon.test.mjs tests/unban-integration.test.mjs tests/ban-panel.test.mjs tests/menu-unban.test.mjs
         working-directory: artifacts/api-server
       - run: node build.mjs
         working-directory: artifacts/api-server

@@ -3,6 +3,13 @@ import { executeDuoRconCommand } from "./rcon.js";
 import type { GuerraFriaServerId } from "../../core/servers.js";
 import { logger } from "../../lib/logger.js";
 
+type TrioEventHandler = (type: string, message: string) => void;
+const trioEventHandlers = new Set<TrioEventHandler>();
+export function addTrioRconEventHandler(handler: TrioEventHandler): () => void {
+  trioEventHandlers.add(handler);
+  return () => { trioEventHandlers.delete(handler); };
+}
+
 type Pending = { finish: (value: string | null) => void };
 let trioSocket: WebSocket | null = null;
 let trioConnecting: Promise<WebSocket | null> | null = null;
@@ -44,7 +51,13 @@ async function connectTrio(): Promise<WebSocket | null> {
       if (trioSocket !== socket) return;
       try {
         const response = JSON.parse(String(data));
-        if (typeof response.Message === "string") pending.get(response.Identifier)?.finish(response.Message);
+        if (typeof response.Message === "string") {
+          pending.get(response.Identifier)?.finish(response.Message);
+          for (const handler of trioEventHandlers) {
+            try { handler(response.Type || "", response.Message); }
+            catch (error) { logger.error({ error }, "Trio RCON event handler failed"); }
+          }
+        }
       } catch { /* Ignore broadcasts that are not RCON response JSON. */ }
     });
     socket.on("error", () => { finish(null); disconnect(socket); });
