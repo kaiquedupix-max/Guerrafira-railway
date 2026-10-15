@@ -1,7 +1,7 @@
 name: Duo and Trio moderation
 on:
   push:
-    branches: [fix/trio-moderation-parity, fix/network-bans]
+    branches: [main, fix/database-build]
   pull_request:
     paths:
       - 'artifacts/api-server/src/**'
@@ -24,7 +24,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Compile database package (Coolify build step)
+        run: pnpm tsc -p lib/db/tsconfig.json
       - run: node --test tests/moderation-parity.test.mjs tests/liveops-servers.test.mjs tests/trio-rcon.test.mjs tests/unban-integration.test.mjs tests/ban-panel.test.mjs tests/menu-unban.test.mjs
         working-directory: artifacts/api-server
-      - run: node build.mjs
-        working-directory: artifacts/api-server
+      - name: Build API (Coolify build step)
+        run: pnpm --filter @workspace/api-server run build

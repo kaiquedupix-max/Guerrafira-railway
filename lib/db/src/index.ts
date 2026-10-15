@@ -27,7 +27,19 @@ pool.on("error", (error) => {
 
 // Also migrate on startup: hosts without a pre-deploy hook must not run
 // moderation against an unscoped audit schema. Existing records belong to Duo.
-await pool.query({ text: "ALTER TABLE mod_logs ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'", query_timeout: 15000 });
+const migrationClient = await pool.connect();
+try {
+  await migrationClient.query("BEGIN");
+  // Limit only this migration; normal application queries retain their settings.
+  await migrationClient.query("SET LOCAL statement_timeout = '15s'");
+  await migrationClient.query("ALTER TABLE mod_logs ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'");
+  await migrationClient.query("COMMIT");
+} catch (error) {
+  await migrationClient.query("ROLLBACK").catch(() => {});
+  throw error;
+} finally {
+  migrationClient.release();
+}
 
 export const db = drizzle(pool, { schema });
 
