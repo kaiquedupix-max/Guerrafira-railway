@@ -1,7 +1,7 @@
 name: Duo and Trio moderation
 on:
   push:
-    branches: [main, fix/database-build]
+    branches: [main, fix/database-build, fix/startup]
   pull_request:
     paths:
       - 'artifacts/api-server/src/**'
@@ -14,6 +14,19 @@ jobs:
   moderation:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test-password
+          POSTGRES_DB: guerra_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d guerra_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -30,3 +43,11 @@ jobs:
         working-directory: artifacts/api-server
       - name: Build API (Coolify build step)
         run: pnpm --filter @workspace/api-server run build
+      - name: Initialize isolated test database
+        run: node lib/db/init-db.mjs
+        env:
+          DATABASE_URL: postgresql://postgres:test-password@localhost:5432/guerra_test
+      - name: Start built application and check HTTP health
+        run: node artifacts/api-server/scripts/startup-smoke.mjs
+        env:
+          DATABASE_URL: postgresql://postgres:test-password@localhost:5432/guerra_test
