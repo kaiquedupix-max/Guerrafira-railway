@@ -1,3 +1,4 @@
+import { announceMapVote, announcementFeedChannelIds, generalChatChannelId } from "../mapVoteAnnouncements.js";
 import { datedWipeSchedule, serverWipeWindow, localWipeDate, wipeScheduleLabel } from "../../core/wipeCalendar.js";
 import { adminServer, withAdminServer, hostSettings } from "../../core/adminServerContext.js";
 import { GUERRA_FRIA_SERVERS, parseServerId, type GuerraFriaServerId } from "../../core/servers.js";
@@ -37,8 +38,7 @@ const VOTE_CHANNEL_ID = "1537001939504734238";
 const CHAT_CHANNEL_ID = "1499084541791436861";
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
-const ANNOUNCEMENT_INTERVAL = 4 * 60 * 60_000;
-const VOTE_ANNOUNCEMENT_MARKER = "🗳️ **VOTAÇÃO DE MAPA ABERTA!**";
+const ANNOUNCEMENT_INTERVAL = 60_000; // Delivery state enforces the four-hour reminder interval.
 const WIPE_DELAY_MS = 25 * 60_000;
 const AUTO_EXECUTION_GRACE_MS = 10 * 60_000;
 
@@ -64,13 +64,7 @@ function mapLogDetails(map: MapOption): string {
 }
 
 function announcementChannelIds(includeGeneralChat = false): string[] {
-  if (adminServer() === "trio") return [...new Set([process.env.TRIO_DISCORD_ANNOUNCEMENTS_CHANNEL_ID, ...(includeGeneralChat ? [process.env.TRIO_DISCORD_CHAT_CHANNEL_ID] : [])].filter((v): v is string => Boolean(v?.trim())))];
-  const configured = [
-    process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID,
-    ...(process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_IDS || "").split(/[\s,;]+/),
-  ];
-  if (includeGeneralChat) configured.push(process.env.DISCORD_CHAT_CHANNEL_ID || CHAT_CHANNEL_ID);
-  return [...new Set(configured.map(value => value?.trim()).filter((value): value is string => Boolean(value)))];
+ return [...new Set([...announcementFeedChannelIds(adminServer()),...(includeGeneralChat?[generalChatChannelId(adminServer())]:[])])];
 }
 
 async function sendWipeAnnouncement(client: Client, phase: "offline" | "online", map: MapOption): Promise<void> {
@@ -165,50 +159,8 @@ function voteMessagePayload(vote: { endsAt: number; maps: MapOption[] }) {
   };
 }
 
-async function hasHumanActivityAfterLastVoteAnnouncement(client: Client): Promise<boolean> {
-  const chat = await client.channels.fetch(adminServer() === "trio" ? process.env.TRIO_DISCORD_CHAT_CHANNEL_ID || "" : CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
-  if (!chat?.isTextBased()) return false;
-
-  const recent = await chat.messages.fetch({ limit: 100 }).catch(() => null);
-  if (!recent) return false;
-
-  let lastAnnouncementAt = 0;
-  for (const message of recent.values()) {
-    if (
-      message.author.id === client.user?.id &&
-      message.content.includes(VOTE_ANNOUNCEMENT_MARKER)
-    ) {
-      lastAnnouncementAt = Math.max(lastAnnouncementAt, message.createdTimestamp);
-    }
-  }
-
-  // Se o último aviso já saiu da janela das 100 mensagens, houve atividade suficiente
-  // no canal para permitir um novo lembrete.
-  if (!lastAnnouncementAt) return true;
-
-  return recent.some(message =>
-    message.createdTimestamp > lastAnnouncementAt &&
-    !message.author.bot,
-  );
-}
-
-async function announceVote(client: Client, endsAt: number, requireActivityAfterPrevious = false, server: GuerraFriaServerId = adminServer()): Promise<void> {
-  if (adminServer() !== server) return withAdminServer(server, () => announceVote(client, endsAt, requireActivityAfterPrevious, server));
-  if (Date.now() >= endsAt) return;
-  if (requireActivityAfterPrevious && !(await hasHumanActivityAfterLastVoteAnnouncement(client))) return;
-
-  const chat = await client.channels.fetch(adminServer() === "trio" ? process.env.TRIO_DISCORD_CHAT_CHANNEL_ID || "" : CHAT_CHANNEL_ID).catch(() => null) as TextChannel | null;
-  if (chat?.isSendable()) {
-    await chat.send({
-      content:
-        `${VOTE_ANNOUNCEMENT_MARKER} • ${GUERRA_FRIA_SERVERS[adminServer()].shortName} • wipe de mapa\n` +
-        `Acesse <#${adminServer() === "trio" ? process.env.TRIO_DISCORD_MAP_CHANNEL_ID : process.env.DISCORD_VIP_MAP_CHANNEL_ID || VOTE_CHANNEL_ID}> e escolha o mapa do próximo wipe.\n` +
-        `⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} valem **2 votos**.\n` +
-        `⏳ Encerra <t:${Math.floor(endsAt / 1000)}:R>.`,
-      allowedMentions: { parse: [] },
-    }).catch(() => {});
-  }
-  await sendGameAnnouncement("GUERRA FRIA","Vote no mapa do proximo wipe no Discord: discord.gg/guerrafria","#7CFC00").catch(() => null);
+async function announceVote(client:Client,vote:MapVoteRuntime,reminder=false):Promise<void>{
+ await announceMapVote(client,{serverId:vote.maps[0]?.serverId||"solo-duo",messageId:vote.messageId,channelId:vote.channelId,endsAt:vote.endsAt,reminder});
 }
 
 function scheduleRuntime(client: Client, vote: MapVoteRuntime): void {
@@ -218,7 +170,7 @@ function scheduleRuntime(client: Client, vote: MapVoteRuntime): void {
   const remaining = vote.endsAt - Date.now();
   if (remaining <= 0) { finishVote(client, vote.messageId).catch(() => {}); return; }
   vote.timer = setTimeout(() => finishVote(client, vote.messageId).catch(() => {}), remaining);
-  vote.announcementTimer = setInterval(() => announceVote(client, vote.endsAt, true, vote.maps[0]?.serverId || "solo-duo").catch(() => {}), ANNOUNCEMENT_INTERVAL);
+  vote.announcementTimer = setInterval(() => announceVote(client, vote, true).catch(() => {}), ANNOUNCEMENT_INTERVAL);
   activeVotes.set(vote.messageId, vote);
 }
 async function loadVote(messageId: string, client?: Client): Promise<MapVoteRuntime | null> {
@@ -256,6 +208,7 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
     if(vote.wipeAt!==correctedWipeAt){vote.wipeAt=correctedWipeAt;await db.update(mapVotesTable).set({wipeAt:new Date(correctedWipeAt)}).where(eq(mapVotesTable.id,vote.id));}
     if (vote.endsAt <= Date.now()) { await finishVote(client, vote.messageId).catch(() => {}); continue; }
     scheduleRuntime(client, vote);
+    await announceVote(client,vote);
     const channel = await client.channels.fetch(vote.channelId).catch(() => null) as TextChannel | null;
     if (!channel?.isTextBased()) continue;
     const message = await channel.messages.fetch(vote.messageId).catch(() => null);
@@ -365,7 +318,8 @@ export async function createMapVote(client:Client,input:{serverId?:GuerraFriaSer
   try{
     const [saved] = await db.insert(mapVotesTable).values({ messageId: message.id, channelId, mapsJson: JSON.stringify(maps), endsAt: new Date(endsAt), wipeAt:new Date(schedule.wipeAt), status: "active", createdBy: input.createdBy }).returning();
     if (!saved) throw new Error("Falha ao persistir votação de mapa");
-    scheduleRuntime(client, { id: saved.id, messageId: message.id, channelId, endsAt, wipeAt:schedule.wipeAt, maps });await announceVote(client, endsAt);
+    const runtime={ id: saved.id, messageId: message.id, channelId, endsAt, wipeAt:schedule.wipeAt, maps };
+    scheduleRuntime(client,runtime);await announceVote(client,runtime);
     return{id:saved.id,messageId:message.id,channelId,endsAt,wipeAt:schedule.wipeAt,maps};
   }catch(error){await message.delete().catch(()=>{});throw error}
 }

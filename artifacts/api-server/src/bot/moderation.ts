@@ -1,3 +1,5 @@
+import { isWipeQuestion, wipeQuestionServer, buildWipeReply } from "../core/wipeQuestions.js";
+import { cachedRead } from "../core/readCache.js";
 import {
   Events,
   PermissionFlagsBits,
@@ -5,7 +7,7 @@ import {
   type Message,
 } from "discord.js";
 import { and, eq, gt } from "drizzle-orm";
-import { db, vipSubscriptionsTable } from "@workspace/db";
+import { db, pool, vipSubscriptionsTable } from "@workspace/db";
 import { logger } from "../lib/logger.js";
 
 const URL_REGEX = /(?:https?:\/\/|www\.)\S+|discord(?:app)?\.com\/invite\/\S+|discord\.gg\/\S+/i;
@@ -126,31 +128,6 @@ function normalize(text: string): string {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
-function isWipeQuestion(content: string): boolean {
-  const text = normalize(content);
-  if (!text.includes("wipe")) return false;
-  const triggers = [
-    "quando e o wipe","quando é o wipe","quando vai ser o wipe","quando sera o wipe","quando será o wipe",
-    "quando e o proximo wipe","quando é o proximo wipe","quando é o próximo wipe","proximo wipe","próximo wipe",
-    "que dia e o wipe","que dia é o wipe","qual dia e o wipe","qual dia é o wipe","dia do wipe","horario do wipe",
-    "horário do wipe","que horas e o wipe","que horas é o wipe","quando deu wipe","que dia deu wipe",
-  ].map(normalize);
-  return triggers.some(trigger => text.includes(trigger)) || /\b(quando|qual dia|que dia|que horas|horario|proximo)\b.*\bwipe\b/.test(text);
-}
-
-function getSaoPauloParts(date: Date) {
-  const formatter = new Intl.DateTimeFormat("en-CA", {timeZone:"America/Sao_Paulo",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,weekday:"short"});
-  const parts = Object.fromEntries(formatter.formatToParts(date).map(p => [p.type, p.value]));
-  return {year:Number(parts.year),month:Number(parts.month),day:Number(parts.day),hour:Number(parts.hour),minute:Number(parts.minute),second:Number(parts.second),weekday:parts.weekday};
-}
-function saoPauloLocalToUtc(year:number,month:number,day:number,hour:number,minute:number):Date{return new Date(Date.UTC(year,month-1,day,hour+3,minute,0));}
-function nextWipeDate(now=new Date()):Date{
-  const local=getSaoPauloParts(now);const baseUtc=Date.UTC(local.year,local.month-1,local.day,12,0,0);
-  for(let offset=0;offset<=7;offset++){const candidateDay=new Date(baseUtc+offset*86_400_000);const weekday=candidateDay.getUTCDay();if(weekday!==1&&weekday!==5)continue;const candidate=saoPauloLocalToUtc(candidateDay.getUTCFullYear(),candidateDay.getUTCMonth()+1,candidateDay.getUTCDate(),18,30);if(candidate.getTime()>now.getTime())return candidate;}
-  return saoPauloLocalToUtc(local.year,local.month,local.day+7,18,30);
-}
-function formatCountdown(target:Date,now=new Date()):string{let diff=Math.max(0,target.getTime()-now.getTime());const days=Math.floor(diff/86_400_000);diff%=86_400_000;const hours=Math.floor(diff/3_600_000);diff%=3_600_000;const minutes=Math.floor(diff/60_000);const parts:string[]=[];if(days)parts.push(`${days} dia${days===1?"":"s"}`);if(hours)parts.push(`${hours} hora${hours===1?"":"s"}`);parts.push(`${minutes} minuto${minutes===1?"":"s"}`);return parts.join(", ");}
-function formatWipeDate(date:Date):string{return new Intl.DateTimeFormat("pt-BR",{timeZone:"America/Sao_Paulo",weekday:"long",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}).format(date);}
 
 async function handleLinkModeration(message:Message):Promise<boolean>{
   if(!message.guild||message.author.bot||isAdmin(message))return false;
@@ -171,9 +148,16 @@ async function handleLinkModeration(message:Message):Promise<boolean>{
   logger.info({userId:message.author.id,channelId:message.channelId,vip},"Blocked Discord link/message URL");return true;
 }
 async function handleWipeReply(message:Message):Promise<void>{
-  if(!message.guild||message.author.bot||!isWipeQuestion(message.content))return;
-  const now=new Date(),next=nextWipeDate(now),unix=Math.floor(next.getTime()/1000),countdown=formatCountdown(next,now);
-  await message.reply({content:`🧊 **Próximo wipe — Guerra Fria**\n📅 O próximo wipe será **${formatWipeDate(next)}**.\n⏳ Faltam aproximadamente **${countdown}**.\n🕡 Os wipes acontecem **todas as segundas e sextas-feiras, às 18h30**.\n🔔 <t:${unix}:R>`,allowedMentions:{repliedUser:false}}).catch(err=>logger.warn({err},"Failed to answer wipe question"));
+ if(!message.guild||message.author.bot||!isWipeQuestion(message.content))return;
+ const [panels,history]=await Promise.all([
+  cachedRead(`wipe-calendar-link:${message.guild.id}`,()=>pool.query("SELECT channel_id,message_id FROM wipe_date_panels WHERE guild_id=$1",[message.guild!.id]),60000).catch(()=>({rows:[]})),
+  cachedRead("confirmed-wipe-history",()=>pool.query("SELECT server_id,MAX(created_at) AS last_wipe_at FROM mod_logs WHERE action='WIPE_COMPLETED' GROUP BY server_id"),30000).catch(()=>({rows:[]})),
+ ]);
+ const panel=panels.rows[0];
+ const calendarUrl=panel&&[message.guild.id,panel.channel_id,panel.message_id].every(id=>/^\d{17,20}$/.test(String(id)))?`https://discord.com/channels/${message.guild.id}/${panel.channel_id}/${panel.message_id}`:undefined;
+ const lastConfirmed:Partial<Record<"solo-duo"|"trio",Date>>={};
+ for(const row of history.rows){if(row.server_id==="trio")lastConfirmed.trio=new Date(row.last_wipe_at);else if(row.server_id==="solo-duo")lastConfirmed["solo-duo"]=new Date(row.last_wipe_at);}
+ await message.reply({content:buildWipeReply({server:wipeQuestionServer(message.content,message.channelId),calendarUrl,lastConfirmed}),allowedMentions:{parse:[],repliedUser:false}}).catch(err=>logger.warn({err},"Failed to answer wipe question"));
 }
 
 async function ensureVipGifPermissions(client: Client): Promise<void> {
