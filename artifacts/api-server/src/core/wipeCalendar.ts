@@ -1,6 +1,7 @@
 import type { GuerraFriaServerId } from "./servers.js";
 export function wipeCalendar(server: GuerraFriaServerId) {
-  const days = server === "trio" ? (process.env.TRIO_WIPE_DAYS || "3").split(",").map(Number) : [1, 5];
+  // Fixed weekly schedule; stale TRIO_WIPE_DAYS must not block Saturday votes.
+  const days = server === "trio" ? [3, 6] : [1, 5];
   const hour = server === "trio" ? Number(process.env.TRIO_WIPE_HOUR || 18) : 18;
   const minute = server === "trio" ? Number(process.env.TRIO_WIPE_MINUTE || 30) : 30;
   if (!days.length || days.some(n=>!Number.isInteger(n)||n<0||n>6) || !Number.isInteger(hour)||hour<0||hour>23||!Number.isInteger(minute)||minute<0||minute>59) throw new Error("Agenda de wipe inválida.");
@@ -13,7 +14,7 @@ export function datedWipeSchedule(server:GuerraFriaServerId,date:string){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error("Informe a data no formato AAAA-MM-DD.");
  const [y,m,d]=date.split("-").map(Number),calendar=wipeCalendar(server),day=new Date(Date.UTC(y,m-1,d));
  if(day.getUTCFullYear()!==y||day.getUTCMonth()!==m-1||day.getUTCDate()!==d)throw new Error("Data inválida.");
- if(!calendar.days.includes(day.getUTCDay()))throw new Error(server==="trio"?"O wipe do Trio é somente às quartas-feiras, às 18h30 (Brasília).":"O wipe do Solo/Duo é somente às segundas e sextas-feiras.");
+ if(!calendar.days.includes(day.getUTCDay()))throw new Error(`O wipe do ${server === "trio" ? "Trio" : "Solo/Duo"} ocorre somente em ${wipeScheduleLabel(server)}.`);
  const publicWipeAt=Date.UTC(y,m-1,d,calendar.hour+3,calendar.minute);
  return {publicWipeAt,voteEndsAt:publicWipeAt-30*60000,wipeAt:publicWipeAt-5*60000};
 }

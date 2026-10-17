@@ -70,10 +70,10 @@ test('aggregate presence adds the actual slots reported by both servers',()=>{
  const duo=status.parseOnlineSnapshot('solo-duo',JSON.stringify({Players:68,MaxPlayers:180,Queued:9})),trio=status.parseOnlineSnapshot('trio',JSON.stringify({Players:0,MaxPlayers:5,Queued:2}));
  assert.equal(status.networkPresence([duo,trio]),'68/185 jogadores online • Guerra Fria');
 });
-test('Trio wipe is Wednesday 18:30 Brasilia and Duo retains Monday and Friday',()=>{
+test('Trio wipes Wednesday and Saturday 18:30 Brasilia and Duo retains Monday and Friday',()=>{
  const trio=calendar.datedWipeSchedule('trio','2026-10-14');assert.equal(new Date(trio.publicWipeAt).toISOString(),'2026-10-14T21:30:00.000Z');assert.equal(new Date(trio.voteEndsAt).toISOString(),'2026-10-14T21:00:00.000Z');assert.equal(new Date(trio.wipeAt).toISOString(),'2026-10-14T21:25:00.000Z');
- assert.throws(()=>calendar.datedWipeSchedule('trio','2026-10-16'),/quartas/);assert.doesNotThrow(()=>calendar.datedWipeSchedule('solo-duo','2026-10-16'));
- const next=calendar.serverWipeWindow('trio',new Date('2026-10-14T21:31:00Z')).next;assert.equal(new Date(next).toISOString(),'2026-10-21T21:30:00.000Z');assert.match(calendar.wipeScheduleLabel('trio'),/quarta-feira às 18h30/);
+ assert.throws(()=>calendar.datedWipeSchedule('trio','2026-10-16'),/quarta-feira e sábado/);assert.doesNotThrow(()=>calendar.datedWipeSchedule('solo-duo','2026-10-16'));
+ const next=calendar.serverWipeWindow('trio',new Date('2026-10-14T21:31:00Z')).next;assert.equal(new Date(next).toISOString(),'2026-10-17T21:30:00.000Z');assert.match(calendar.wipeScheduleLabel('trio'),/quarta-feira e sábado às 18h30/);
 });
 test('connection pages route to their own server and reject malformed configured addresses',()=>{
  process.env.RUST_SERVER_HOST='duo.example.com';process.env.RUST_SERVER_PORT='28015';process.env.TRIO_RUST_SERVER_HOST='trio.example.com';process.env.TRIO_RUST_SERVER_PORT='28025';
@@ -87,7 +87,7 @@ test('cleanup removes only the old status card owned by the principal bot',async
  await status.removeLegacyStatus({user:{id:'main'},channels:{fetch:async()=>({isSendable:()=>true,messages:{fetch:async()=>cards}})}});assert.deepEqual(deleted,['old']);
 });
 test('each dedicated status card includes its own connection button and wipe schedule',()=>{
- for(const id of ['solo-duo','trio']){const payload=status.statusCardPayload(snapshot(id,0));const button=payload.components[0].toJSON().components[0];assert.equal(button.custom_id,id==='trio'?'status_connect_trio':'status_connect');assert.equal(button.url,undefined);assert.match(button.label,/Conectar/);if(id==='trio')assert.match(payload.embeds[0].toJSON().fields[0].value,/quarta-feira às 18h30/);}
+ for(const id of ['solo-duo','trio']){const payload=status.statusCardPayload(snapshot(id,0));const button=payload.components[0].toJSON().components[0];assert.equal(button.custom_id,id==='trio'?'status_connect_trio':'status_connect');assert.equal(button.url,undefined);assert.match(button.label,/Conectar/);if(id==='trio')assert.match(payload.embeds[0].toJSON().fields[0].value,/quarta-feira e sábado às 18h30/);}
 });
 
 test('connection buttons reply privately with the exact public game address and F1 command',async()=>{
