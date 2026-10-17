@@ -94,14 +94,15 @@ async function notifyWebPush(row: AdminAlert): Promise<void> {
   }));
 }
 
-export async function notifySubscribedAdmins(alert: Omit<AdminAlert, "id" | "createdAt">): Promise<void> {
-  const row = pushAdminAlert(alert); void notifyWebPush(row);
+export async function notifySubscribedAdmins(alert: Omit<AdminAlert, "id" | "createdAt">, options: { additionalUserIds?: string[] } = {}): Promise<void> {
+  const row = pushAdminAlert(alert); void notifyWebPush(row).catch(err=>logger.warn({err},"Admin web push notification failed"));
   const client = discordClient(); if (!client) return;
   const subscribers = await db.select().from(adminNotificationSubscriptionsTable).where(eq(adminNotificationSubscriptionsTable.enabled, true)).catch(() => []);
-  if (!subscribers.length) return;
+  const recipients=[...new Set([...subscribers.map(sub=>sub.discordUserId),...(options.additionalUserIds||[]).filter(id=>/^\d{17,20}$/.test(id))])];
+  if (!recipients.length) return;
   const color = row.severity === "critical" ? 0xef4444 : row.severity === "warning" ? 0xff9a2f : row.severity === "success" ? 0x22c55e : 0x8b5cf6;
   const embed = new EmbedBuilder().setColor(color).setTitle(row.title).setDescription(row.message).setFooter({ text: "Guerra Fria • Central de Controle" }).setTimestamp();
   if (row.playerName) embed.addFields({ name: "Jogador", value: row.playerName, inline: true });
   if (row.steamId) embed.addFields({ name: "SteamID", value: `\`${row.steamId}\``, inline: true });
-  await Promise.all(subscribers.map(async sub => { const user = await client.users.fetch(sub.discordUserId).catch(() => null); if (user) await user.send({ embeds: [embed] }).catch(err => logger.warn({ err, userId: sub.discordUserId }, "Failed to send admin DM notification")); }));
+  await Promise.all(recipients.map(async userId => { const user = await client.users.fetch(userId).catch(() => null); if (user) await user.send({ embeds: [embed] }).catch(err => logger.warn({ err, userId }, "Failed to send admin DM notification")); }));
 }

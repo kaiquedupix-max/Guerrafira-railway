@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-const state=globalThis.__serverTest={rows:[],hosts:[],inserted:[],notices:[]};
+const state=globalThis.__serverTest={rows:[],hosts:[],inserted:[],notices:[],alerts:[]};
 state.db={select(){const chain={from(){return chain;},where(){return chain;},then(yes,no){return Promise.resolve(state.rows.shift()||[]).then(yes,no);},limit:async()=>state.rows.shift()||[]};return chain;},update(){return{set(){return{where:async()=>{}}}};},insert(){return{values(row){state.inserted.push(row);return{returning:async()=>[{id:101}]};}};}};
 const mocks={
  '@workspace/db':'export const db=globalThis.__serverTest.db,pool={query:async()=>({rows:[]})};export const mapVotesTable={},mapVoteBallotsTable={},vipSubscriptionsTable={},boosterLinksTable={};',
- 'hostWipe.js':'const s=globalThis.__serverTest;export const getHostPowerState=async()=>globalThis.__serverTest.hostState||"unknown";export const diagnoseHost=async()=>{s.hosts.push(s.context());return {capabilities:{proceduralStartup:true},levelUrlVariable:"LEVEL_URL"};};export const executePreparedProceduralWipe=async()=>s.hosts.push(s.context()),executePreparedWipe=async()=>s.hosts.push(s.context()),prepareProceduralWipeBackup=async()=>"backup";',
+ 'hostWipe.js':'const s=globalThis.__serverTest;export const getHostPowerState=async()=>globalThis.__serverTest.hostState||"unknown";export const diagnoseHost=async()=>{s.hosts.push(s.context());return {capabilities:{proceduralStartup:true},levelUrlVariable:"LEVEL_URL"};};export const executePreparedProceduralWipe=async()=>{if(s.failWipe===s.context())throw Error("wipe failed");s.hosts.push(s.context())},executePreparedWipe=async()=>{if(s.failWipe===s.context())throw Error("wipe failed");s.hosts.push(s.context())},prepareProceduralWipeBackup=async()=>"backup";',
  'wipeLock.js':'export const getWipeLockState=async()=>({unlocked:true});',
  'gameAnnouncement.js':'export const sendGameAnnouncement=async()=>globalThis.__serverTest.notices.push(globalThis.__serverTest.context());',
  'logger.js':'export const logger={info(){},warn(){},error(){}};',
- 'adminNotifications.js':'export const notifySubscribedAdmins=async()=>{};',
+ 'adminNotifications.js':'export const notifySubscribedAdmins=async(alert,options)=>globalThis.__serverTest.alerts.push({alert,options});',
  'leaderboardChannel.js':'export const refreshLeaderboardChannel=async()=>{};',
  'serverRcon.js':'export const executeServerRcon=async()=>null;'
 };
@@ -22,7 +22,7 @@ async function load(entry,extra=''){
  if(extra)p.onLoad({filter:/criarmapa\.ts$/},a=>({contents:readFileSync(a.path,'utf8')+extra,loader:'ts'}));
  }}]});const mod={exports:{}};new Function('require','module','exports',output.outputFiles[0].text)(createRequire(import.meta.url),mod,mod.exports);return mod.exports;
 }
-const vote=await load('src/bot/commands/criarmapa.ts','\nexport { normalizeMap, adminServer, withAdminServer, hostSettings, processScheduledWipes };');state.context=vote.adminServer;
+const vote=await load('src/bot/commands/criarmapa.ts','\nexport { normalizeMap, adminServer, withAdminServer, hostSettings, processScheduledWipes, reportWipeFailure };');state.context=vote.adminServer;
 const status=await load('src/bot/networkStatus.ts');
 const calendar=await load('src/core/wipeCalendar.ts');
 const connect=await load('src/core/serverConnectPage.ts');
@@ -59,10 +59,10 @@ test('manual execution after reload uses persisted Trio target and keeps legacy 
 });
 
 test('simultaneous scheduled wipes preserve each saved target',async()=>{
- process.env.WIPE_EXECUTION_ENABLED='true';process.env.WIPE_AUTOMATION_ENABLED='true';state.hosts=[];
+ process.env.WIPE_EXECUTION_ENABLED='true';process.env.WIPE_AUTOMATION_ENABLED='true';state.hosts=[];state.notices=[];
  const endsAt=new Date(Date.now()-25*60000),wipeAt=new Date(endsAt.getTime()+25*60000);
  const rows=['solo-duo','trio'].map((serverId,n)=>({id:200+n,endsAt,wipeAt,winnerIndex:0,mapsJson:JSON.stringify([{mode:'link',serverId,mapUrl:'https://example.com/map.map'}])}));
- state.rows=[rows,[],rows];await vote.processScheduledWipes({channels:{fetch:async()=>null}});assert.deepEqual(state.hosts.sort(),['solo-duo','trio']);assert.equal(vote.adminServer(),'solo-duo');
+ state.rows=[rows,[],rows];await vote.processScheduledWipes({channels:{fetch:async()=>null}});assert.deepEqual(state.hosts.sort(),['solo-duo','trio']);assert.deepEqual(state.notices.sort(),['solo-duo','trio']);assert.equal(vote.adminServer(),'solo-duo');
 });
 test('corrupt saved server identifiers fail closed',()=>{assert.throws(()=>vote.normalizeMap({serverId:'unknown',mode:'seed',seed:1,size:3000},0),/Servidor inválido/);});
 
@@ -70,10 +70,10 @@ test('aggregate presence adds the actual slots reported by both servers',()=>{
  const duo=status.parseOnlineSnapshot('solo-duo',JSON.stringify({Players:68,MaxPlayers:180,Queued:9})),trio=status.parseOnlineSnapshot('trio',JSON.stringify({Players:0,MaxPlayers:5,Queued:2}));
  assert.equal(status.networkPresence([duo,trio]),'68/185 jogadores online • Guerra Fria');
 });
-test('Trio wipe is Wednesday 18:30 Brasilia and Duo retains Monday and Friday',()=>{
+test('Trio wipes Wednesday and Saturday 18:30 Brasilia and Duo retains Monday and Friday',()=>{
  const trio=calendar.datedWipeSchedule('trio','2026-10-14');assert.equal(new Date(trio.publicWipeAt).toISOString(),'2026-10-14T21:30:00.000Z');assert.equal(new Date(trio.voteEndsAt).toISOString(),'2026-10-14T21:00:00.000Z');assert.equal(new Date(trio.wipeAt).toISOString(),'2026-10-14T21:25:00.000Z');
- assert.throws(()=>calendar.datedWipeSchedule('trio','2026-10-16'),/quartas/);assert.doesNotThrow(()=>calendar.datedWipeSchedule('solo-duo','2026-10-16'));
- const next=calendar.serverWipeWindow('trio',new Date('2026-10-14T21:31:00Z')).next;assert.equal(new Date(next).toISOString(),'2026-10-21T21:30:00.000Z');assert.match(calendar.wipeScheduleLabel('trio'),/quarta-feira às 18h30/);
+ assert.throws(()=>calendar.datedWipeSchedule('trio','2026-10-16'),/quarta-feira e sábado/);assert.doesNotThrow(()=>calendar.datedWipeSchedule('solo-duo','2026-10-16'));
+ const next=calendar.serverWipeWindow('trio',new Date('2026-10-14T21:31:00Z')).next;assert.equal(new Date(next).toISOString(),'2026-10-17T21:30:00.000Z');assert.match(calendar.wipeScheduleLabel('trio'),/quarta-feira e sábado às 18h30/);
 });
 test('connection pages route to their own server and reject malformed configured addresses',()=>{
  process.env.RUST_SERVER_HOST='duo.example.com';process.env.RUST_SERVER_PORT='28015';process.env.TRIO_RUST_SERVER_HOST='trio.example.com';process.env.TRIO_RUST_SERVER_PORT='28025';
@@ -87,7 +87,7 @@ test('cleanup removes only the old status card owned by the principal bot',async
  await status.removeLegacyStatus({user:{id:'main'},channels:{fetch:async()=>({isSendable:()=>true,messages:{fetch:async()=>cards}})}});assert.deepEqual(deleted,['old']);
 });
 test('each dedicated status card includes its own connection button and wipe schedule',()=>{
- for(const id of ['solo-duo','trio']){const payload=status.statusCardPayload(snapshot(id,0));const button=payload.components[0].toJSON().components[0];assert.equal(button.custom_id,id==='trio'?'status_connect_trio':'status_connect');assert.equal(button.url,undefined);assert.match(button.label,/Conectar/);if(id==='trio')assert.match(payload.embeds[0].toJSON().fields[0].value,/quarta-feira às 18h30/);}
+ for(const id of ['solo-duo','trio']){const payload=status.statusCardPayload(snapshot(id,0));const button=payload.components[0].toJSON().components[0];assert.equal(button.custom_id,id==='trio'?'status_connect_trio':'status_connect');assert.equal(button.url,undefined);assert.match(button.label,/Conectar/);if(id==='trio')assert.match(payload.embeds[0].toJSON().fields[0].value,/quarta-feira e sábado às 18h30/);}
 });
 
 test('connection buttons reply privately with the exact public game address and F1 command',async()=>{
@@ -116,4 +116,18 @@ test('Discord reports host-confirmed running Trio as online without inventing a 
  state.hostState=host;const current=await status.getStatusSnapshot('trio');assert.equal(current.online,false);
  }
  state.hostState='running';assert.equal(status.snapshotWithHostState(snapshot('trio',12),'offline').players,12);
+});
+
+test('wipe errors go privately to administration and vote creator, never public log/chat channels',async()=>{
+ state.alerts=[];let publicCalls=0;const client={channels:{fetch:async()=>{publicCalls++;throw Error('must not publish technical failures')}}};
+ process.env.TRIO_DISCORD_LOG_CHANNEL_ID='ban-feed';process.env.TRIO_DISCORD_CHAT_CHANNEL_ID='public-chat';
+ await vote.reportWipeFailure(client,999,'Execução do wipe',{serverId:'trio',mode:'seed',seed:1,size:3000,name:'Mapa 1'},Error('token=secret-value Bearer hidden-token startup failed'),'123456789012345678');
+ assert.equal(publicCalls,0);assert.equal(state.alerts.length,1);assert.match(state.alerts[0].alert.message,/Trio/);assert.match(state.alerts[0].alert.message,/\[oculto\]/);assert.doesNotMatch(state.alerts[0].alert.message,/secret-value|hidden-token/);assert.deepEqual(state.alerts[0].options.additionalUserIds,['123456789012345678']);
+});
+
+test('scheduled Trio wipe failure alerts the creator without publishing in ban feed or announcing success',async()=>{
+ state.failWipe='trio';state.alerts=[];state.notices=[];state.hosts=[];
+ const endsAt=new Date(Date.now()-25*60000),wipeAt=new Date();const rows=[{id:1999,createdBy:'123456789012345678',endsAt,wipeAt,winnerIndex:0,mapsJson:JSON.stringify([{mode:'link',serverId:'trio',mapUrl:'https://example.com/map.map'}])}];
+ state.rows=[rows,[],rows];let publicCalls=0;
+ try{await vote.processScheduledWipes({channels:{fetch:async()=>{publicCalls++;return null}}});assert.equal(publicCalls,0);assert.equal(state.notices.length,0);assert.equal(state.alerts.length,1);assert.deepEqual(state.alerts[0].options.additionalUserIds,['123456789012345678']);assert.match(state.alerts[0].alert.message,/Trio/);}finally{delete state.failWipe;}
 });
