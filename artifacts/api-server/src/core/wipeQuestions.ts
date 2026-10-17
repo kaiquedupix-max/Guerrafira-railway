@@ -19,5 +19,5 @@ export function buildWipeReply(input:{server?:GuerraFriaServerId;now?:Date;calen
   const confirmed=input.lastConfirmed?.[server];
   return `**${server==="trio"?"Trio":"Solo/Duo"}** — ${wipeScheduleLabel(server)}.\n`+(next?`Próximo wipe de mapa: <t:${Math.floor(next/1000)}:F> (<t:${Math.floor(next/1000)}:R>).`:"Próxima data indisponível.")+(confirmed&&Number.isFinite(confirmed.getTime())?`\nÚltimo wipe confirmado no registro do bot: <t:${Math.floor(confirmed.getTime()/1000)}:F>.`:"\nAinda não há registro de wipe concluído disponível no bot.");
  });
- return `🧊 **Calendário e registro de wipes • Guerra Fria**\n${sections.join("\n\n")}${input.calendarUrl?`\n\n📅 Consulte o calendário completo: ${input.calendarUrl}`:""}`;
+ return `🧊 **Calendário e registro de wipes • Guerra Fria**\n${sections.join("\n\n")}\n\n**Wipe full:** primeira quinta-feira do mês, às 18h30 (Brasília).${input.calendarUrl?`\n\n📅 Consulte o calendário completo: ${input.calendarUrl}`:""}`;
 }
