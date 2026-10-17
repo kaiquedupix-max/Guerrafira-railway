@@ -107,7 +107,7 @@ export function buildWipePanelPayload(now = new Date()): any {
           { type: 14, spacing: 1, divider: true },
           {
             type: 10,
-            content: ":flag_br: **[GUERRA FRIA 2X - DUO](https://www.guerrafriarust.com.br/)**:\n```\nclient.connect jogar.guerrafriarust.com.br:28015\n```",
+            content: ":flag_br: **[GUERRA FRIA — CALENDÁRIO DE WIPES](https://www.guerrafriarust.com.br/)**",
           },
           { type: 14, spacing: 1, divider: true },
           {
