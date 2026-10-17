@@ -1,32 +1,70 @@
 import { and, eq, gte } from "drizzle-orm";
 import { db, modLogsTable } from "@workspace/db";
 import type { Client } from "discord.js";
-import { restartHostServer } from "../core/hostWipe.js";
+import { getHostPowerState, restartHostServer } from "../core/hostWipe.js";
+import { adminServer, hostSettings, withAdminServer } from "../core/adminServerContext.js";
+import type { GuerraFriaServerId } from "../core/servers.js";
+import { notifySubscribedAdmins } from "../admin/adminNotifications.js";
 import { logger } from "../lib/logger.js";
 import { sendGameAnnouncement } from "./utils/gameAnnouncement.js";
 
 const TZ="America/Sao_Paulo";
-let timer:ReturnType<typeof setInterval>|null=null;const sent=new Set<string>();let checking=false;
-
-function localParts(date=new Date()):Record<string,string>{return Object.fromEntries(new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(date).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));}
-function schedule(date=new Date()):{key:string,target:number,startOfDay:number}{const p=localParts(date);const key=`${p.year}-${p.month}-${p.day}`;return{key,target:Date.UTC(+p.year,+p.month-1,+p.day,9,0,0),startOfDay:Date.UTC(+p.year,+p.month-1,+p.day,3,0,0)}}
-async function game(message:string):Promise<void>{await sendGameAnnouncement("ADMINISTRACAO",message).catch(error=>logger.warn({error},"Auto-restart RCON warning failed"));}
-async function alreadyRestarted(startOfDay:number):Promise<boolean>{const rows=await db.select({id:modLogsTable.id}).from(modLogsTable).where(and(eq(modLogsTable.action,"AUTO_RESTART_TRIGGERED"),gte(modLogsTable.createdAt,new Date(startOfDay)))).limit(1);return rows.length>0;}
-
-async function tick(client:Client):Promise<void>{
-  if(checking||process.env.AUTO_RESTART_ENABLED!=="true")return;checking=true;
-  try{
-    const now=Date.now();const s=schedule();const remaining=Math.ceil((s.target-now)/1000);
-    const minuteWarnings=new Map([[900,"15 minutos"],[300,"5 minutos"]]);
-    for(const [seconds,label] of minuteWarnings)if(remaining<=seconds&&remaining>seconds-2&&!sent.has(`${s.key}:m:${seconds}`)){sent.add(`${s.key}:m:${seconds}`);await game(`Restart automatico em ${label}.`)}
-    const gameCountdown=[30,25,20,15,10,5];
-    for(const seconds of gameCountdown)if(remaining<=seconds&&remaining>seconds-2&&!sent.has(`${s.key}:s:${seconds}`)){sent.add(`${s.key}:s:${seconds}`);await game(`Servidor reiniciando em ${seconds} segundo${seconds===1?"":"s"}.`)}
-    if(remaining<=0&&remaining>-30&&!sent.has(`${s.key}:restart`)){
-      sent.add(`${s.key}:restart`);if(await alreadyRestarted(s.startOfDay))return;
-      await restartHostServer({id:"AUTOMATION",name:"Restart diário 06:00"});
-    }
-    for(const key of sent)if(!key.startsWith(s.key))sent.delete(key);
-  }catch(error){logger.error({error},"Daily automatic restart failed")}finally{checking=false}
+let timer:ReturnType<typeof setInterval>|null=null;
+const states=new Map<string,{checking:boolean;sent:Set<number>;completed:boolean;previous:number|null;retryAt:number;alerted:boolean}>();
+const warningTimes=new Map([[900,"15 minutos"],[300,"5 minutos"],[30,"30 segundos"],[25,"25 segundos"],[20,"20 segundos"],[15,"15 segundos"],[10,"10 segundos"],[5,"5 segundos"]]);
+export function dailyRestartSchedule(date=new Date()) {
+ const p=Object.fromEntries(new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hourCycle:"h23"}).formatToParts(date).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
+ return {key:`${p.year}-${p.month}-${p.day}`,target:Date.UTC(+p.year,+p.month-1,+p.day,9),startOfDay:Date.UTC(+p.year,+p.month-1,+p.day,3)};
 }
-
-export function startDailyRestartScheduler(client:Client):void{if(timer)clearInterval(timer);tick(client).catch(()=>{});timer=setInterval(()=>tick(client).catch(()=>{}),1_000);logger.info({time:"06:00",timezone:TZ},"Daily restart scheduler started")}
+async function alreadyRestarted(startOfDay:number):Promise<boolean>{
+ const rows=await db.select({id:modLogsTable.id}).from(modLogsTable).where(and(eq(modLogsTable.serverId,adminServer()),eq(modLogsTable.action,"AUTO_RESTART_TRIGGERED"),gte(modLogsTable.createdAt,new Date(startOfDay)))).limit(1);
+ return rows.length>0;
+}
+async function checkServer(server:GuerraFriaServerId,now:Date):Promise<void>{
+ const enabled=server==="trio"?process.env.TRIO_AUTO_RESTART_ENABLED??process.env.AUTO_RESTART_ENABLED:process.env.AUTO_RESTART_ENABLED;
+ if(enabled==="false")return;
+ const host=hostSettings();if(!host.panelUrl||!host.serverId||!host.apiKey)return;
+ const schedule=dailyRestartSchedule(now),key=`${server}:${schedule.key}`;
+ let state=states.get(key);if(!state){state={checking:false,sent:new Set(),completed:false,previous:null,retryAt:0,alerted:false};states.set(key,state);}
+ if(state.checking||state.completed||now.getTime()<state.retryAt)return;
+ state.checking=true;
+ try{
+  const remaining=Math.ceil((schedule.target-now.getTime())/1000);
+  if(remaining>0){
+   const due=[...warningTimes.keys()].filter(seconds=>!state!.sent.has(seconds)&&remaining<=seconds&&(state!.previous!==null?state!.previous>seconds:remaining>seconds-(seconds>=300?60:5)));
+   const seconds=due.at(-1);
+   if(seconds!==undefined){
+    // A failed RCON warning is retried; never mark an unconfirmed warning as sent.
+    await sendGameAnnouncement("ADMINISTRAÇÃO",`Reinício automático às 06h00 em ${warningTimes.get(seconds)}.`);
+    for(const threshold of warningTimes.keys())if(threshold>=seconds)state.sent.add(threshold);
+   }
+  }else if(remaining>-300){
+   if(await alreadyRestarted(schedule.startOfDay)){state.completed=true;return;}
+   // Do not turn on a server intentionally stopped for wipe or maintenance.
+   const power=await getHostPowerState();
+   if(power!=="running"){state.completed=true;logger.warn({server,power},"Daily restart skipped: server is not running");return;}
+   await sendGameAnnouncement("ADMINISTRAÇÃO","Reinício automático das 06h00 iniciando agora.").catch(error=>logger.warn({error,server},"Final restart warning was not confirmed"));
+   await restartHostServer({id:"AUTOMATION",name:"Restart diário 06:00"});
+   state.completed=true;
+  }
+  state.previous=remaining;
+ }catch(error){
+  state.retryAt=now.getTime()+5000;
+  logger.error({error,server},"Daily automatic restart failed; retrying");
+  if(!state.alerted){
+   state.alerted=true;
+   const reason=String(error instanceof Error?error.message:error).replace(/\bBearer\s+\S+/gi,"Bearer [oculto]").replace(/(Bearer|token|password|secret|authorization)\s*[:=]\s*\S+/gi,"$1: [oculto]").slice(0,1000);
+   await notifySubscribedAdmins({kind:"system",title:`Falha no reinício diário • ${server==="trio"?"Trio":"Duo"}`,message:`Reinício das 06h00 (Brasília): ${reason}. Será tentado novamente dentro da janela de cinco minutos.`,severity:"critical"}).catch(err=>logger.error({err,server},"Private restart alert failed"));
+  }
+ }finally{state.checking=false;}
+}
+export async function runDailyRestartCheck(_client:Client,now=new Date()):Promise<void>{
+ const day=dailyRestartSchedule(now).key;
+ for(const [key,state]of states)if(!key.endsWith(day)&&!state.checking)states.delete(key);
+ await Promise.allSettled((["solo-duo","trio"] as const).map(server=>withAdminServer(server,()=>checkServer(server,now))));
+}
+export function startDailyRestartScheduler(client:Client):void{
+ if(timer)clearInterval(timer);
+ void runDailyRestartCheck(client);timer=setInterval(()=>void runDailyRestartCheck(client),1000);timer.unref();
+ logger.info({time:"06:00",timezone:TZ,servers:["solo-duo","trio"]},"Daily restart scheduler started");
+}

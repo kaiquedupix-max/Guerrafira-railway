@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-const state=globalThis.__serverTest={rows:[],hosts:[],inserted:[],notices:[]};
+const state=globalThis.__serverTest={rows:[],hosts:[],inserted:[],notices:[],alerts:[]};
 state.db={select(){const chain={from(){return chain;},where(){return chain;},then(yes,no){return Promise.resolve(state.rows.shift()||[]).then(yes,no);},limit:async()=>state.rows.shift()||[]};return chain;},update(){return{set(){return{where:async()=>{}}}};},insert(){return{values(row){state.inserted.push(row);return{returning:async()=>[{id:101}]};}};}};
 const mocks={
  '@workspace/db':'export const db=globalThis.__serverTest.db,pool={query:async()=>({rows:[]})};export const mapVotesTable={},mapVoteBallotsTable={},vipSubscriptionsTable={},boosterLinksTable={};',
- 'hostWipe.js':'const s=globalThis.__serverTest;export const getHostPowerState=async()=>globalThis.__serverTest.hostState||"unknown";export const diagnoseHost=async()=>{s.hosts.push(s.context());return {capabilities:{proceduralStartup:true},levelUrlVariable:"LEVEL_URL"};};export const executePreparedProceduralWipe=async()=>s.hosts.push(s.context()),executePreparedWipe=async()=>s.hosts.push(s.context()),prepareProceduralWipeBackup=async()=>"backup";',
+ 'hostWipe.js':'const s=globalThis.__serverTest;export const getHostPowerState=async()=>globalThis.__serverTest.hostState||"unknown";export const diagnoseHost=async()=>{s.hosts.push(s.context());return {capabilities:{proceduralStartup:true},levelUrlVariable:"LEVEL_URL"};};export const executePreparedProceduralWipe=async()=>{if(s.failWipe===s.context())throw Error("wipe failed");s.hosts.push(s.context())},executePreparedWipe=async()=>{if(s.failWipe===s.context())throw Error("wipe failed");s.hosts.push(s.context())},prepareProceduralWipeBackup=async()=>"backup";',
  'wipeLock.js':'export const getWipeLockState=async()=>({unlocked:true});',
  'gameAnnouncement.js':'export const sendGameAnnouncement=async()=>globalThis.__serverTest.notices.push(globalThis.__serverTest.context());',
  'logger.js':'export const logger={info(){},warn(){},error(){}};',
- 'adminNotifications.js':'export const notifySubscribedAdmins=async()=>{};',
+ 'adminNotifications.js':'export const notifySubscribedAdmins=async(alert,options)=>globalThis.__serverTest.alerts.push({alert,options});',
  'leaderboardChannel.js':'export const refreshLeaderboardChannel=async()=>{};',
  'serverRcon.js':'export const executeServerRcon=async()=>null;'
 };
@@ -22,7 +22,7 @@ async function load(entry,extra=''){
  if(extra)p.onLoad({filter:/criarmapa\.ts$/},a=>({contents:readFileSync(a.path,'utf8')+extra,loader:'ts'}));
  }}]});const mod={exports:{}};new Function('require','module','exports',output.outputFiles[0].text)(createRequire(import.meta.url),mod,mod.exports);return mod.exports;
 }
-const vote=await load('src/bot/commands/criarmapa.ts','\nexport { normalizeMap, adminServer, withAdminServer, hostSettings, processScheduledWipes };');state.context=vote.adminServer;
+const vote=await load('src/bot/commands/criarmapa.ts','\nexport { normalizeMap, adminServer, withAdminServer, hostSettings, processScheduledWipes, reportWipeFailure };');state.context=vote.adminServer;
 const status=await load('src/bot/networkStatus.ts');
 const calendar=await load('src/core/wipeCalendar.ts');
 const connect=await load('src/core/serverConnectPage.ts');
@@ -59,10 +59,10 @@ test('manual execution after reload uses persisted Trio target and keeps legacy 
 });
 
 test('simultaneous scheduled wipes preserve each saved target',async()=>{
- process.env.WIPE_EXECUTION_ENABLED='true';process.env.WIPE_AUTOMATION_ENABLED='true';state.hosts=[];
+ process.env.WIPE_EXECUTION_ENABLED='true';process.env.WIPE_AUTOMATION_ENABLED='true';state.hosts=[];state.notices=[];
  const endsAt=new Date(Date.now()-25*60000),wipeAt=new Date(endsAt.getTime()+25*60000);
  const rows=['solo-duo','trio'].map((serverId,n)=>({id:200+n,endsAt,wipeAt,winnerIndex:0,mapsJson:JSON.stringify([{mode:'link',serverId,mapUrl:'https://example.com/map.map'}])}));
- state.rows=[rows,[],rows];await vote.processScheduledWipes({channels:{fetch:async()=>null}});assert.deepEqual(state.hosts.sort(),['solo-duo','trio']);assert.equal(vote.adminServer(),'solo-duo');
+ state.rows=[rows,[],rows];await vote.processScheduledWipes({channels:{fetch:async()=>null}});assert.deepEqual(state.hosts.sort(),['solo-duo','trio']);assert.deepEqual(state.notices.sort(),['solo-duo','trio']);assert.equal(vote.adminServer(),'solo-duo');
 });
 test('corrupt saved server identifiers fail closed',()=>{assert.throws(()=>vote.normalizeMap({serverId:'unknown',mode:'seed',seed:1,size:3000},0),/Servidor inválido/);});
 
@@ -116,4 +116,18 @@ test('Discord reports host-confirmed running Trio as online without inventing a 
  state.hostState=host;const current=await status.getStatusSnapshot('trio');assert.equal(current.online,false);
  }
  state.hostState='running';assert.equal(status.snapshotWithHostState(snapshot('trio',12),'offline').players,12);
+});
+
+test('wipe errors go privately to administration and vote creator, never public log/chat channels',async()=>{
+ state.alerts=[];let publicCalls=0;const client={channels:{fetch:async()=>{publicCalls++;throw Error('must not publish technical failures')}}};
+ process.env.TRIO_DISCORD_LOG_CHANNEL_ID='ban-feed';process.env.TRIO_DISCORD_CHAT_CHANNEL_ID='public-chat';
+ await vote.reportWipeFailure(client,999,'Execução do wipe',{serverId:'trio',mode:'seed',seed:1,size:3000,name:'Mapa 1'},Error('token=secret-value Bearer hidden-token startup failed'),'123456789012345678');
+ assert.equal(publicCalls,0);assert.equal(state.alerts.length,1);assert.match(state.alerts[0].alert.message,/Trio/);assert.match(state.alerts[0].alert.message,/\[oculto\]/);assert.doesNotMatch(state.alerts[0].alert.message,/secret-value|hidden-token/);assert.deepEqual(state.alerts[0].options.additionalUserIds,['123456789012345678']);
+});
+
+test('scheduled Trio wipe failure alerts the creator without publishing in ban feed or announcing success',async()=>{
+ state.failWipe='trio';state.alerts=[];state.notices=[];state.hosts=[];
+ const endsAt=new Date(Date.now()-25*60000),wipeAt=new Date();const rows=[{id:1999,createdBy:'123456789012345678',endsAt,wipeAt,winnerIndex:0,mapsJson:JSON.stringify([{mode:'link',serverId:'trio',mapUrl:'https://example.com/map.map'}])}];
+ state.rows=[rows,[],rows];let publicCalls=0;
+ try{await vote.processScheduledWipes({channels:{fetch:async()=>{publicCalls++;return null}}});assert.equal(publicCalls,0);assert.equal(state.notices.length,0);assert.equal(state.alerts.length,1);assert.deepEqual(state.alerts[0].options.additionalUserIds,['123456789012345678']);assert.match(state.alerts[0].alert.message,/Trio/);}finally{delete state.failWipe;}
 });
