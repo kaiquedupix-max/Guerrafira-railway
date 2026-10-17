@@ -1,3 +1,4 @@
+import { serverWipeWindow, wipeScheduleLabel } from "../../core/wipeCalendar.js";
 import {
   ChannelType,
   MessageFlags,
@@ -49,16 +50,10 @@ function at1830SaoPaulo(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day, 21, 30, 0));
 }
 
-function nextMapWipe(now = new Date()): Date {
-  const local = saoPauloParts(now);
-  for (let offset = 0; offset < 10; offset++) {
-    const calendar = new Date(Date.UTC(local.year, local.month - 1, local.day + offset, 12, 0, 0));
-    const dow = calendar.getUTCDay();
-    if (dow !== 1 && dow !== 5) continue;
-    const candidate = at1830SaoPaulo(calendar.getUTCFullYear(), calendar.getUTCMonth() + 1, calendar.getUTCDate());
-    if (candidate.getTime() > now.getTime()) return candidate;
-  }
-  throw new Error("Não foi possível calcular o próximo wipe de mapa.");
+function nextMapWipe(now = new Date(), server:"solo-duo"|"trio"="solo-duo"): Date {
+ const next=serverWipeWindow(server,now).next;
+ if(!next)throw new Error("Não foi possível calcular o próximo wipe de mapa.");
+ return new Date(next);
 }
 
 function firstThursday(year: number, month: number): Date {
@@ -85,7 +80,8 @@ function buildDynamicDatesText(now = new Date()): string {
   const mapTs = unix(nextMapWipe(now));
   const fullTs = unix(nextFullWipe(now));
   return (
-    `\nPróximo wipe mapa: **<t:${mapTs}:F>**.\n` +
+    `\nPróximo wipe mapa — Duo: **<t:${mapTs}:F>**.\n` +
+    `Próximo wipe mapa — Trio: **<t:${unix(nextMapWipe(now,"trio"))}:F>**.\n` +
     `Próximo wipe full: **<t:${fullTs}:F>**.\n\n` +
     "-# :movie_camera: Acompanhe os wipes ao vivo no TikTok: [@vucksgg](https://www.tiktok.com/@vucksgg)"
   );
@@ -111,12 +107,12 @@ export function buildWipePanelPayload(now = new Date()): any {
           { type: 14, spacing: 1, divider: true },
           {
             type: 10,
-            content: ":flag_br: **[GUERRA FRIA 2X - DUO](https://www.guerrafriarust.com.br/)**:\n```\nclient.connect jogar.guerrafriarust.com.br:28015\n```",
+            content: ":flag_br: **[GUERRA FRIA — CALENDÁRIO DE WIPES](https://www.guerrafriarust.com.br/)**",
           },
           { type: 14, spacing: 1, divider: true },
           {
             type: 10,
-            content: "### :date: Calendário de wipes:\nWipe mapa toda segunda-feira e sexta-feira às `18:30` BRT, e wipe full toda primeira quinta-feira do mês.\n",
+            content: `### :date: Calendário de wipes:\n**Duo:** ${wipeScheduleLabel("solo-duo")}.\n**Trio:** ${wipeScheduleLabel("trio")}.\nWipe full toda primeira quinta-feira do mês.\n`,
           },
           { type: 14, spacing: 1, divider: true },
           {
