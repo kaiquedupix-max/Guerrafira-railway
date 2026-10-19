@@ -1,3 +1,4 @@
+import { onceDiscordReply } from "../core/discordReplyOnce.js";
 import { isWipeQuestion, wipeQuestionServer, buildWipeReply } from "../core/wipeQuestions.js";
 import { cachedRead } from "../core/readCache.js";
 import {
@@ -147,8 +148,9 @@ async function handleLinkModeration(message:Message):Promise<boolean>{
   if(warning)setTimeout(()=>warning.delete().catch(()=>{}),7_000);
   logger.info({userId:message.author.id,channelId:message.channelId,vip},"Blocked Discord link/message URL");return true;
 }
-async function handleWipeReply(message:Message):Promise<void>{
+export async function handleWipeReply(message:Message):Promise<void>{
  if(!message.guild||message.author.bot||!isWipeQuestion(message.content))return;
+ await onceDiscordReply(message.id,"wipe-calendar",async()=>{
  const [panels,history]=await Promise.all([
   cachedRead(`wipe-calendar-link:${message.guild.id}`,()=>pool.query("SELECT channel_id,message_id FROM wipe_date_panels WHERE guild_id=$1",[message.guild!.id]),60000).catch(()=>({rows:[]})),
   cachedRead("confirmed-wipe-history",()=>pool.query("SELECT server_id,MAX(created_at) AS last_wipe_at FROM mod_logs WHERE action='WIPE_COMPLETED' GROUP BY server_id"),30000).catch(()=>({rows:[]})),
@@ -157,7 +159,8 @@ async function handleWipeReply(message:Message):Promise<void>{
  const calendarUrl=panel&&[message.guild.id,panel.channel_id,panel.message_id].every(id=>/^\d{17,20}$/.test(String(id)))?`https://discord.com/channels/${message.guild.id}/${panel.channel_id}/${panel.message_id}`:undefined;
  const lastConfirmed:Partial<Record<"solo-duo"|"trio",Date>>={};
  for(const row of history.rows){if(row.server_id==="trio")lastConfirmed.trio=new Date(row.last_wipe_at);else if(row.server_id==="solo-duo")lastConfirmed["solo-duo"]=new Date(row.last_wipe_at);}
- await message.reply({content:buildWipeReply({server:wipeQuestionServer(message.content,message.channelId),calendarUrl,lastConfirmed}),allowedMentions:{parse:[],repliedUser:false}}).catch(err=>logger.warn({err},"Failed to answer wipe question"));
+ await message.reply({nonce:message.id,enforceNonce:true,content:buildWipeReply({server:wipeQuestionServer(message.content,message.channelId),calendarUrl,lastConfirmed}),allowedMentions:{parse:[],repliedUser:false}});
+ });
 }
 
 async function ensureVipGifPermissions(client: Client): Promise<void> {
@@ -182,7 +185,10 @@ async function ensureVipGifPermissions(client: Client): Promise<void> {
   logger.info({ vipRoleId }, "VIP GIF permissions synchronized");
 }
 
+const moderationClients=new WeakSet<Client>();
 export function startDiscordModeration(client:Client):void{
+  if(moderationClients.has(client))return;
+  moderationClients.add(client);
   client.on(Events.MessageCreate,async(message)=>{try{if(await handleLinkModeration(message))return;await handleWipeReply(message);}catch(err){logger.error({err},"Discord moderation handler failed");}});
   client.once(Events.ClientReady, () => { void ensureVipGifPermissions(client); });
   logger.info({allowedCategories:[...ALLOWED_LINK_CATEGORY_IDS],allowedChannels:[...ALLOWED_LINK_CHANNEL_IDS]},"Discord moderation and wipe auto-response enabled");

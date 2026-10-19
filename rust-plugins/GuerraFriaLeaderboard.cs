@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.5.0")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.6.0")]
     [Description("Leaderboard profissional + raid tracker + telemetria assistida Guerra Fria.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
@@ -13,6 +13,7 @@ namespace Oxide.Plugins
 
         private class LeaderboardEvent
         {
+            public long wipe_started_at;
             public string event_id;
             public string @event;
             public string attacker;
@@ -31,7 +32,13 @@ namespace Oxide.Plugins
         }
 
         private void Init() { Puts("GuerraFriaLeaderboard carregado."); }
-        private void OnServerInitialized() { Emit(new LeaderboardEvent { @event = "ready", timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }); }
+        private void OnServerInitialized()
+        {
+            PublishReady();
+            timer.Every(60f, PublishReady);
+        }
+        private void OnNewSave(string filename) { NextTick(PublishReady); }
+        private void PublishReady() { Emit(new LeaderboardEvent { @event = "ready", timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }); }
 
         private bool IsRealPlayer(BasePlayer player)
         {
@@ -183,6 +190,7 @@ namespace Oxide.Plugins
             try
             {
                 payload.event_id = Guid.NewGuid().ToString();
+                payload.wipe_started_at = new DateTimeOffset(SaveRestore.SaveCreatedTime.ToUniversalTime()).ToUnixTimeMilliseconds();
                 var json = JsonConvert.SerializeObject(payload, Formatting.None, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
                 Puts($"{Prefix} {json}");
             }

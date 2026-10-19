@@ -87,3 +87,12 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Check plugin protocol, persistence and IP enforcement
         run: dotnet run --project artifacts/api-server/tests/plugin-runtime/PluginTests.csproj
+
+      - name: Check leaderboard plugin wipe identity and event protocol
+        run: dotnet run --project artifacts/api-server/tests/leaderboard-plugin-runtime/LeaderboardTests.csproj
+      - name: Generate server-specific plugin packages
+        run: python3 scripts/package-rust-competitive.py --output /tmp/gf-plugins
+      - name: Compile and check Duo leaderboard package
+        run: dotnet run --project artifacts/api-server/tests/leaderboard-plugin-runtime/LeaderboardTests.csproj -p:LeaderboardSource=/tmp/gf-plugins/Duo/GuerraFriaLeaderboard.cs
+      - name: Compile and check Trio leaderboard package
+        run: dotnet run --project artifacts/api-server/tests/leaderboard-plugin-runtime/LeaderboardTests.csproj -p:LeaderboardSource=/tmp/gf-plugins/Trio/GuerraFriaLeaderboard.cs
