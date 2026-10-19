@@ -1,3 +1,4 @@
+import { prepareLeaderboardEvent } from "../core/leaderboardEpoch.js";
 import { playerStatsForServer } from "../core/competitiveStore.js";
 import { eventKey } from "../core/eventSource.js";
 import { adminServer } from "../core/adminServerContext.js";
@@ -64,7 +65,7 @@ export function parseKillEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as CombatPayload | null;
   if (!obj) return false;
   const ev = eventName(obj);
-  if(obj.event_id&&["kill","arrow_hit"].includes(ev)){void ingestUniqueLeaderboardEvent(obj).catch(err=>logger.error({err},"RCON leaderboard ingestion failed"));return true;}
+  if(obj.event_id&&["ready","kill","arrow_hit"].includes(ev)){void ingestUniqueLeaderboardEvent(obj).catch(err=>logger.error({err},"RCON leaderboard ingestion failed"));return true;}
   if (ev === "arrow_hit") return processArrowHit(obj);
   const lowerType = type.toLowerCase();
   if (!(ev === "kill" || lowerType.includes("kill") || lowerType.includes("death") || lowerType.includes("combat") || lowerType === "generic" || type === "")) return false;
@@ -175,9 +176,11 @@ export async function ingestLeaderboardPayload(obj: Record<string, unknown>,stor
 }
 
 export async function ingestUniqueLeaderboardEvent(obj:Record<string,unknown>):Promise<"accepted"|"duplicate"|"rejected">{
+ if(obj.server_id!==undefined&&obj.server_id!==adminServer())return "rejected";
  const rawId=String(obj.event_id||"").toLowerCase();
  if(!/^[a-f0-9-]{16,64}$/.test(rawId))return "rejected";
  return db.transaction(async tx=>{
+  if(!await prepareLeaderboardEvent(tx,obj))return "rejected";
   const result=await tx.execute(sql`INSERT INTO leaderboard_event_receipts(event_id) VALUES(${eventKey(adminServer(),rawId)}) ON CONFLICT DO NOTHING RETURNING event_id`);
   if(!result.rows.length)return "duplicate";
   return await ingestLeaderboardPayload(obj,tx)?"accepted":"rejected";

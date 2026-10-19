@@ -12,3 +12,13 @@ test('Season rejects error responses instead of showing empty standings, and ret
  const scripts=[...w.document.querySelectorAll('script')].filter(x=>!x.src);for(const script of scripts)w.eval(script.textContent);await wait(20);assert.match(w.document.querySelector('#rows').textContent,/Não foi possível/);fail=false;Object.defineProperty(w.document,'hidden',{value:false,configurable:true});await refresh();await wait(20);assert.match(w.document.querySelector('#rows').textContent,/Trio Player/);assert.ok(w.document.querySelector('#gf-public-design'));dom.window.close();
 });
 test('store checkout is excluded from shared public restyling',()=>{assert.doesNotMatch(api.withSiteChrome('<html><head></head><body>LOJA OFICIAL GUERRA FRIA</body></html>','store'),/id="gf-public-design"/)});
+test('Discord name and avatar load across all shared headers, including admin, with a working fallback',async()=>{
+ for(const section of ['store','leaderboard','season','donation','integrity','status','profile','admin']){
+  const dom=new JSDOM(api.withSiteChrome('<html><head></head><body></body></html>',section,{username:'Mac1ota',isAdmin:true}),{url:'https://guerrafriarust.com.br/'+section,runScripts:'outside-only'}),w=dom.window,calls=[];w.AbortSignal=AbortSignal;
+  w.fetch=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({authenticated:true,user:{username:'Mac <3',avatarUrl:'https://cdn.discordapp.com/avatars/123/avatar.png'}})}};
+  w.eval(w.document.querySelector('#gf-public-motion').textContent);await wait(10);assert.equal(calls.length,1,section);assert.equal(calls[0].options.credentials,'same-origin');
+  assert.equal(w.document.querySelector('.gfUserName').textContent,'Mac <3');const images=[...w.document.querySelectorAll('[data-gf-avatar]')];assert.equal(images.length,2,section);
+  for(const img of images){assert.match(img.src,/cdn.discordapp.com/);img.dispatchEvent(new w.Event('load'));assert.equal(img.hidden,false);assert.equal(img.parentElement.classList.contains('hasAvatar'),true);img.dispatchEvent(new w.Event('error'));assert.equal(img.hidden,true);assert.equal(img.parentElement.classList.contains('hasAvatar'),false);}
+  w.document.querySelector('#gfAccountButton').click();assert.equal(w.document.querySelector('#gfAccountMenu').classList.contains('open'),true);dom.window.close();
+ }
+});

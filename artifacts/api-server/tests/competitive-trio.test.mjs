@@ -7,7 +7,7 @@ import express from 'express';
 const pg=new PGlite();
 const state=globalThis.__competitive={commands:[],db:drizzle(pg),pool:{query:async text=>{await pg.exec(text);return {rows:[]}}}};
 const schema=new URL('../../../lib/db/src/schema/playerStats.ts',import.meta.url).pathname;
-const built=await build({stdin:{contents:'export {default as leaderboardRouter} from "./src/routes/leaderboardV2.ts";export {default as adminSeasonRouter} from "./src/admin/routesSeasonCurrentRegistrations.ts";export {default as auditRouter} from "./src/routes/seasonAudit.ts";export {default as transportRouter} from "./src/routes/seasonTransport.ts";export {default as seasonRouter,ensureSeasonIngestionTables} from "./src/routes/seasonIngestionSafe.ts";export * from "./src/core/seasonScores.ts";export * from "./src/core/eventSource.ts";export * from "./src/core/adminServerContext.ts";export * from "./src/core/competitiveStore.ts";export * from "./src/bot/killTracker.ts";export * from "./src/core/leaderboardReset.ts";export * from "./src/bot/season2GameRankSync.ts";export * from "'+schema+'";',resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'adapters',setup(b){
+const built=await build({stdin:{contents:'export {default as leaderboardRouter} from "./src/routes/leaderboardV2.ts";export {default as adminSeasonRouter} from "./src/admin/routesSeasonCurrentRegistrations.ts";export {default as auditRouter} from "./src/routes/seasonAudit.ts";export {default as transportRouter} from "./src/routes/seasonTransport.ts";export {default as seasonRouter,ensureSeasonIngestionTables} from "./src/routes/seasonIngestionSafe.ts";export * from "./src/core/seasonScores.ts";export * from "./src/core/eventSource.ts";export * from "./src/core/adminServerContext.ts";export * from "./src/core/competitiveStore.ts";export * from "./src/bot/killTracker.ts";export * from "./src/core/leaderboardReset.ts";export * from "./src/core/readCache.ts";export * from "./src/bot/season2GameRankSync.ts";export * from "'+schema+'";',resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'adapters',setup(b){
  b.onResolve({filter:/^@workspace\/db$|lib\/logger\.js|antiCheat\.js|utils\/rcon\.js|admin\/guard\.js|^\.\/guard\.js$/},a=>({path:a.path,namespace:'mock'}));
  b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='@workspace/db'?`export const db=globalThis.__competitive.db,pool=globalThis.__competitive.pool;export {playerStatsTable,trioPlayerStatsTable} from ${JSON.stringify(schema)};`:a.path.includes('guard')?'export const requireAdmin=(req,res,next)=>next();':a.path.includes('rcon')?'export const executeRconCommand=async command=>{globalThis.__competitive.commands.push(command);return "ok"};':a.path.includes('logger')?'export const logger={info(){},warn(){},error(){}};':'export const analyzeKill=async()=>{}; export const analyzeArrowHit=async()=>{};',loader:'ts',resolveDir:process.cwd()}));
 }}]});
@@ -59,7 +59,7 @@ test('wipe leaderboard and receipts isolate Duo and Trio; Trio reset preserves D
  assert.equal((await pg.query('SELECT kills,wood_gathered FROM trio_player_stats WHERE steam_id=$1',[killer])).rows[0].wood_gathered,100);
  await api.withAdminServer('trio',()=>api.resetAllLeaderboardStats());
  assert.equal((await pg.query('SELECT kills FROM player_stats WHERE steam_id=$1',[killer])).rows[0].kills,1);
- assert.equal((await pg.query('SELECT kills FROM trio_player_stats WHERE steam_id=$1',[killer])).rows[0].kills,0);
+ assert.equal((await pg.query('SELECT COUNT(*)::int n FROM trio_player_stats')).rows[0].n,0);
 });
 test('shared Season score applies and persists ranks independently on both servers',async()=>{
  process.env.TRIO_RCON_HOST='test-trio';
@@ -92,4 +92,33 @@ test('public leaderboard API selects the server and rejects unknown selections',
  const duo=await (await fetch(base+'/leaderboard?server=solo-duo')).json(),trio=await (await fetch(base+'/leaderboard?server=trio')).json();
  assert.equal(duo.serverId,'solo-duo');assert.equal(trio.serverId,'trio');assert.equal(duo.categories.kills[0].value,1);assert.equal(trio.categories.kills.length,0);
  assert.equal((await fetch(base+'/leaderboard?server=invalid')).status,400);
+});
+test('new map clears every Trio statistic and cached summary; heartbeat/restart preserves the same wipe',async()=>{
+ const now=Date.now(),oldMap=now-86400000,newMap=now+20;let seq=10;
+ const unique=()=>`cccccccc-dddd-eeee-ffff-${String(seq++).padStart(12,'0')}`;
+ const send=ev=>api.withAdminServer('trio',()=>api.ingestUniqueLeaderboardEvent({event_id:unique(),timestamp:now+40,wipe_started_at:oldMap,...ev}));
+ assert.equal(await send({event:'ready'}),'accepted');
+ assert.equal(await send({event:'kill',attacker_steamid:id,victim_steamid:'76561190000000002',attacker:'New',victim:'Other',headshot:true}),'accepted');
+ assert.equal(await send({event:'gather',steamid:id,player:'New',item:'wood',amount:50}),'accepted');
+ assert.equal(await send({event:'raid_use',steamid:id,player:'New',item:'c4',amount:2}),'accepted');
+ api.clearReadCache();
+ const before=await (await fetch(base+'/leaderboard?server=trio')).json();assert.equal(before.summary.totalKills,1);assert.equal(before.summary.totalFarm,50);assert.equal(before.summary.totalRaid,2);
+ assert.equal(await send({event:'ready',wipe_started_at:newMap}),'accepted');
+ const empty=await (await fetch(base+'/leaderboard?server=trio')).json();assert.equal(empty.summary.activePlayers,0);assert.equal(empty.summary.totalKills,0);assert.equal(empty.summary.totalFarm,0);assert.equal(empty.summary.totalRaid,0);assert.equal(empty.summary.leader,null);
+ assert.equal(await send({event:'gather',wipe_started_at:newMap,steamid:id,player:'New',item:'stones',amount:60}),'accepted');
+ assert.equal(await send({event:'ready',wipe_started_at:newMap}),'accepted');
+ assert.equal((await pg.query('SELECT stone_gathered FROM trio_player_stats')).rows[0].stone_gathered,60);
+ assert.equal(await send({event:'gather',steamid:id,player:'Old map',item:'wood',amount:99999}),'rejected');
+ assert.equal(await send({event:'gather',wipe_started_at:newMap, timestamp:now-100,steamid:id,player:'Old timestamp',item:'wood',amount:99999}),'rejected');
+ assert.equal((await pg.query('SELECT kills FROM player_stats WHERE steam_id=$1',[id])).rows[0].kills,1);
+});
+test('manual reset removes all rows and rejects late pre-reset events without erasing Season',async()=>{
+ const ev={event_id:'dddddddd-eeee-ffff-aaaa-000000000001',event:'gather',steamid:id,player:'Late',item:'wood',amount:100,timestamp:Date.now()-1000};
+ await api.resetAllLeaderboardStats();assert.equal((await pg.query('SELECT COUNT(*)::int n FROM player_stats')).rows[0].n,0);
+ assert.equal(await api.ingestUniqueLeaderboardEvent(ev),'rejected');
+ assert.equal(Number((await state.db.execute(api.seasonStandingsSql(2))).rows[0].effective_mmr),1035);
+});
+
+test('a plugin package installed on the wrong server cannot modify its leaderboard',async()=>{
+ assert.equal(await api.ingestUniqueLeaderboardEvent({event_id:'eeeeeeee-ffff-aaaa-bbbb-000000000001',server_id:'trio',event:'ready',timestamp:Date.now()}),'rejected');
 });

@@ -1,36 +1,16 @@
 import { clearReadCache } from "./readCache.js";
-import { playerStatsForServer } from "./competitiveStore.js";
+import { playerStatsForServer, ensureCompetitiveStore } from "./competitiveStore.js";
+import { lockLeaderboardEpoch } from "./leaderboardEpoch.js";
+import { adminServer } from "./adminServerContext.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-
-/** Zera todo o histórico competitivo sem remover o cadastro dos jogadores. */
-export async function resetAllLeaderboardStats(): Promise<void> {
-  const playerStatsTable=playerStatsForServer();
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      await db.update(playerStatsTable).set({
-        kills: 0,
-        deaths: 0,
-        headshots: 0,
-        resourcesGathered: 0,
-        woodGathered: 0,
-        stoneGathered: 0,
-        metalOreGathered: 0,
-        sulfurOreGathered: 0,
-        scrapGathered: 0,
-        explosivesCrafted: 0,
-        gunpowderCrafted: 0,
-        c4Used: 0,
-        rocketsUsed: 0,
-        updatedAt: sql`now()`,
-      });
-      clearReadCache();
-      return;
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1_000));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Falha ao resetar o leaderboard.");
+/** Clears this wipe's statistics, including the player count. Directory/Season stay intact. */
+export async function resetAllLeaderboardStats():Promise<void>{
+ await ensureCompetitiveStore();
+ await db.transaction(async tx=>{
+  await lockLeaderboardEpoch(tx);
+  await tx.delete(playerStatsForServer());
+  await tx.execute(sql`UPDATE leaderboard_wipe_state SET reset_after_ms=${Date.now()} WHERE server_id=${adminServer()}`);
+ });
+ clearReadCache();
 }

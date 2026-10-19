@@ -3,7 +3,13 @@ import type { GuerraFriaServerId } from "./servers.js";
 const normalize=(text:string)=>text.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
 export function isWipeQuestion(content:string):boolean{
  const text=normalize(content);
- return /\bwip(?:e(?:s|ou|ado|ar)?|ou|a|ar)\b/.test(text)&&(/\b(quando|qnd|qual|dia|horas|hora|hrs|horario|hoje|amanha|ontem|proximo|ultimo|ja|teve|deu|foi|calendario|registro)\b/.test(text)||/^wip(?:e|ou|a)\s*\?*$/.test(text));
+ if(text.length>300||/@everyone|@here/.test(text))return false;
+ if(!/\bwip(?:e(?:s|ou|ado|ar)?|ou|a|ar)\b/.test(text))return false;
+ // Announcements mentioning a future wipe are not questions.
+ return /\b(quando|qnd|qual|que horas|que dia|qual horario|qual registro)\b/.test(text)
+   || /^(?:o |e |ja |teve |deu |foi )?wip(?:e(?:s|ou|ado|ar)?|ou|a|ar)(?: do | no | de | )?(?:duo|trio|solo)?(?: e| eh)?(?: hoje| amanha| ontem| ja)?\s*\?*$/.test(text)
+   || /^(?:ja|hoje|amanha|ontem)\b[^.!\n]{0,70}\bwip(?:e(?:s|ou|ado|ar)?|ou|a|ar)\b[^.!\n]*\??$/.test(text);
+
 }
 export function wipeQuestionServer(content:string,channelId:string):GuerraFriaServerId|undefined{
  const text=normalize(content),trio=/\btrio\b/.test(text),duo=/\b(?:duo|solo)\b/.test(text);
