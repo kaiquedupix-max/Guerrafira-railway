@@ -18,6 +18,8 @@ test('full panel boots with Trio headers, bounded requests and separate chat vie
   for(const script of w.document.querySelectorAll('script'))w.eval(script.textContent);
   await wait(500);
   assert.ok(!w.document.getElementById('app').classList.contains('hidden'));
+  assert.equal(w.document.getElementById('ovOnline').textContent,'12');
+  assert.equal(w.document.getElementById('ovKnown').textContent,'300');
   assert.ok(calls.filter(c=>c.path.startsWith('/api/admin/')).every(c=>c.server==='trio'));
   w.document.querySelector('[data-view="chat"]').click();await wait(100);
   assert.match(w.document.getElementById('chatBox').textContent,/DUO PLAYER/);
@@ -27,5 +29,41 @@ test('full panel boots with Trio headers, bounded requests and separate chat vie
   assert.equal(calls.findLast(c=>c.path.endsWith('/server/chat')&&c.method==='POST').server,'trio');
   assert.ok(calls.length<35,'too many initial requests: '+calls.length);
   assert.deepEqual(errors,[]);assert.ok(mutations<500,'unexpected repeated DOM mutations: '+mutations);
+ }finally{w.close();}
+});
+test('Duo overview fills on first open after delayed authentication and keeps updating without tab clicks',async()=>{
+ const dom=new JSDOM(renderAdmin({}),{url:'https://guerrafriarust.com.br/painel',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,intervals=[];let online=23,clock=0;
+ Object.assign(w,{Headers,Request,Response,AbortSignal});const now=w.Date.now.bind(w.Date);w.Date.now=()=>now()+clock;
+ const originalInterval=w.setInterval.bind(w);w.setInterval=(fn,ms)=>{if(ms===10000)intervals.push(fn);return originalInterval(fn,ms)};
+ w.fetch=async(input,init={})=>{const path=new URL(typeof input==='string'?input:input.url,w.location.href).pathname;let data={};
+  if(path.endsWith('/me')){await wait(120);data={user:{username:'Duo Admin'},capabilities:{canViewFinance:false}};}
+  else if(path.endsWith('/overview')){assert.equal(new Headers(init.headers).get('X-GF-Server'),'solo-duo');data={server:{players:online,maxPlayers:300,queued:2,sleepers:8,joining:5,map:'Procedural Map'},summary:{knownPlayers:1000,activeBoosters:7,activeVips:9},recentModeration:[{action:'TEST',playerName:'Player',adminName:'Admin'}]};}
+  return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});
+ };
+ try{
+  for(const script of w.document.querySelectorAll('script'))w.eval(script.textContent);
+  await wait(400);
+  assert.equal(w.document.getElementById('sendAnnouncement'),null,'legacy form must be removed before initial data load');
+  assert.equal(w.document.getElementById('financeDays'),null,'restricted finance controls are optional');
+  for(const [id,value]of Object.entries({ovOnline:'23',ovQueue:'2',ovSleepers:'8',ovSlots:'300',ovMap:'Procedural Map',ovKnown:'1000',ovBoosters:'7',ovVips:'9'}))assert.equal(w.document.getElementById(id).textContent,value,id);
+  assert.match(w.document.getElementById('overviewLogs').textContent,/TEST/);
+  assert.equal(w.document.querySelector('.view.active').id,'overview');
+  online=31;clock+=2000;await Promise.all(intervals.map(fn=>fn()));await wait(20);assert.equal(w.document.getElementById('ovOnline').textContent,'31');
+  online=32;clock+=2000;w.document.dispatchEvent(new w.Event('visibilitychange'));await wait(20);assert.equal(w.document.getElementById('ovOnline').textContent,'32');
+ }finally{w.close();}
+});
+test('authentication recovery starts the entire overview after a temporary initial auth failure',async()=>{
+ const dom=new JSDOM(renderAdmin({}),{url:'https://guerrafriarust.com.br/painel',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;let authenticated=false;
+ Object.assign(w,{Headers,Request,Response,AbortSignal});w.console.error=()=>{};
+ w.fetch=async(input)=>{const path=new URL(typeof input==='string'?input:input.url,w.location.href).pathname;
+  if(path.endsWith('/me')&&!authenticated)return new Response(JSON.stringify({error:'temporary'}),{status:401});
+  const data=path.endsWith('/me')?{user:{username:'Recovered'},capabilities:{canViewFinance:false}}:path.endsWith('/overview')?{server:{players:44,maxPlayers:300},summary:{knownPlayers:800,activeVips:2,activeBoosters:1},recentModeration:[]}:{};
+  return new Response(JSON.stringify(data),{status:200});
+ };
+ try{
+  for(const script of w.document.querySelectorAll('script'))w.eval(script.textContent);
+  await wait(50);assert.equal(w.document.getElementById('ovOnline').textContent,'—');
+  authenticated=true;w.dispatchEvent(new w.Event('focus'));await wait(100);
+  assert.equal(w.document.getElementById('ovOnline').textContent,'44');assert.equal(w.document.querySelector('.view.active').id,'overview');assert.equal(w.document.getElementById('app').classList.contains('hidden'),false);
  }finally{w.close();}
 });

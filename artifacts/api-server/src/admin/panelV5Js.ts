@@ -9,10 +9,26 @@ function toast(msg,bad=false){const t=$('toast');t.textContent=msg;t.classList.r
 function buildNav(){for(const box of [$('nav'),$('mobileNav')]){box.innerHTML='';Object.entries(pages).forEach(([id,label])=>{const b=document.createElement('button');b.textContent=label;b.dataset.view=id;b.onclick=()=>show(id);box.appendChild(b)})}}
 function show(id){activePage=id;document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(id)?.classList.add('active');$('pageTitle').textContent=pages[id]||'Painel';document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));refreshActive();resetTimer()}
 function resetTimer(){clearInterval(pageTimer);pageTimer=setInterval(refreshActive,activePage==='chat'?3000:10000)}
+let initialized=false,booting=false;
 const refreshing=new Set();
 function refreshActive(){if(document.hidden||refreshing.has(activePage))return;const page=activePage;refreshing.add(page);return Promise.resolve(refreshPage()).finally(()=>refreshing.delete(page))}
 function refreshPage(){if(activePage==='overview')return loadOverview();if(activePage==='players')return loadPlayers();if(activePage==='chat')return loadChat();if(activePage==='steam')return loadSteam();if(activePage==='vip')return loadVips();if(activePage==='finance')return loadFinance();if(activePage==='logs')return loadLogs()}
-async function boot(){try{const me=await api('/api/admin/me');$('username').textContent=me.user?.username||'Administrador';buildNav();bind();void loadOverview();$('login').classList.add('hidden');$('app').classList.remove('hidden');document.querySelectorAll('[data-view="overview"]').forEach(b=>b.classList.add('active'));resetTimer()}catch(e){$('app').classList.add('hidden');$('login').classList.remove('hidden')}}
+async function boot(){
+ if(initialized||booting)return;
+ booting=true;
+ try{
+  const me=await api('/api/admin/me');
+  $('username').textContent=me.user?.username||'Administrador';
+  buildNav();bind();
+  $('login').classList.add('hidden');$('app').classList.remove('hidden');
+  initialized=true;show('overview');
+ }catch(e){console.error('Falha ao iniciar painel',e);$('app').classList.add('hidden');$('login').classList.remove('hidden')}
+ finally{booting=false;}
+}
+window.addEventListener('gf-admin-authenticated',()=>{if(!initialized)void boot()});
+document.addEventListener('visibilitychange',()=>{if(initialized&&!document.hidden)void refreshActive()});
+window.addEventListener('pageshow',()=>{if(initialized)void refreshActive()});
+
 async function loadOverview(){try{const d=await api('/api/admin/overview'),info=d.server||{},sum=d.summary||{};for(const [id,value]of Object.entries({ovOnline:info.players??sum.onlinePlayers??'—',ovQueue:info.queued??'—',ovSleepers:info.sleepers??'—',ovSlots:info.maxPlayers??'—',ovMap:info.map||'Indisponível',ovKnown:sum.knownPlayers??'—',ovBoosters:sum.activeBoosters??'—',ovVips:sum.activeVips??'—'}))if($(id))$(id).textContent=value;$('overviewLogs').innerHTML=(d.recentModeration||[]).slice(0,20).map(x=>'<tr><td>'+esc(x.action)+'</td><td>'+esc(x.playerName||'—')+'</td><td>'+esc(x.adminName||'—')+'</td><td>'+esc(x.reason||'—')+'</td><td>'+fmt(x.createdAt)+'</td></tr>').join('')}catch(e){toast(e.message,true)}}
 
 function renderPlayers(rows){const body=$('playersRows');body.innerHTML=rows.length?'':'<tr><td colspan="4"><div class="empty">Nenhum jogador encontrado.</div></td></tr>';rows.forEach(p=>{const tr=document.createElement('tr');tr.className='clickable';const online=p.isOnline===true;tr.innerHTML='<td><span class="status '+(online?'online':'offline')+'">● '+(online?'Online':'Offline')+'</span></td><td>'+esc(p.playerName||p.name||'Jogador')+'</td><td class="mono">'+esc(p.steamId)+'</td><td>'+(p.ping!=null?esc(p.ping)+' ms':fmt(p.lastSeen))+'</td>';tr.onclick=()=>openPlayer({...p,name:p.playerName||p.name});body.appendChild(tr)})}
@@ -37,5 +53,19 @@ async function loadSteam(){try{const d=await api('/api/admin/steam-links');$('st
 async function loadVips(){try{const d=await api('/api/admin/vips');$('vipRows').innerHTML=(d.vips||[]).map(v=>{const active=new Date(v.expiresAt).getTime()>Date.now();return '<tr><td class="mono">'+esc(v.steamId)+'</td><td>'+esc(v.vipTier)+'</td><td>'+fmt(v.expiresAt)+'</td><td><span class="status '+(active?'online':'offline')+'">'+(active?'Ativo':'Expirado')+'</span></td></tr>'}).join('')||'<tr><td colspan="4"><div class="empty">Nenhum VIP.</div></td></tr>'}catch(e){toast(e.message,true)}}
 async function loadFinance(){try{const days=$('financeDays').value,d=await api('/api/admin/finance/live?days='+days),s=d.summary||{};$('finBalance').textContent=d.account?.balanceAvailable?money(d.account.balance):'Indisponível';$('finGross').textContent=money(s.grossRevenue);$('finNet').textContent=money(s.netRevenue);$('finExpenses').textContent=money(s.expenses);$('finDeductions').textContent=money(Number(s.fees||0)+Number(s.refunded||0));$('finFlow').textContent=money(s.cashFlow);$('finFlow').style.color=Number(s.cashFlow||0)>=0?'#ffd84d':'#ff7c86';$('finSummary').textContent=(s.approved||0)+' entradas • '+(s.outgoings||0)+' saídas • ticket médio '+money(s.avgTicket);const trend=d.trend||[],max=Math.max(1,...trend.flatMap(x=>[Number(x.entries||0),Number(x.exits||0)]));$('financeChart').innerHTML=trend.map(x=>{const ih=Math.max(x.entries?3:1,Math.round(Number(x.entries||0)/max*100)),oh=Math.max(x.exits?3:1,Math.round(Number(x.exits||0)/max*100));return '<div class="cashDay" title="'+esc(x.day)+' • Entradas '+money(x.entries)+' • Saídas '+money(x.exits)+'"><div class="cashHalf"><i class="cashBar in" style="height:'+ih+'%"></i></div><div class="cashHalf out"><i class="cashBar out" style="height:'+oh+'%"></i></div></div>'}).join('');const rows=(d.payments||[]).slice(0,500);$('financeRows').innerHTML=rows.length?rows.map(p=>{const dir=p.direction==='out'?'out':'in',signed=dir==='out'?-Math.abs(Number(p.signedAmount||p.amount||0)):Number(p.signedAmount||p.netAmount||p.amount||0);return '<tr><td>'+fmt(p.dateApproved||p.dateCreated)+'</td><td><span class="movement '+dir+'">'+(dir==='out'?'↓ Saída':'↑ Entrada')+'</span></td><td>'+esc(p.description||'Movimentação')+'<div class="financeHint">#'+esc(p.id||'—')+'</div></td><td>'+esc(p.method||'—')+'</td><td>'+esc(p.status||'—')+'</td><td>'+money(p.grossAmount||p.amount)+'</td><td>'+money(Number(p.fees||0)+Number(p.refunded||0))+'</td><td class="amount '+dir+'">'+(signed>0?'+ ':'- ')+money(Math.abs(signed))+'</td></tr>'}).join(''):'<tr><td colspan="8"><div class="empty">Nenhuma movimentação neste período.</div></td></tr>'}catch(e){$('financeRows').innerHTML='<tr><td colspan="8"><div class="empty danger">'+esc(e.message)+'</div></td></tr>';toast(e.message,true)}}
 let cachedLogs=[];async function loadLogs(){try{const d=await api('/api/admin/modlogs');cachedLogs=d.logs||[];renderLogs()}catch(e){toast(e.message,true)}}function renderLogs(){const q=$('logSearch').value.toLowerCase().trim();const rows=cachedLogs.filter(x=>!q||[x.action,x.playerName,x.steamId,x.adminName,x.reason].some(v=>String(v||'').toLowerCase().includes(q)));$('logsRows').innerHTML=rows.map(x=>'<tr><td>'+esc(x.action)+'</td><td>'+esc(x.playerName)+'</td><td class="mono">'+esc(x.steamId)+'</td><td>'+esc(x.adminName)+'</td><td>'+esc(x.reason||'—')+'</td><td>'+fmt(x.createdAt)+'</td></tr>').join('')}
-function bind(){$('onlineOnly').onclick=()=>{playerMode='online';playersOffset=0;$('onlineOnly').classList.add('active');$('allPlayers').classList.remove('active');loadPlayers()};$('allPlayers').onclick=()=>{playerMode='all';playersOffset=0;$('allPlayers').classList.add('active');$('onlineOnly').classList.remove('active');loadPlayers()};$('playerSearch').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{playersOffset=0;loadPlayers()},250)};$('sendChat').onclick=sendChat;$('chatInput').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat()}};$('sendAnnouncement').onclick=async()=>{const message=$('announcement').value.trim();if(!message)return;try{await post('/api/admin/server/say',{message});$('announcement').value='';toast('Anúncio enviado.')}catch(e){toast(e.message,true)}};$('financeDays').onchange=loadFinance;$('logSearch').oninput=renderLogs;document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>show(x.dataset.open))}
+function bind(){
+ // Add-ons can remove the legacy server form or replace restricted finance controls
+ // before /me resolves. Missing optional controls must not abort panel startup.
+ const on=(id,event,handler)=>{const element=$(id);if(element)element[event]=handler};
+ on('onlineOnly','onclick',()=>{playerMode='online';playersOffset=0;$('onlineOnly').classList.add('active');$('allPlayers')?.classList.remove('active');loadPlayers()});
+ on('allPlayers','onclick',()=>{playerMode='all';playersOffset=0;$('allPlayers').classList.add('active');$('onlineOnly')?.classList.remove('active');loadPlayers()});
+ on('playerSearch','oninput',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{playersOffset=0;loadPlayers()},250)});
+ on('sendChat','onclick',sendChat);
+ on('chatInput','onkeydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat()}});
+ on('sendAnnouncement','onclick',async()=>{const message=$('announcement')?.value.trim();if(!message)return;try{await post('/api/admin/server/say',{message});$('announcement').value='';toast('Anúncio enviado.')}catch(e){toast(e.message,true)}});
+ on('financeDays','onchange',loadFinance);
+ on('logSearch','oninput',renderLogs);
+ document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>show(x.dataset.open));
+}
+
 boot();})();`;
