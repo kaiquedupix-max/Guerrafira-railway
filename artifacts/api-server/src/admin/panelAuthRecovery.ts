@@ -41,6 +41,7 @@ export const panelAuthRecoveryJs = String.raw`
       if(username && j?.user?.username) username.textContent=j.user.username;
       if(login) login.classList.add('hidden');
       if(app) app.classList.remove('hidden');
+      window.dispatchEvent(new Event('gf-admin-authenticated'));
     }catch{}
   }
 
