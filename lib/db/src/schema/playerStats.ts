@@ -1,7 +1,7 @@
 import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-export const playerStatsTable = pgTable("player_stats", {
+const columns = () => ({
   id:                serial("id").primaryKey(),
   steamId:           text("steam_id").notNull().unique(),
   playerName:        text("player_name").notNull(),
@@ -20,3 +20,6 @@ export const playerStatsTable = pgTable("player_stats", {
   rocketsUsed:       integer("rockets_used").notNull().default(0),
   updatedAt:         timestamp("updated_at").notNull().default(sql`now()`),
 });
+
+export const playerStatsTable = pgTable("player_stats", columns());
+export const trioPlayerStatsTable = pgTable("trio_player_stats", columns());

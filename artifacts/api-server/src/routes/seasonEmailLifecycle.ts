@@ -23,11 +23,10 @@ async function registrations():Promise<ProdRegistration[]> {
   return Array.isArray(r?.rows)?r.rows:[];
 }
 
-export async function getSeasonFinalWinners(): Promise<ProdWinner[]> {
+export async function getSeasonFinalWinners(): Promise<import("./seasonEmailService.js").SeasonWinner[]> {
   const total = await paidCount();
   const pool = Math.max(300, total * 20);
-  const source: any = await db.execute(sql`SELECT season_number FROM season_players GROUP BY season_number ORDER BY MAX(updated_at) DESC NULLS LAST,season_number DESC LIMIT 1`);
-  const seasonNumber = Number(source?.rows?.[0]?.season_number || 1);
+  const seasonNumber = 1; // Registration key 101 belongs to Season 1, never the latest scoring season.
   const r: any = await db.execute(sql`
     WITH admin_delta AS (
       SELECT steam_id,COALESCE(SUM(final_value),0) delta
@@ -48,6 +47,7 @@ export async function getSeasonFinalWinners(): Promise<ProdWinner[]> {
   return rows.map((x: any, i: number) => ({
     position: i + 1,
     name: String(x.player_name || x.discord_name || "Jogador"),
+    discordName:String(x.discord_name||""),steamId:String(x.steam_id||""),xp:Number(x.xp||0),
     prize: i === 0 ? `R$ ${(pool * .50).toFixed(2).replace('.', ',')}` : i === 1 ? `R$ ${(pool * .30).toFixed(2).replace('.', ',')}` : "VIP Ouro • 30 dias",
   }));
 }

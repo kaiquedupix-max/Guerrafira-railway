@@ -70,4 +70,4 @@ export async function executePreparedProceduralWipe(kind:WipeKind,seed:number,si
 export async function executeWipe(kind:WipeKind,rustMapsUrl:string,confirmation:string,actor:WipeActor){if(confirmation!=="WIPE GUERRA FRIA")throw new Error("Confirmação inválida.");return executePreparedWipe(kind,rustMapsUrl,actor,false)}
 export async function executeProceduralWipe(kind:WipeKind,seed:number,size:number,confirmation:string,actor:WipeActor){if(confirmation!=="WIPE GUERRA FRIA")throw new Error("Confirmação inválida.");return executePreparedProceduralWipe(kind,seed,size,actor,false)}
 
-async function resetWipeLeaderboard(kind:WipeKind,actor:WipeActor):Promise<void>{if(adminServer()!=="solo-duo")return;await resetAllLeaderboardStats();await auditWipe("LEADERBOARD_RESET_AFTER_WIPE",actor,`${kind}; reset automático concluído.`);}
+async function resetWipeLeaderboard(kind:WipeKind,actor:WipeActor):Promise<void>{await resetAllLeaderboardStats();await auditWipe("LEADERBOARD_RESET_AFTER_WIPE",actor,`${kind}; reset automático concluído.`);}

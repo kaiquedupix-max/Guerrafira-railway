@@ -1,3 +1,4 @@
+import { seasonStandingsSql } from "../core/seasonScores.js";
 import { type Client, type Guild, type GuildMember, type Role } from "discord.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -16,28 +17,10 @@ type Enrolled = { discord_id:string; steam_id:string; status:string; effective_m
 
 async function enrolledPlayers(): Promise<Enrolled[]> {
   const result:any = await db.execute(sql`
-    WITH sd AS (
-      SELECT steam_id,mmr,kills,updated_at FROM season_players WHERE season_number=${SEASON}
-    ),
-    adjustments AS (
-      SELECT steam_id,COALESCE(SUM(final_value),0) delta
-      FROM season_transactions WHERE season_number=${SEASON} AND category='admin' GROUP BY steam_id
-    ),
-    active AS (
-      SELECT r.discord_id,r.steam_id,r.status,r.created_at,
-             COALESCE(sd.mmr,${STARTING_MMR})+COALESCE(a.delta,0) effective_mmr,
-             COALESCE(sd.kills,0) kills,COALESCE(sd.updated_at,r.created_at) updated_at
-      FROM season_official_registrations r
-      LEFT JOIN sd ON sd.steam_id=r.steam_id
-      LEFT JOIN adjustments a ON a.steam_id=r.steam_id
-      WHERE r.season_key=${OFFICIAL_KEY} AND r.status='active'
-    ),
-    ranked AS (
-      SELECT active.*,ROW_NUMBER() OVER(ORDER BY effective_mmr DESC,kills DESC,updated_at ASC NULLS LAST) position FROM active
-    )
+    WITH ranked AS (${seasonStandingsSql(SEASON)})
     SELECT r.discord_id,r.steam_id,r.status,COALESCE(x.effective_mmr,${STARTING_MMR}) effective_mmr,COALESCE(x.position,0) position
     FROM season_official_registrations r
-    LEFT JOIN ranked x ON x.discord_id=r.discord_id
+    LEFT JOIN ranked x ON x.steam_id=r.steam_id
     WHERE r.season_key=${OFFICIAL_KEY}
   `);
   return (result?.rows||[]) as Enrolled[];
@@ -91,7 +74,7 @@ async function syncOnce(client:Client):Promise<void>{
     const guildId=String(process.env.DISCORD_GUILD_ID||"").trim();
     if(!guildId)return;
     const guild=await client.guilds.fetch(guildId);
-    await guild.roles.fetch().catch(error=>logger.warn({error,guildId},"Could not refresh Discord roles before Season 2 sync"));
+    await guild.roles.fetch();
     const registered=await ensureRole(guild,REGISTERED_ROLE_NAME);
     const roles=await rankRoles(guild);
     const rows=await enrolledPlayers();

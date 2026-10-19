@@ -1,8 +1,11 @@
-import { db, playerStatsTable } from "@workspace/db";
+import { clearReadCache } from "./readCache.js";
+import { playerStatsForServer } from "./competitiveStore.js";
+import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 /** Zera todo o histórico competitivo sem remover o cadastro dos jogadores. */
 export async function resetAllLeaderboardStats(): Promise<void> {
+  const playerStatsTable=playerStatsForServer();
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -22,6 +25,7 @@ export async function resetAllLeaderboardStats(): Promise<void> {
         rocketsUsed: 0,
         updatedAt: sql`now()`,
       });
+      clearReadCache();
       return;
     } catch (error) {
       lastError = error;

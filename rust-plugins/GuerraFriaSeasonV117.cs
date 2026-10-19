@@ -1626,6 +1626,7 @@ namespace Oxide.Plugins
             {
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("x-gf-season-secret", _config.SeasonApi.Secret);
+                request.SetRequestHeader("X-GF-Server", _config.SeasonApi.ServerId);
                 request.timeout = Math.Max(4, Mathf.CeilToInt(_config.SeasonApi.BootstrapTimeoutSeconds));
                 yield return request.SendWebRequest();
 
@@ -1894,6 +1895,7 @@ namespace Oxide.Plugins
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
                 request.SetRequestHeader("x-gf-season-secret", _config.SeasonApi.Secret);
+                request.SetRequestHeader("X-GF-Server", _config.SeasonApi.ServerId);
                 request.timeout = Math.Max(2, Mathf.CeilToInt(_config.SeasonApi.TimeoutSeconds));
 
                 yield return request.SendWebRequest();
@@ -2564,6 +2566,7 @@ namespace Oxide.Plugins
             {
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("x-gf-season-secret", _config.SeasonApi.Secret);
+                request.SetRequestHeader("X-GF-Server", _config.SeasonApi.ServerId);
                 request.timeout = Math.Max(3, Mathf.CeilToInt(_config.SeasonApi.TimeoutSeconds));
                 yield return request.SendWebRequest();
                 long code = request.responseCode;
@@ -2669,6 +2672,7 @@ namespace Oxide.Plugins
                     request.downloadHandler = new DownloadHandlerBuffer();
                     request.SetRequestHeader("Content-Type", "application/json");
                     request.SetRequestHeader("x-gf-season-secret", _config.SeasonApi.Secret);
+                request.SetRequestHeader("X-GF-Server", _config.SeasonApi.ServerId);
                     request.timeout = Math.Max(5, Mathf.CeilToInt(_config.SeasonApi.SnapshotTimeoutSeconds));
                     yield return request.SendWebRequest();
 
@@ -3239,6 +3243,7 @@ namespace Oxide.Plugins
             public string BootstrapUrl = GuerraFriaSeasonV117.SeasonBootstrapEndpoint;
             public string PingUrl = GuerraFriaSeasonV117.SeasonPingEndpoint;
             public string Secret = "";
+            public string ServerId = "solo-duo";
             public float SendIntervalSeconds = 0.75f;
             public int BatchSize = 250;
             public float TimeoutSeconds = 10f;

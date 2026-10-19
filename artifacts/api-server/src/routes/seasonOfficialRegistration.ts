@@ -19,7 +19,10 @@ const SOLDADO = rankIconData("soldado");
 
 type Profile = { fullName: string; contactEmail: string; pixType: string; pixKey: string };
 
-async function ensureTables() {
+let schemaReady:Promise<void>|undefined;
+export function ensureOfficialSeasonTables():Promise<void>{return schemaReady??=createTables().catch(error=>{schemaReady=undefined;throw error;});}
+const ensureTables=ensureOfficialSeasonTables;
+async function createTables() {
   await db.execute(sql`CREATE TABLE IF NOT EXISTS season_official_registrations (
     season_key INTEGER NOT NULL,
     discord_id TEXT NOT NULL,
@@ -39,7 +42,7 @@ async function ensureTables() {
     PRIMARY KEY(season_key,discord_id)
   )`);
   for (const c of [
-    "full_name TEXT", "contact_email TEXT", "prize_pix_type TEXT", "prize_pix_key TEXT",
+    "entry_type TEXT", "accepted_terms_at TIMESTAMPTZ", "full_name TEXT", "contact_email TEXT", "prize_pix_type TEXT", "prize_pix_key TEXT",
     "confirmation_email_sent_at TIMESTAMPTZ", "confirmation_email_status TEXT", "confirmation_last_error TEXT"
   ]) await db.execute(sql.raw(`ALTER TABLE season_official_registrations ADD COLUMN IF NOT EXISTS ${c}`));
 }

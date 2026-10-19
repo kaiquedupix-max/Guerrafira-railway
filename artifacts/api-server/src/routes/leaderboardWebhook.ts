@@ -1,53 +1,27 @@
+import { authenticatedEventServer, EventSourceError } from "../core/eventSource.js";
+import { withAdminServer } from "../core/adminServerContext.js";
+import { ensureCompetitiveStore } from "../core/competitiveStore.js";
 import { Router, type IRouter } from "express";
-import { timingSafeEqual } from "node:crypto";
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
-import { ingestLeaderboardPayload } from "../bot/killTracker.js";
+import { ingestUniqueLeaderboardEvent } from "../bot/killTracker.js";
 import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
-let initialized=false;
-
-function authorized(value:unknown):boolean{
-  const received=String(value||"").trim();
-  if(!received)return false;
-  const expectedValues=[
-    String(process.env.LEADERBOARD_WEBHOOK_SECRET||"").trim(),
-    String(process.env.SEASON_WEBHOOK_SECRET||"").trim(),
-  ].filter(Boolean);
-  if(!expectedValues.length)return false;
-  const b=Buffer.from(received);
-  return expectedValues.some((expected)=>{
-    const a=Buffer.from(expected);
-    return a.length===b.length&&timingSafeEqual(a,b);
-  });
-}
-
-async function initializeReceipts(){
-  if(initialized)return;
-  await db.execute(sql`CREATE TABLE IF NOT EXISTS leaderboard_event_receipts (event_id text PRIMARY KEY, received_at timestamp NOT NULL DEFAULT now())`);
-  initialized=true;
-}
 
 router.post("/leaderboard/events",async(req,res)=>{
-  if(!process.env.LEADERBOARD_WEBHOOK_SECRET?.trim()&&!process.env.SEASON_WEBHOOK_SECRET?.trim())return void res.status(503).json({error:"Segredo do webhook não configurado."});
-  if(!authorized(req.header("x-gf-leaderboard-secret")))return void res.status(401).json({error:"Assinatura do leaderboard inválida."});
+  let server;try{server=authenticatedEventServer(req,"leaderboard");}catch(error){const e=error as EventSourceError;return void res.status(e.status||400).json({error:e.message});}
+  await withAdminServer(server,async()=>{
   const events=Array.isArray(req.body?.events)?req.body.events.slice(0,250):[];
   if(!events.length)return void res.status(400).json({error:"Nenhum evento recebido."});
   try{
-    await initializeReceipts();let accepted=0,duplicates=0,rejected=0;
+    await ensureCompetitiveStore();let accepted=0,duplicates=0,rejected=0;
     for(const raw of events){
-      if(!raw||typeof raw!=="object"){rejected++;continue}
-      const eventId=String(raw.event_id||"").toLowerCase();
-      if(!/^[a-f0-9-]{16,64}$/.test(eventId)){rejected++;continue}
-      const receipt:any=await db.execute(sql`INSERT INTO leaderboard_event_receipts (event_id) VALUES (${eventId}) ON CONFLICT DO NOTHING RETURNING event_id`);
-      const inserted=Array.isArray(receipt?.rows)?receipt.rows.length>0:Array.isArray(receipt)?receipt.length>0:Number(receipt?.rowCount||0)>0;
-      if(!inserted){duplicates++;continue}
-      try{if(await ingestLeaderboardPayload(raw as Record<string,unknown>))accepted++;else rejected++}
-      catch(error){await db.execute(sql`DELETE FROM leaderboard_event_receipts WHERE event_id=${eventId}`).catch(()=>{});throw error}
+     if(!raw||typeof raw!=="object"||(raw.server_id!==undefined&&raw.server_id!==server)){rejected++;continue;}
+     const result=await ingestUniqueLeaderboardEvent(raw);
+     if(result==="accepted")accepted++;else if(result==="duplicate")duplicates++;else rejected++;
     }
-    res.json({ok:true,accepted,duplicates,rejected});
+    res.json({ok:true,serverId:server,accepted,duplicates,rejected});
   }catch(error){logger.error({error},"leaderboard webhook ingestion failed");res.status(500).json({error:"Falha ao gravar eventos do leaderboard."})}
+ });
 });
 
 export default router;

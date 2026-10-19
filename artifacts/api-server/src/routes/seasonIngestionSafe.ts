@@ -1,3 +1,5 @@
+import { authenticatedEventServer, eventKey, EventSourceError } from "../core/eventSource.js";
+import { SEASON_2_START_AT } from "./seasonRanks.js";
 import { Router, type IRouter } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { db } from "@workspace/db";
@@ -49,7 +51,9 @@ function rejectableDataError(error: unknown): boolean {
   return new Set(["22003", "22P02", "22007", "22008", "23502"]).has(info.code);
 }
 
-async function ensureTables() {
+let infrastructureReady:Promise<void>|undefined;
+export function ensureSeasonIngestionTables():Promise<void>{return infrastructureReady??=createTables().catch(error=>{infrastructureReady=undefined;throw error;});}
+async function createTables() {
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS seasons (
       season_number INTEGER PRIMARY KEY,
@@ -118,6 +122,9 @@ async function ensureTables() {
       received_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+  await db.execute(sql`ALTER TABLE season_transactions ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS season_tx_score_idx ON season_transactions(season_number,steam_id,happened_at)`);
+
 }
 
 type TargetSeason = {
@@ -187,9 +194,9 @@ function cleanPlayer(raw: Record<string, unknown>) {
   };
 }
 
-async function upsertPlayer(seasonNumber: number, seasonId: string, raw: Record<string, unknown>) {
+async function upsertPlayer(seasonNumber: number, seasonId: string, raw: Record<string, unknown>,store:Pick<typeof db,"execute">=db) {
   const p = cleanPlayer(raw);
-  await db.execute(sql`
+  await store.execute(sql`
     INSERT INTO season_players (
       season_number, season_id, steam_id, player_name, mmr,
       pvp_raid_mmr, farm_mmr, building_mmr, event_mmr, other_mmr,
@@ -247,14 +254,13 @@ async function upsertPlayer(seasonNumber: number, seasonId: string, raw: Record<
 }
 
 router.post("/season/events", async (req, res) => {
-  if (!secretValue()) return void res.status(503).json({ error: "Segredo da Season não configurado." });
-  if (!authorized(req.header("x-gf-season-secret"))) return void res.status(401).json({ error: "Assinatura da Season inválida." });
+  let server;try{server=authenticatedEventServer(req,"season");}catch(error){const e=error as EventSourceError;return void res.status(e.status||400).json({error:e.message});}
 
   const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 250) : [];
   if (!events.length) return void res.status(400).json({ error: "Nenhum evento recebido." });
 
   try {
-    await ensureTables();
+    await ensureSeasonIngestionTables();
     let accepted = 0;
     let duplicates = 0;
     let rejected = 0;
@@ -265,12 +271,13 @@ router.post("/season/events", async (req, res) => {
     for (const raw of events) {
       if (!raw || typeof raw !== "object") { rejected++; continue; }
       const e = raw as Record<string, any>;
-      const transactionId = s(e.transaction_id, 64).toLowerCase();
+      const rawTransactionId = s(e.transaction_id, 64).toLowerCase();
+      const transactionId=eventKey(server,rawTransactionId);
       const incomingSeasonId = s(e.season_id, 64);
       const incomingSeasonNumber = i(e.season_number);
       const player = (e.player && typeof e.player === "object" ? e.player : {}) as Record<string, unknown>;
 
-      if (!/^[a-f0-9-]{16,64}$/.test(transactionId) || incomingSeasonNumber < 1 || !incomingSeasonId) {
+      if (!/^[a-f0-9-]{16,64}$/.test(rawTransactionId) || incomingSeasonNumber < 1 || !incomingSeasonId || (e.server_id!==undefined&&e.server_id!==server) || !Number.isFinite(Number(e.final_value)) || Math.abs(Number(e.final_value))>1000000) {
         rejected++;
         continue;
       }
@@ -290,13 +297,15 @@ router.post("/season/events", async (req, res) => {
 
       try {
         const p = cleanPlayer(player);
-        const timestampUnix = Math.max(1, Math.min(i(e.timestamp_unix, Math.floor(Date.now() / 1000)), 4_102_444_800));
-        const receipt: any = await db.execute(sql`
+        const timestampUnix = Math.max(1, Math.min(i(e.timestamp_unix, Math.floor(Date.now() / 1000)), Math.floor(Date.now()/1000)+60));
+        if(target.seasonNumber===2&&timestampUnix*1000<new Date(SEASON_2_START_AT).getTime()){stale++;continue;}
+        const applied=await db.transaction(async tx=>{
+        const receipt: any = await tx.execute(sql`
           INSERT INTO season_transactions (
-            transaction_id, season_number, season_id, steam_id, player_name, category, event_type,
+            transaction_id, server_id, season_number, season_id, steam_id, player_name, category, event_type,
             base_value, multiplier, final_value, resulting_mmr, details, happened_at
           ) VALUES (
-            ${transactionId}, ${target.seasonNumber}, ${target.seasonId}, ${p.steamId}, ${p.playerName},
+            ${transactionId}, ${server}, ${target.seasonNumber}, ${target.seasonId}, ${p.steamId}, ${p.playerName},
             ${s(e.category, 64)}, ${s(e.event_type, 128)}, ${n(e.base_value)}, ${n(e.multiplier, 1)},
             ${n(e.final_value)}, ${p.mmr}, ${s(e.details, 4000)}, to_timestamp(${timestampUnix})
           )
@@ -308,18 +317,18 @@ router.post("/season/events", async (req, res) => {
           ? receipt.rows.length > 0
           : Number(receipt?.rowCount || 0) > 0;
 
-        if (!inserted) {
-          duplicates++;
-          continue;
-        }
+        if(!inserted)return false;
+        if(target.seasonNumber===2){
+          const delta=n(e.final_value),kill=String(e.event_type).toUpperCase()==="KILL"?1:0;
+          await tx.execute(sql`INSERT INTO season_players(season_number,season_id,steam_id,player_name,mmr,kills)
+            VALUES(${target.seasonNumber},${target.seasonId},${p.steamId},${p.playerName},${target.startingMmr+delta},${kill})
+            ON CONFLICT(season_number,steam_id) DO UPDATE SET player_name=EXCLUDED.player_name,
+            mmr=season_players.mmr+${delta},kills=season_players.kills+${kill},updated_at=NOW()`);
+        }else await upsertPlayer(target.seasonNumber,target.seasonId,player,tx);
+        return true;
+        });
+        if(applied)accepted++;else duplicates++;
 
-        try {
-          await upsertPlayer(target.seasonNumber, target.seasonId, player);
-          accepted++;
-        } catch (error) {
-          await db.execute(sql`DELETE FROM season_transactions WHERE transaction_id = ${transactionId}`).catch(() => {});
-          throw error;
-        }
       } catch (error) {
         if (rejectableDataError(error)) {
           rejected++;
@@ -335,7 +344,7 @@ router.post("/season/events", async (req, res) => {
 
     logger.info({ accepted, duplicates, rejected, stale, remapped, received: events.length }, "season batch ingested");
     res.setHeader("Cache-Control", "no-store");
-    return void res.status(200).json({ ok: true, accepted, duplicates, rejected, stale, remapped });
+    return void res.status(200).json({ ok: true, server_id:server, accepted, duplicates, rejected, stale, remapped });
   } catch (error) {
     logger.error({ err: errorInfo(error) }, "season safe ingestion failed");
     return void res.status(500).json({ error: "Falha ao armazenar eventos da Season." });
@@ -347,7 +356,7 @@ router.post("/season/snapshot", async (req, res) => {
   if (!authorized(req.header("x-gf-season-secret"))) return void res.status(401).json({ error: "Assinatura da Season inválida." });
 
   try {
-    await ensureTables();
+    await ensureSeasonIngestionTables();
     const incomingSeasonNumber = i(req.body?.season_number);
     const incomingSeasonId = s(req.body?.season_id, 64);
     const players = Array.isArray(req.body?.players) ? req.body.players.slice(0, 5000) : [];

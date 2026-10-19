@@ -1,3 +1,6 @@
+import { authenticatedEventServer, EventSourceError } from "../core/eventSource.js";
+import { SEASON_2_START_AT } from "./seasonRanks.js";
+import { ensureSeasonIngestionTables } from "./seasonIngestionSafe.js";
 import { Router, type IRouter } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { db } from "@workspace/db";
@@ -33,58 +36,7 @@ function s(value: unknown, max = 1000): string {
   return String(value ?? "").slice(0, max);
 }
 
-async function ensureTables() {
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS seasons (
-      season_number INTEGER PRIMARY KEY,
-      season_id TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
-      starting_mmr DOUBLE PRECISION NOT NULL DEFAULT 1000,
-      started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      ended_at TIMESTAMPTZ,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `);
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS season_players (
-      season_number INTEGER NOT NULL,
-      season_id TEXT NOT NULL,
-      steam_id TEXT NOT NULL,
-      player_name TEXT NOT NULL,
-      mmr DOUBLE PRECISION NOT NULL DEFAULT 1000,
-      pvp_raid_mmr DOUBLE PRECISION NOT NULL DEFAULT 0,
-      farm_mmr DOUBLE PRECISION NOT NULL DEFAULT 0,
-      building_mmr DOUBLE PRECISION NOT NULL DEFAULT 0,
-      event_mmr DOUBLE PRECISION NOT NULL DEFAULT 0,
-      other_mmr DOUBLE PRECISION NOT NULL DEFAULT 0,
-      kills INTEGER NOT NULL DEFAULT 0,
-      deaths INTEGER NOT NULL DEFAULT 0,
-      headshots INTEGER NOT NULL DEFAULT 0,
-      assists INTEGER NOT NULL DEFAULT 0,
-      wood BIGINT NOT NULL DEFAULT 0,
-      stone BIGINT NOT NULL DEFAULT 0,
-      metal_ore BIGINT NOT NULL DEFAULT 0,
-      sulfur_ore BIGINT NOT NULL DEFAULT 0,
-      hqm_ore BIGINT NOT NULL DEFAULT 0,
-      build_wood INTEGER NOT NULL DEFAULT 0,
-      build_stone INTEGER NOT NULL DEFAULT 0,
-      build_metal INTEGER NOT NULL DEFAULT 0,
-      build_armored INTEGER NOT NULL DEFAULT 0,
-      rockets_used INTEGER NOT NULL DEFAULT 0,
-      c4_used INTEGER NOT NULL DEFAULT 0,
-      satchels_used INTEGER NOT NULL DEFAULT 0,
-      raid_structures_destroyed INTEGER NOT NULL DEFAULT 0,
-      tcs_destroyed INTEGER NOT NULL DEFAULT 0,
-      raids_participated INTEGER NOT NULL DEFAULT 0,
-      raids_defended INTEGER NOT NULL DEFAULT 0,
-      bradley_participations INTEGER NOT NULL DEFAULT 0,
-      heli_participations INTEGER NOT NULL DEFAULT 0,
-      crates_hacked INTEGER NOT NULL DEFAULT 0,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (season_number, steam_id)
-    )
-  `);
-}
+const ensureTables=ensureSeasonIngestionTables;
 
 type CanonicalSeason = {
   seasonNumber: number;
@@ -185,7 +137,7 @@ async function bulkUpsertPlayers(seasonNumber: number, seasonId: string, rawPlay
 }
 
 router.get("/season/ping", async (req, res) => {
-  if (!authorized(req.header("x-gf-season-secret"))) return void res.status(401).json({ error: "Assinatura inválida." });
+  try{authenticatedEventServer(req,"season");}catch(error){const e=error as EventSourceError;return void res.status(e.status||400).json({error:e.message});}
   try {
     await db.execute(sql`SELECT 1`);
     res.setHeader("Cache-Control", "no-store");
@@ -197,7 +149,7 @@ router.get("/season/ping", async (req, res) => {
 });
 
 router.get("/season/bootstrap", async (req, res) => {
-  if (!authorized(req.header("x-gf-season-secret"))) return void res.status(401).json({ error: "Assinatura inválida." });
+  try{authenticatedEventServer(req,"season");}catch(error){const e=error as EventSourceError;return void res.status(e.status||400).json({error:e.message});}
   try {
     await ensureTables();
     const requested = i(req.query.season_number);
@@ -209,7 +161,8 @@ router.get("/season/bootstrap", async (req, res) => {
       res.setHeader("Cache-Control", "no-store");
       return void res.status(200).json({ ok: true, season: null, players: [] });
     }
-    const playersResult: any = await db.execute(sql`SELECT * FROM season_players WHERE season_number=${i(season.season_number)} AND season_id=${s(season.season_id, 64)} ORDER BY mmr DESC`);
+    const playersResult: any = await db.execute(sql`SELECT p.*,CASE WHEN p.season_number=2 THEN ${n(season.starting_mmr,1000)}+COALESCE((SELECT SUM(t.final_value) FROM season_transactions t WHERE t.season_number=p.season_number AND t.steam_id=p.steam_id AND t.happened_at>=${new Date(SEASON_2_START_AT)}),0) ELSE p.mmr END AS mmr
+      FROM season_players p WHERE p.season_number=${i(season.season_number)} AND p.season_id=${s(season.season_id, 64)} ORDER BY p.steam_id`);
     res.setHeader("Cache-Control", "no-store");
     return void res.status(200).json({ ok: true, season, players: playersResult?.rows ?? [] });
   } catch (error) {
@@ -219,7 +172,7 @@ router.get("/season/bootstrap", async (req, res) => {
 });
 
 router.post("/season/snapshot-fast", async (req, res) => {
-  if (!authorized(req.header("x-gf-season-secret"))) return void res.status(401).json({ error: "Assinatura inválida." });
+  try{authenticatedEventServer(req,"season");}catch(error){const e=error as EventSourceError;return void res.status(e.status||400).json({error:e.message});}
   try {
     await ensureTables();
     const control = await getSeasonControl(1);

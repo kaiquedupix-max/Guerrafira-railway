@@ -1,3 +1,4 @@
+import { seasonStandingsSql } from "../core/seasonScores.js";
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -64,7 +65,7 @@ router.get("/registrations", async (req, res) => {
            ORDER BY r.paid_at ASC NULLS LAST,r.created_at ASC
         `)
       : await db.execute(sql`
-          WITH admin_delta AS (
+          WITH standings AS (${seasonStandingsSql(CURRENT_SEASON)}), admin_delta AS (
             SELECT steam_id,COALESCE(SUM(final_value),0) AS delta
               FROM season_transactions
              WHERE season_number=${CURRENT_SEASON} AND category='admin'
@@ -72,7 +73,7 @@ router.get("/registrations", async (req, res) => {
           )
           SELECT r.season_key,r.discord_id,r.discord_name,r.steam_id,r.status,r.created_at,r.full_name,r.contact_email,r.prize_pix_type,r.prize_pix_key,
                  p.player_name,p.mmr AS raw_mmr,
-                 CASE WHEN p.mmr IS NULL THEN NULL ELSE p.mmr+COALESCE(a.delta,0) END AS mmr,
+                 p.effective_mmr AS mmr,
                  COALESCE(a.delta,0) AS admin_delta,
                  COALESCE(p.kills,0) AS kills,COALESCE(p.deaths,0) AS deaths,COALESCE(p.headshots,0) AS headshots,
                  COALESCE(p.raids_participated,0) AS raids_participated,COALESCE(p.raids_defended,0) AS raids_defended,
@@ -80,8 +81,8 @@ router.get("/registrations", async (req, res) => {
                  COALESCE(p.heli_participations,0) AS heli_participations,
                  COALESCE(p.crates_hacked,0) AS crates_hacked,p.updated_at
             FROM season_official_registrations r
-            LEFT JOIN season_players p
-              ON p.season_number=${CURRENT_SEASON} AND p.steam_id=NULLIF(TRIM(r.steam_id),'')
+            LEFT JOIN standings p
+              ON p.steam_id=NULLIF(TRIM(r.steam_id),'')
             LEFT JOIN admin_delta a ON a.steam_id=NULLIF(TRIM(r.steam_id),'')
            WHERE r.season_key=${CURRENT_SEASON_KEY} AND r.status='active'
            ORDER BY mmr DESC NULLS LAST,r.paid_at ASC NULLS LAST,r.created_at ASC

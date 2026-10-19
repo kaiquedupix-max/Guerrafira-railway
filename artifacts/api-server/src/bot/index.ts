@@ -275,7 +275,7 @@ async function registerSlashCommands(client: Client): Promise<void> {
 
 const recentEvents = new Map<string, number>();
 function isDuplicate(type: string, message: string): boolean {
-  const key = `${adminServer()}:${type}:${message.slice(0, 120)}`; const now = Date.now();
+  const key = `${adminServer()}:${type}:${message}`; const now = Date.now();
   if (recentEvents.has(key) && now - recentEvents.get(key)! < 3000) return true;
   recentEvents.set(key, now);
   if (recentEvents.size > 200) for (const [k, ts] of recentEvents) if (now - ts > 30000) recentEvents.delete(k);
@@ -284,7 +284,8 @@ function isDuplicate(type: string, message: string): boolean {
 
 function setupRconEventBridge(client: Client): void {
   addTrioRconEventHandler((type, message) => {
-    withAdminServer("trio", () => { void handleChatEvent(client, message).catch(error => logger.error({ error }, "Trio chat event failed")); });
+    withAdminServer("trio", () => { void handleChatEvent(client, message).catch(error => logger.error({ error }, "Trio chat event failed"));
+      if(!isDuplicate(type,message)){parseKillEvent(type,message);parseGatherEvent(type,message);parseCraftEvent(type,message);} });
   });
   setRconEventHandler(async (type, message) => {
     if (isDuplicate(type, message)) return;
@@ -340,7 +341,7 @@ function startStatusUpdater(client: Client): void {
   async function findExisting(ch: TextChannel) {
     if (statusMessageId) { const byId = await ch.messages.fetch(statusMessageId).catch(() => null); if (byId?.author.id === client.user?.id) return byId; }
     const recent = await ch.messages.fetch({ limit: 100 }).catch(() => null);
-    return recent?.find(m => m.author.id === client.user?.id && (m.embeds[0]?.footer?.text?.includes("Status automático") || m.embeds[0]?.footer?.text?.includes("Atualizado automaticamente") || m.components.some(r => r.components.some(c => "customId" in c.data && c.data.customId === "status_connect")))) ?? null;
+    return recent?.find(m => m.author.id === client.user?.id && (m.embeds[0]?.footer?.text?.includes("Status automático") || m.embeds[0]?.footer?.text?.includes("Atualizado automaticamente") || m.components.some(r => "components" in r && r.components.some(c => "customId" in c.data && c.data.customId === "status_connect")))) ?? null;
   }
   async function update() {
     try {

@@ -2,7 +2,8 @@ import { serverWipeWindow } from "../core/wipeCalendar.js";
 import { withAdminServer } from "../core/adminServerContext.js";
 import { getHostResourceSnapshot } from "../core/hostWipe.js";
 import { Router, type IRouter } from "express";
-import WebSocket from "ws";
+import { executeServerRcon } from "../bot/utils/serverRcon.js";
+import { cachedRead } from "../core/readCache.js";
 
 const router: IRouter = Router();
 
@@ -29,34 +30,13 @@ export function selectedServer(value: unknown): ServerId {
 
 function wipeWindow(now = new Date()) { const window=serverWipeWindow("trio",now);return {last:window.last?new Date(window.last).toISOString():null,next:window.next?new Date(window.next).toISOString():null}; }
 
-function trioCommand(command: string): Promise<string | null> {
-  if (!trioReady()) return Promise.resolve(null);
-  const host = String(process.env.TRIO_RCON_HOST || "").trim();
-  const port = String(process.env.TRIO_RCON_PORT || "28016").trim() || "28016";
-  const password = String(process.env.TRIO_RCON_PASSWORD || "").trim();
-  return new Promise(resolve => {
-    let done = false;
-    let socket: WebSocket;
-    const identifier = Math.floor(Math.random() * 2_000_000_000) + 1;
-    const finish = (value: string | null) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      try { socket?.terminate(); } catch {}
-      resolve(value);
-    };
-    socket = new WebSocket(`ws://${host}:${port}/${password}`);
-    const timer = setTimeout(() => finish(null), 3500);
-    socket.on("open", () => socket.send(JSON.stringify({ Identifier: identifier, Message: command, Name: "WebRcon" })));
-    socket.on("message", raw => {
-      try {
-        const msg = JSON.parse(raw.toString()) as RconResponse;
-        if (msg.Identifier === identifier) finish(String(msg.Message ?? ""));
-      } catch {}
-    });
-    socket.on("error", () => finish(null));
-    socket.on("close", () => finish(null));
-  });
+function trioCommand(command:string):Promise<string|null>{
+  if(!trioReady())return Promise.resolve(null);
+  return withAdminServer("trio",()=>cachedRead("status-rcon:"+command,async()=>{
+    const reply=await executeServerRcon("trio",command);
+    if(reply===null)throw new Error("Trio status unavailable");
+    return reply;
+  },5000,0)).catch(()=>null);
 }
 
 async function trioServerInfo() {
@@ -66,6 +46,7 @@ async function trioServerInfo() {
     const data: any = JSON.parse(raw);
     const num = (...values: unknown[]) => {
       for (const value of values) {
+        if(value===null||value===undefined||value==="")continue;
         const parsed = Number(value);
         if (Number.isFinite(parsed) && parsed >= 0) return parsed;
       }
@@ -93,7 +74,7 @@ async function trioServerInfo() {
 
 async function trioHostState(): Promise<string | null> {
   try {
-    const resource = await withAdminServer("trio", () => getHostResourceSnapshot());
+    const resource = await withAdminServer("trio", () => cachedRead("public-host-status",()=>getHostResourceSnapshot(),5000,0));
     return String(resource.state || "").toLowerCase() || null;
   } catch {
     return null;
