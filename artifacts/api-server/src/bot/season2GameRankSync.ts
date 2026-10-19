@@ -1,3 +1,5 @@
+import { adminServer, withAdminServer } from "../core/adminServerContext.js";
+import { seasonStandingsSql } from "../core/seasonScores.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
@@ -11,16 +13,18 @@ const GROUPS=ranksForSeason(SEASON).map(rank=>rank.group);
 const LEGACY_GROUPS=["season_recruta","season_soldado","season_tenente","season_major","season_marechal","season_generalfrio"];
 let timer:NodeJS.Timeout|null=null;
 let running=false;
-let groupsEnsured=false;
+const ensuredServers=new Set<string>();
 
 async function ensureStateTable(){
   await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS season_game_rank_state (
-      steam_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS season_server_game_rank_state (
+      server_id TEXT NOT NULL,
+      steam_id TEXT NOT NULL,
       season_key INTEGER NOT NULL DEFAULT 102,
       current_group TEXT,
       active BOOLEAN NOT NULL DEFAULT FALSE,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(server_id,steam_id)
     )
   `);
 }
@@ -34,7 +38,7 @@ async function cmd(command:string):Promise<string|null>{
 }
 
 async function ensureGroups(){
-  if(groupsEnsured)return;
+  if(ensuredServers.has(adminServer()))return;
   let success=true;
   for(const rank of ranksForSeason(SEASON)){
     const title=rank.name.replace(/\s+/g,"-");
@@ -44,41 +48,22 @@ async function ensureGroups(){
     const visible=await cmd(`chat group set ${rank.group} titlehiddenifnotprimary false`);
     if([created,titled,colored,visible].some(reply=>reply===null))success=false;
   }
-  groupsEnsured=success;
+  if(success)ensuredServers.add(adminServer());
   if(!success)logger.warn("Season 2 Better Chat groups were not fully confirmed; sync will retry.");
 }
 
 async function trackedPlayers(){
   await ensureStateTable();
   const result:any=await db.execute(sql`
-    WITH sd AS (
-      SELECT steam_id,mmr,kills,updated_at FROM season_players WHERE season_number=${SEASON}
-    ),
-    adjustments AS (
-      SELECT steam_id,COALESCE(SUM(final_value),0) delta
-      FROM season_transactions WHERE season_number=${SEASON} AND category='admin' GROUP BY steam_id
-    ),
-    active AS (
-      SELECT r.steam_id,r.status,r.created_at,(sd.steam_id IS NOT NULL) has_activity,
-             COALESCE(sd.mmr,${STARTING_MMR})+COALESCE(a.delta,0) effective_mmr,
-             COALESCE(sd.kills,0) kills,COALESCE(sd.updated_at,r.created_at) updated_at
-      FROM season_official_registrations r
-      LEFT JOIN sd ON sd.steam_id=r.steam_id
-      LEFT JOIN adjustments a ON a.steam_id=r.steam_id
-      WHERE r.season_key=${OFFICIAL_KEY} AND r.status='active'
-    ),
-    ranked AS (
-      SELECT active.*,ROW_NUMBER() OVER(ORDER BY effective_mmr DESC,kills DESC,updated_at ASC NULLS LAST) position FROM active
-    ),
+    WITH ranked AS (${seasonStandingsSql(SEASON)}),
     registration_rows AS (
-      SELECT r.steam_id,r.status,(sd.steam_id IS NOT NULL) has_activity,
+      SELECT r.steam_id,r.status,COALESCE(rank.season_scored,FALSE) has_activity,
              COALESCE(rank.effective_mmr,${STARTING_MMR}) effective_mmr,COALESCE(rank.position,0) position
       FROM season_official_registrations r
-      LEFT JOIN sd ON sd.steam_id=r.steam_id
       LEFT JOIN ranked rank ON rank.steam_id=r.steam_id
       WHERE r.season_key=${OFFICIAL_KEY}
     ),
-    season_state AS (SELECT * FROM season_game_rank_state WHERE season_key=${OFFICIAL_KEY})
+    season_state AS (SELECT * FROM season_server_game_rank_state WHERE season_key=${OFFICIAL_KEY} AND server_id=${adminServer()})
     SELECT COALESCE(r.steam_id,s.steam_id) steam_id,COALESCE(r.status,'removed') status,
            COALESCE(r.has_activity,FALSE) has_activity,COALESCE(r.effective_mmr,${STARTING_MMR}) effective_mmr,
            COALESCE(r.position,0) position,s.current_group,s.active state_active
@@ -95,9 +80,9 @@ function adminWords(){
   return new Set(["admin","administrator","owner","moderator","mod","staff",...extra]);
 }
 
-async function isServerAdmin(steamId:string):Promise<boolean>{
+async function isServerAdmin(steamId:string):Promise<boolean|null>{
   const reply=await cmd(`chat user info ${steamId}`);
-  if(reply===null)return false;
+  if(reply===null)return null;
   const body=String(reply).toLowerCase();
   for(const word of adminWords()){
     if(body.includes(word))return true;
@@ -114,13 +99,13 @@ async function normalize(steamId:string,desired:string|null):Promise<boolean>{
 
 async function saveState(steamId:string,group:string|null,active:boolean){
   await db.execute(sql`
-    INSERT INTO season_game_rank_state(steam_id,season_key,current_group,active,updated_at)
-    VALUES(${steamId},${OFFICIAL_KEY},${group},${active},now())
-    ON CONFLICT(steam_id) DO UPDATE SET season_key=EXCLUDED.season_key,current_group=EXCLUDED.current_group,active=EXCLUDED.active,updated_at=now()
+    INSERT INTO season_server_game_rank_state(server_id,steam_id,season_key,current_group,active,updated_at)
+    VALUES(${adminServer()},${steamId},${OFFICIAL_KEY},${group},${active},now())
+    ON CONFLICT(server_id,steam_id) DO UPDATE SET season_key=EXCLUDED.season_key,current_group=EXCLUDED.current_group,active=EXCLUDED.active,updated_at=now()
   `);
 }
 
-export async function syncSeason2GameRanksOnce():Promise<void>{
+async function syncServerRanks():Promise<void>{
   if(running)return;
   running=true;
   try{
@@ -131,6 +116,7 @@ export async function syncSeason2GameRanksOnce():Promise<void>{
       const steamId=String(row.steam_id||"").trim();
       if(!validSteam(steamId))continue;
       const serverAdmin=await isServerAdmin(steamId);
+      if(serverAdmin===null){failed++;continue;}
       const previous=GROUPS.includes(String(row.current_group||""))?String(row.current_group):null;
       if(serverAdmin){
         adminsIgnored++;
@@ -162,6 +148,13 @@ export async function syncSeason2GameRanksOnce():Promise<void>{
     if(changed||cleared||failed||adminsIgnored)logger.info({tracked:rows.length,changed,cleared,failed,adminsIgnored},"Season 2 Rust group sync completed");
   }catch(error){logger.error({error},"Season 2 Rust group sync failed");}
   finally{running=false;}
+}
+
+export async function syncSeason2GameRanksOnce():Promise<void>{
+  for(const server of ["solo-duo","trio"] as const){
+    if(server==="trio"&&!process.env.TRIO_RCON_HOST)continue;
+    await withAdminServer(server,()=>syncServerRanks());
+  }
 }
 
 export function startSeason2GameRankSync():void{

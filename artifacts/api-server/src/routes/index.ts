@@ -49,6 +49,10 @@ import vorkenIntegrationRouter from "./vorkenIntegration.js";
 import { startSeason2Lifecycle } from "./season2Lifecycle.js";
 import { enhanceStatusHtml } from "../core/multiServerUi.js";
 
+let backgroundStarted=false;
+export function startBackgroundServices(){
+ if(backgroundStarted)return;
+ backgroundStarted=true;
 startSeason2Lifecycle();
 startPaymentStatusNotifier();
 startCardPaymentReconciler();
@@ -63,6 +67,8 @@ startSeason1GameRankCleanup();
 startPromoReconciler();
 void repairWipeSchedule20260904().catch(error => console.error("Failed to repair 04/09 wipe schedule", error));
 void runSeasonEmailRepairAutorun();
+}
+
 
 const router: IRouter = Router();
 router.use(healthRouter);

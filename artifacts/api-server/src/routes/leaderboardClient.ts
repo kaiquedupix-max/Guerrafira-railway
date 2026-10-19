@@ -29,6 +29,9 @@ export const leaderboardClientJs = String.raw`
     farm: ['📦 Farm Total', 'Recursos', '🏗️ Madeira + pedra + metal + enxofre + sucata.', cdn + 'wood.png'],
     deaths: ['☠️ Mortes', 'Mortes', '🪦 Mortes registradas.', null]
   };
+  const server = new URLSearchParams(location.search).get('server') === 'trio' ? 'trio' : 'solo-duo';
+  document.querySelectorAll('[data-server]').forEach(link => {if(link.dataset.server===server)link.setAttribute('aria-current','page');});
+  let loading=false;
   let payload = null;
   let current = 'kills';
   let expanded = false;
@@ -82,8 +85,12 @@ export const leaderboardClientJs = String.raw`
   }
 
   async function load() {
+    if(loading)return;
+    loading=true;
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),15000);
     try {
-      const response = await fetch('/api/leaderboard?ts=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' });
+      const response = await fetch('/api/leaderboard?server=' + server + '&ts=' + Date.now(), { cache: 'no-store', credentials: 'same-origin', signal:controller.signal });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const next = await response.json();
       if (!next || !next.summary || !next.categories) throw new Error('Resposta inválida');
@@ -99,13 +106,15 @@ export const leaderboardClientJs = String.raw`
       render();
     } catch (error) {
       console.error('Falha ao carregar leaderboard', error);
-      ui.rows.innerHTML = '<div class="empty">Erro ao carregar ranking. Atualize a página em alguns segundos.</div>';
-    }
+      ui.updated.textContent='Atualização indisponível. Tentando novamente em breve.';
+      if(!payload)ui.rows.innerHTML = '<div class="empty">Erro ao carregar ranking. Atualize a página em alguns segundos.</div>';
+    } finally {clearTimeout(timeout);loading=false;}
   }
 
   ui.toggle.addEventListener('click', () => { expanded = !expanded; render(); });
   buildTabs();
   load();
-  window.setInterval(load, 60000);
+  window.setInterval(()=>{if(!document.hidden)load();}, 60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)load();});
 })();
 `;

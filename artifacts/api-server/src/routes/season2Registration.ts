@@ -1,3 +1,4 @@
+import { ensureOfficialSeasonTables } from "./seasonOfficialRegistration.js";
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -31,32 +32,7 @@ const clean=(value:unknown,max=180)=>String(value??"").trim().slice(0,max);
 
 function registrationOpen(){return Date.now()<=DEADLINE.getTime();}
 
-async function ensureTable(){
-  await db.execute(sql`CREATE TABLE IF NOT EXISTS season_official_registrations (
-    season_key INTEGER NOT NULL,
-    discord_id TEXT NOT NULL,
-    discord_name TEXT NOT NULL,
-    steam_id TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    amount NUMERIC(10,2) NOT NULL DEFAULT 0,
-    mp_payment_id TEXT,
-    mp_preference_id TEXT,
-    full_name TEXT,
-    contact_email TEXT,
-    prize_pix_type TEXT,
-    prize_pix_key TEXT,
-    entry_type TEXT,
-    accepted_terms_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    paid_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY(season_key,discord_id)
-  )`);
-  for(const column of [
-    "full_name TEXT","contact_email TEXT","prize_pix_type TEXT","prize_pix_key TEXT",
-    "entry_type TEXT","accepted_terms_at TIMESTAMPTZ"
-  ]) await db.execute(sql.raw(`ALTER TABLE season_official_registrations ADD COLUMN IF NOT EXISTS ${column}`));
-}
+const ensureTable=ensureOfficialSeasonTables;
 
 function validate(body:any){
   const fullName=clean(body?.fullName,120);

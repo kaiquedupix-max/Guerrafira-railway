@@ -1,3 +1,4 @@
+import { seasonStandingsSql } from "../core/seasonScores.js";
 import {requireAdmin} from "../admin/guard.js";
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
@@ -16,32 +17,14 @@ function text(value: unknown, max = 64): string { return String(value ?? "").sli
 async function competitiveRank(seasonNumber:number,steamId:string,baseMmr:unknown){
   const key=seasonRegistrationKey(seasonNumber);
   const result:any=await db.execute(sql`
-    WITH adjustments AS (
-      SELECT steam_id,COALESCE(SUM(final_value),0) delta
-      FROM season_transactions
-      WHERE season_number=${seasonNumber} AND category='admin'
-      GROUP BY steam_id
-    ),
-    ranked AS (
-      SELECT r.steam_id,
-             COALESCE(p.mmr,1000)+COALESCE(a.delta,0) effective_mmr,
-             ROW_NUMBER() OVER(
-               ORDER BY COALESCE(p.mmr,1000)+COALESCE(a.delta,0) DESC,
-                        COALESCE(p.kills,0) DESC,
-                        COALESCE(p.updated_at,r.created_at) ASC NULLS LAST
-             ) position
-      FROM season_official_registrations r
-      LEFT JOIN season_players p ON p.season_number=${seasonNumber} AND p.steam_id=r.steam_id
-      LEFT JOIN adjustments a ON a.steam_id=r.steam_id
-      WHERE r.season_key=${key} AND r.status='active'
-    )
-    SELECT effective_mmr,position FROM ranked WHERE steam_id=${steamId} LIMIT 1
+    WITH ranked AS (${seasonStandingsSql(seasonNumber)})
+    SELECT * FROM ranked WHERE steam_id=${steamId} LIMIT 1
   `);
   const row=result?.rows?.[0];
   const effectiveMmr=row?.effective_mmr??baseMmr;
   const position=int(row?.position,0);
   const xp=xpFromMmr(effectiveMmr,1000);
-  return {rank:rankForSeason(seasonNumber,xp,position),effectiveMmr:num(effectiveMmr,1000),position,xp};
+  return {rank:rankForSeason(seasonNumber,xp,position),effectiveMmr:num(effectiveMmr,1000),position,xp,stats:row};
 }
 
 router.get("/season/:number/player/:steamId/audit", requireAdmin, async (req, res) => {
@@ -67,21 +50,22 @@ router.get("/season/:number/player/:steamId/audit", requireAdmin, async (req, re
     const competitive=await competitiveRank(seasonNumber,steamId,row.mmr);
     const patente = competitive.rank.name;
     const player: Record<string, any> = {
+      mmr:competitive.effectiveMmr,
       steam_id: row.steam_id,
       player_name: row.player_name,
       patente,
       patente_maxima: Boolean(competitive.rank.top1_only),
       position: competitive.position || null,
       xp: competitive.xp,
-      kills: int(row.kills),
-      deaths: int(row.deaths),
-      headshots: int(row.headshots),
-      assists: int(row.assists),
-      raids_participated: int(row.raids_participated),
-      raids_defended: int(row.raids_defended),
-      bradley_participations: int(row.bradley_participations),
-      heli_participations: int(row.heli_participations),
-      crates_hacked: int(row.crates_hacked),
+      kills: int(competitive.stats?.kills??row.kills),
+      deaths: int(competitive.stats?.deaths??row.deaths),
+      headshots: int(competitive.stats?.headshots??row.headshots),
+      assists: int(competitive.stats?.assists??row.assists),
+      raids_participated: int(competitive.stats?.raids_participated??row.raids_participated),
+      raids_defended: int(competitive.stats?.raids_defended??row.raids_defended),
+      bradley_participations: int(competitive.stats?.bradley_participations??row.bradley_participations),
+      heli_participations: int(competitive.stats?.heli_participations??row.heli_participations),
+      crates_hacked: int(competitive.stats?.crates_hacked??row.crates_hacked),
       updated_at: row.updated_at,
     };
     if (player.patente_maxima) player.general_score = competitive.xp;

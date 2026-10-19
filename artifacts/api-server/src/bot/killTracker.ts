@@ -1,5 +1,8 @@
+import { playerStatsForServer } from "../core/competitiveStore.js";
+import { eventKey } from "../core/eventSource.js";
+import { adminServer } from "../core/adminServerContext.js";
 /** Guerra Fria leaderboard tracker + detector de suspeita. */
-import { db, playerStatsTable } from "@workspace/db";
+import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { analyzeKill, analyzeArrowHit } from "./antiCheat.js";
@@ -19,14 +22,16 @@ function eventName(obj: Record<string, unknown>): string {
   return typeof raw === "string" ? raw.toLowerCase() : "";
 }
 
-async function recordKill(opts: { killerSteamId: string; killerName: string; victimSteamId: string; victimName: string; headshot: boolean; }): Promise<void> {
+async function recordKill(opts: { killerSteamId: string; killerName: string; victimSteamId: string; victimName: string; headshot: boolean; }, store:Pick<typeof db,"insert">=db): Promise<void> {
+  if(store===db)return db.transaction(tx=>recordKill(opts,tx));
+  const playerStatsTable=playerStatsForServer();
   const { killerSteamId, killerName, victimSteamId, victimName, headshot } = opts;
   await Promise.all([
-    db.insert(playerStatsTable).values({ steamId: killerSteamId, playerName: killerName, kills: 1, headshots: headshot ? 1 : 0 }).onConflictDoUpdate({
+    store.insert(playerStatsTable).values({ steamId: killerSteamId, playerName: killerName, kills: 1, headshots: headshot ? 1 : 0 }).onConflictDoUpdate({
       target: playerStatsTable.steamId,
       set: { playerName: killerName, kills: sql`${playerStatsTable.kills} + 1`, headshots: sql`${playerStatsTable.headshots} + ${headshot ? 1 : 0}`, updatedAt: sql`now()` },
     }),
-    db.insert(playerStatsTable).values({ steamId: victimSteamId, playerName: victimName, deaths: 1 }).onConflictDoUpdate({
+    store.insert(playerStatsTable).values({ steamId: victimSteamId, playerName: victimName, deaths: 1 }).onConflictDoUpdate({
       target: playerStatsTable.steamId,
       set: { playerName: victimName, deaths: sql`${playerStatsTable.deaths} + 1`, updatedAt: sql`now()` },
     }),
@@ -59,6 +64,7 @@ export function parseKillEvent(type: string, message: string): boolean {
   const obj = extractJson(message) as CombatPayload | null;
   if (!obj) return false;
   const ev = eventName(obj);
+  if(obj.event_id&&["kill","arrow_hit"].includes(ev)){void ingestUniqueLeaderboardEvent(obj).catch(err=>logger.error({err},"RCON leaderboard ingestion failed"));return true;}
   if (ev === "arrow_hit") return processArrowHit(obj);
   const lowerType = type.toLowerCase();
   if (!(ev === "kill" || lowerType.includes("kill") || lowerType.includes("death") || lowerType.includes("combat") || lowerType === "generic" || type === "")) return false;
@@ -91,7 +97,8 @@ export function parseArrowHitEvent(type: string, message: string): boolean {
 
 interface GatherPayload extends Record<string, unknown> { event?: string; steamid?: string; player?: string; item?: string; amount?: number; }
 
-async function recordGatherPayload(obj: GatherPayload): Promise<boolean> {
+async function recordGatherPayload(obj: GatherPayload,store:Pick<typeof db,"insert">=db): Promise<boolean> {
+  const playerStatsTable=playerStatsForServer();
   if (!obj?.steamid || !/^7656119\d{10}$/.test(String(obj.steamid))) return false;
   const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
   if (amount <= 0) return false;
@@ -104,7 +111,7 @@ async function recordGatherPayload(obj: GatherPayload): Promise<boolean> {
   else if (item === "sulfur.ore") { values.sulfurOreGathered = amount; set.sulfurOreGathered = sql`${playerStatsTable.sulfurOreGathered} + ${amount}`; }
   else if (item === "scrap") { values.scrapGathered = amount; set.scrapGathered = sql`${playerStatsTable.scrapGathered} + ${amount}`; }
   else return false;
-  await db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any });
+  await store.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any });
   return true;
 }
 
@@ -113,13 +120,14 @@ export function parseGatherEvent(type: string, message: string): boolean {
   if (!obj?.steamid) return false;
   const ev = eventName(obj); const lowerType = type.toLowerCase();
   if (ev !== "gather" && !lowerType.includes("gather") && !lowerType.includes("resource")) return false;
-  recordGatherPayload(obj).catch(err => logger.error({ err }, "recordGather error"));
+  (obj.event_id?ingestUniqueLeaderboardEvent(obj):recordGatherPayload(obj)).catch(err => logger.error({ err }, "recordGather error"));
   return true;
 }
 
 const EXPLOSIVE_SHORTNAMES = new Set(["explosives", "explosive.timed", "grenade.f1", "grenade.beancan", "ammo.rocket.basic", "ammo.rocket.hv", "ammo.rocket.fire", "ammo.rifle.explosive", "surveycharge"]);
 
-async function recordCraftPayload(obj: GatherPayload): Promise<boolean> {
+async function recordCraftPayload(obj: GatherPayload,store:Pick<typeof db,"insert">=db): Promise<boolean> {
+  const playerStatsTable=playerStatsForServer();
   if (!obj?.steamid || !/^7656119\d{10}$/.test(String(obj.steamid))) return false;
   const ev = eventName(obj), item = String(obj.item ?? "").toLowerCase();
   const amount = Number.isFinite(Number(obj.amount)) ? Math.max(0, Math.floor(Number(obj.amount))) : 0;
@@ -136,7 +144,7 @@ async function recordCraftPayload(obj: GatherPayload): Promise<boolean> {
     if (isGunpowder) { values.gunpowderCrafted = amount; set.gunpowderCrafted = sql`${playerStatsTable.gunpowderCrafted} + ${amount}`; }
     if (isExplosive) { values.explosivesCrafted = amount; set.explosivesCrafted = sql`${playerStatsTable.explosivesCrafted} + ${amount}`; }
   }
-  await db.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any });
+  await store.insert(playerStatsTable).values(values as typeof playerStatsTable.$inferInsert).onConflictDoUpdate({ target: playerStatsTable.steamId, set: set as any });
   return true;
 }
 
@@ -145,23 +153,33 @@ export function parseCraftEvent(type: string, message: string): boolean {
   if (!obj?.steamid) return false;
   const ev = eventName(obj),lowerType=type.toLowerCase();
   if(ev!=="raid_use"&&ev!=="craft"&&!lowerType.includes("craft"))return false;
-  recordCraftPayload(obj).catch(err=>logger.error({err},"recordCraft error"));
+  (obj.event_id?ingestUniqueLeaderboardEvent(obj):recordCraftPayload(obj)).catch(err=>logger.error({err},"recordCraft error"));
   return true;
 }
 
-export async function ingestLeaderboardPayload(obj: Record<string, unknown>): Promise<boolean> {
+export async function ingestLeaderboardPayload(obj: Record<string, unknown>,store:Pick<typeof db,"insert">=db): Promise<boolean> {
   const ev = eventName(obj);
   if (ev === "ready") return true;
   if (ev === "kill") {
     const killerId=String(obj.attacker_steamid??""),victimId=String(obj.victim_steamid??"");
     if(!/^7656119\d{10}$/.test(killerId)||!/^7656119\d{10}$/.test(victimId)||killerId===victimId)return false;
     const killerName=String(obj.attacker??"Unknown"),victimName=String(obj.victim??"Unknown"),headshot=obj.headshot===true;
-    await recordKill({killerSteamId:killerId,killerName,victimSteamId:victimId,victimName,headshot});
+    await recordKill({killerSteamId:killerId,killerName,victimSteamId:victimId,victimName,headshot},store);
     void analyzeKill({attackerSteamId:killerId,attackerName:killerName,victimSteamId:victimId,victimName,headshot,weapon:typeof obj.weapon==="string"?obj.weapon:undefined,distance:Number.isFinite(Number(obj.distance))?Number(obj.distance):undefined,timestamp:Number.isFinite(Number(obj.timestamp))?Number(obj.timestamp):undefined}).catch(err=>logger.error({err},"webhook kill detector error"));
     return true;
   }
   if(ev==="arrow_hit")return processArrowHit(obj as CombatPayload);
-  if(ev==="gather")return recordGatherPayload(obj as GatherPayload);
-  if(ev==="craft"||ev==="raid_use")return recordCraftPayload(obj as GatherPayload);
+  if(ev==="gather")return recordGatherPayload(obj as GatherPayload,store);
+  if(ev==="craft"||ev==="raid_use")return recordCraftPayload(obj as GatherPayload,store);
   return false;
+}
+
+export async function ingestUniqueLeaderboardEvent(obj:Record<string,unknown>):Promise<"accepted"|"duplicate"|"rejected">{
+ const rawId=String(obj.event_id||"").toLowerCase();
+ if(!/^[a-f0-9-]{16,64}$/.test(rawId))return "rejected";
+ return db.transaction(async tx=>{
+  const result=await tx.execute(sql`INSERT INTO leaderboard_event_receipts(event_id) VALUES(${eventKey(adminServer(),rawId)}) ON CONFLICT DO NOTHING RETURNING event_id`);
+  if(!result.rows.length)return "duplicate";
+  return await ingestLeaderboardPayload(obj,tx)?"accepted":"rejected";
+ });
 }

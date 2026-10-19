@@ -1,3 +1,5 @@
+import { playerStatsForServer } from "../../core/competitiveStore.js";
+import { adminServer } from "../../core/adminServerContext.js";
 import {
   SlashCommandBuilder,
   EmbedBuilder,
@@ -7,9 +9,9 @@ import {
   type ChatInputCommandInteraction,
 } from "discord.js";
 import { desc, gt, sql } from "drizzle-orm";
-import { db, playerStatsTable } from "@workspace/db";
+import { db } from "@workspace/db";
 
-const LEADERBOARD_URL = process.env.LEADERBOARD_URL?.trim() || "https://guerrafria.up.railway.app";
+const LEADERBOARD_URL = process.env.LEADERBOARD_URL?.trim() || "https://www.guerrafriarust.com.br/leaderboard";
 
 const CATEGORIES = [
   { value: "kills",     name: "🔫 Top Kills"              },
@@ -47,11 +49,12 @@ function websiteButton() {
       .setLabel("Abrir Leaderboard Completo")
       .setEmoji("🌐")
       .setStyle(ButtonStyle.Link)
-      .setURL(LEADERBOARD_URL),
+      .setURL(LEADERBOARD_URL + (LEADERBOARD_URL.includes("?")?"&":"?") + "server=" + adminServer()),
   );
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const playerStatsTable=playerStatsForServer();
   await interaction.deferReply({ ephemeral: true });
 
   const cat = interaction.options.getString("categoria", true) as Category;

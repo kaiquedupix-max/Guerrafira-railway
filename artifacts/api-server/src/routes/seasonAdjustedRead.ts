@@ -1,3 +1,4 @@
+import { seasonStandingsSql } from "../core/seasonScores.js";
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -72,144 +73,6 @@ function publicPlayer(seasonNumber:number,row:any,position?:number){
   };
 }
 
-function universe(seasonNumber:number){
-  const key=seasonRegistrationKey(seasonNumber);
-
-  // Season 2 is read from its own immutable transaction ledger instead of the
-  // cumulative player snapshot. The Rust plugin can stay alive across the
-  // Season 1 -> Season 2 transition and temporarily hold S1 counters in RAM;
-  // using that snapshot here would leak the previous Season into the new one.
-  // Every accepted event is already remapped by seasonIngestionSafe to the
-  // canonical active Season, so summing S2 transactions from the official
-  // start produces the correct fresh S2 score even during that rollover.
-  if (seasonNumber === 2) {
-    return sql`
-      WITH registered AS (
-        SELECT steam_id,discord_name,created_at
-        FROM season_official_registrations
-        WHERE season_key=${key} AND status='active' AND NULLIF(TRIM(steam_id),'') IS NOT NULL
-      ),
-      ledger AS (
-        SELECT
-          steam_id,
-          (ARRAY_AGG(player_name ORDER BY happened_at DESC))[1] player_name,
-          COALESCE(SUM(final_value),0) delta,
-          COUNT(*) FILTER (WHERE event_type='KILL')::int kills,
-          COUNT(*) FILTER (
-            WHERE event_type='KILL' AND (
-              LOWER(COALESCE(details,'')) LIKE '%headshot=true%' OR
-              LOWER(COALESCE(details,'')) LIKE '%headshot: true%' OR
-              LOWER(COALESCE(details,'')) LIKE '%headshot%'
-            )
-          )::int headshots,
-          COUNT(*) FILTER (WHERE event_type='RAID_SESSION_COMPLETE')::int raids_participated,
-          COUNT(*) FILTER (WHERE event_type='RAID_DEFENDED')::int raids_defended,
-          COUNT(*) FILTER (WHERE event_type ILIKE '%BRADLEY%')::int bradley_participations,
-          COUNT(*) FILTER (WHERE event_type ILIKE '%HELI%')::int heli_participations,
-          COUNT(*) FILTER (WHERE event_type ILIKE '%CRATE%')::int crates_hacked,
-          COALESCE(SUM(CASE WHEN event_type ILIKE '%SULFUR%' THEN GREATEST(base_value,0) ELSE 0 END),0)::bigint sulfur_ore,
-          COALESCE(SUM(CASE WHEN event_type ILIKE '%HQM%' THEN GREATEST(base_value,0) ELSE 0 END),0)::bigint hqm_ore,
-          MAX(received_at) updated_at
-        FROM season_transactions
-        WHERE season_number=2
-          AND happened_at >= ${new Date(SEASON_2_START_AT)}
-        GROUP BY steam_id
-      ),
-      u AS (
-        SELECT
-          r.steam_id,
-          COALESCE(NULLIF(l.player_name,''),r.discord_name,r.steam_id) player_name,
-          ${STARTING_MMR}::double precision mmr,
-          COALESCE(l.delta,0)::double precision ledger_delta,
-          COALESCE(l.kills,0) kills,
-          0::int deaths,
-          COALESCE(l.headshots,0) headshots,
-          0::int assists,
-          COALESCE(l.raids_participated,0) raids_participated,
-          COALESCE(l.raids_defended,0) raids_defended,
-          COALESCE(l.bradley_participations,0) bradley_participations,
-          COALESCE(l.heli_participations,0) heli_participations,
-          COALESCE(l.crates_hacked,0) crates_hacked,
-          COALESCE(l.sulfur_ore,0) sulfur_ore,
-          COALESCE(l.hqm_ore,0) hqm_ore,
-          COALESCE(l.updated_at,r.created_at) updated_at,
-          (l.steam_id IS NOT NULL) season_scored
-        FROM registered r
-        LEFT JOIN ledger l ON l.steam_id=r.steam_id
-      ),
-      ranked AS (
-        SELECT
-          u.*,
-          ${STARTING_MMR}+u.ledger_delta effective_mmr,
-          ROW_NUMBER() OVER(
-            ORDER BY ${STARTING_MMR}+u.ledger_delta DESC,u.kills DESC,u.updated_at ASC NULLS LAST
-          ) position
-        FROM u
-      )
-      SELECT * FROM ranked
-    `;
-  }
-
-  if (seasonNumber === 1) {
-    return sql`
-      WITH adjustments AS (
-        SELECT steam_id,COALESCE(SUM(final_value),0) delta
-        FROM season_transactions
-        WHERE season_number=${seasonNumber} AND category='admin'
-        GROUP BY steam_id
-      ),
-      sd AS (
-        SELECT * FROM season_players WHERE season_number=${seasonNumber}
-      ),
-      registered AS (
-        SELECT steam_id,discord_name,created_at
-        FROM season_official_registrations
-        WHERE season_key=${key} AND status='active' AND NULLIF(TRIM(steam_id),'') IS NOT NULL
-      ),
-      u AS (
-        SELECT r.steam_id,
-          COALESCE(NULLIF(sd.player_name,''),r.discord_name,r.steam_id) player_name,
-          COALESCE(sd.mmr,${STARTING_MMR}) mmr,
-          COALESCE(sd.kills,0) kills,COALESCE(sd.deaths,0) deaths,
-          COALESCE(sd.headshots,0) headshots,COALESCE(sd.assists,0) assists,
-          COALESCE(sd.raids_participated,0) raids_participated,
-          COALESCE(sd.raids_defended,0) raids_defended,
-          COALESCE(sd.bradley_participations,0) bradley_participations,
-          COALESCE(sd.heli_participations,0) heli_participations,
-          COALESCE(sd.crates_hacked,0) crates_hacked,
-          COALESCE(sd.sulfur_ore,0) sulfur_ore,COALESCE(sd.hqm_ore,0) hqm_ore,
-          COALESCE(sd.updated_at,r.created_at) updated_at,
-          (sd.steam_id IS NOT NULL) season_scored
-        FROM registered r
-        LEFT JOIN sd ON sd.steam_id=r.steam_id
-      ),
-      ranked AS (
-        SELECT u.*,u.mmr+COALESCE(a.delta,0) effective_mmr,
-          ROW_NUMBER() OVER(ORDER BY u.mmr+COALESCE(a.delta,0) DESC,u.kills DESC,u.updated_at ASC NULLS LAST) position
-        FROM u
-        LEFT JOIN adjustments a ON a.steam_id=u.steam_id
-      )
-      SELECT * FROM ranked
-    `;
-  }
-
-  return sql`
-    WITH adjustments AS (
-      SELECT steam_id,COALESCE(SUM(final_value),0) delta
-      FROM season_transactions
-      WHERE season_number=${seasonNumber} AND category='admin'
-      GROUP BY steam_id
-    ),
-    ranked AS (
-      SELECT p.*,p.mmr+COALESCE(a.delta,0) effective_mmr,true season_scored,
-        ROW_NUMBER() OVER(ORDER BY p.mmr+COALESCE(a.delta,0) DESC,p.kills DESC,p.updated_at ASC NULLS LAST) position
-      FROM season_players p
-      LEFT JOIN adjustments a ON a.steam_id=p.steam_id
-      WHERE p.season_number=${seasonNumber}
-    )
-    SELECT * FROM ranked
-  `;
-}
 
 function leader(ranking:any[], title:string, emoji:string, value:(p:any)=>number, suffix:string){
   if (!ranking.length) return null;
@@ -236,7 +99,7 @@ router.get("/season/:number",async(req,res,next)=>{
   if(!/^\d+$/.test(String(req.params.number||""))) return next();
   try{
     const seasonNumber=Math.max(1,integer(req.params.number)||1);
-    const rr:any=await db.execute(sql`${universe(seasonNumber)} ORDER BY position ASC`);
+    const rr:any=await db.execute(sql`${seasonStandingsSql(seasonNumber)} ORDER BY position ASC`);
     const ranking=(rr?.rows||[]).map((row:any,index:number)=>publicPlayer(seasonNumber,row,index+1));
     const ranks=ranksForSeason(seasonNumber).map(rank=>({...rank,image:rankImage(rank)}));
     res.setHeader("Cache-Control","no-store");
@@ -268,7 +131,7 @@ router.get("/season/:number/player/:steamId",async(req,res,next)=>{
   if(!/^7656119\d{10}$/.test(id)) return next();
   try{
     const seasonNumber=Math.max(1,integer(req.params.number)||1);
-    const pr:any=await db.execute(sql`${universe(seasonNumber)} WHERE steam_id=${id} LIMIT 1`);
+    const pr:any=await db.execute(sql`${seasonStandingsSql(seasonNumber)} WHERE steam_id=${id} LIMIT 1`);
     const tx:any=await db.execute(sql`
       SELECT category,event_type,
         CASE WHEN final_value>0 THEN 'gain' WHEN final_value<0 THEN 'loss' ELSE 'neutral' END direction,

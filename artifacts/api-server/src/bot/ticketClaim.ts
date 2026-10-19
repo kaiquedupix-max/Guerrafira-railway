@@ -71,7 +71,7 @@ function claimRow(claimedBy?: string | null): ActionRowBuilder<ButtonBuilder> {
 
 function isClaimControlMessage(message: Message): boolean {
   if (message.author.id !== message.channel.client.user?.id) return false;
-  const hasButton = message.components.some((row) => row.components.some((component: any) =>
+  const hasButton = message.components.some((row) => "components" in row && row.components.some((component: any) =>
     component?.customId === "ticket_claim" || component?.data?.customId === "ticket_claim",
   ));
   const hasFooter = message.embeds.some((embed) => embed.footer?.text === CLAIM_FOOTER);

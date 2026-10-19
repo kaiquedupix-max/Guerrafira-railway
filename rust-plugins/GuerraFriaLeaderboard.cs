@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaLeaderboard", "OpenAI", "1.4.0")]
+    [Info("GuerraFriaLeaderboard", "OpenAI", "1.5.0")]
     [Description("Leaderboard profissional + raid tracker + telemetria assistida Guerra Fria.")]
     public class GuerraFriaLeaderboard : RustPlugin
     {
@@ -13,6 +13,7 @@ namespace Oxide.Plugins
 
         private class LeaderboardEvent
         {
+            public string event_id;
             public string @event;
             public string attacker;
             public string attacker_steamid;
@@ -181,6 +182,7 @@ namespace Oxide.Plugins
         {
             try
             {
+                payload.event_id = Guid.NewGuid().ToString();
                 var json = JsonConvert.SerializeObject(payload, Formatting.None, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
                 Puts($"{Prefix} {json}");
             }

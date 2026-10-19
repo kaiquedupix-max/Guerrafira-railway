@@ -1,5 +1,6 @@
+import { playerStatsForServer } from "../core/competitiveStore.js";
 import { EmbedBuilder } from "discord.js";
-import { db, playerStatsTable, modLogsTable } from "@workspace/db";
+import { db, modLogsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { discordClient } from "./client.js";
 import { logger } from "../lib/logger.js";
@@ -63,6 +64,7 @@ function decayScore(state: PlayerState, now: number): void {
 }
 
 async function persistentStats(steamId: string) {
+  const playerStatsTable=playerStatsForServer();
   const rows = await db.select({ kills: playerStatsTable.kills, deaths: playerStatsTable.deaths, headshots: playerStatsTable.headshots })
     .from(playerStatsTable).where(eq(playerStatsTable.steamId, steamId));
   const row = rows[0];

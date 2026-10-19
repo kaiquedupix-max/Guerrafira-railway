@@ -1,3 +1,4 @@
+import { authenticatedEventServer, EventSourceError } from "../core/eventSource.js";
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -58,7 +59,10 @@ router.use(async (req, res, next) => {
   ]);
   if (!scoringWritePaths.has(req.path)) return next();
   try {
-    const control = await getSeasonControl(1);
+    authenticatedEventServer(req,"season");
+    const scoringSeason=scoringSeasonForTime();
+    if(scoringSeason===null)return void res.status(202).json({ok:true,blocked:true,accepted:0,saved:0,message:"Nenhuma Season está recebendo pontuação neste momento."});
+    const control = await getSeasonControl(scoringSeason);
     if (Boolean(control.scoring_blocked)) {
       res.setHeader("Cache-Control", "no-store");
       return void res.status(202).json({
@@ -70,7 +74,8 @@ router.use(async (req, res, next) => {
       });
     }
     return next();
-  } catch {
+  } catch(error) {
+    if(error instanceof EventSourceError)return void res.status(error.status).json({error:error.message});
     return void res.status(503).json({ ok: false, error: "Não foi possível validar o estado da pontuação da Season atual." });
   }
 });
