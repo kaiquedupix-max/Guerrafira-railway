@@ -1,6 +1,7 @@
 import { panelTransportJs } from "./panelTransport.js";
 import type { Request } from "express";
 import { panelV5Html } from "./panelV5.js";
+import { panelTicketsHtml, panelTicketsJs } from "./panelTickets.js";
 import { panelV5Js } from "./panelV5Js.js";
 import { panelV5PolishJs } from "./panelV5Polish.js";
 import { panelPersistentAuthJs } from "./panelPersistentAuth.js";
@@ -33,8 +34,8 @@ const normalizedSeasonJs = panelSeasonAddonJs
   .replace(/Beta/g, "Season 1")
   .replace(/beta/g, "season 1");
 const pwaHead = `<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="GF Admin"><link rel="manifest" href="/api/pwa/manifest">`;
-const htmlWithPwa = panelV5Html.replace("</head>", `${pwaHead}</head>`);
-const page = htmlWithPwa.replace("</body>", `<script>${panelPersistentAuthJs}</script><script>${panelTransportJs}</script><script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewJoiningJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script><script>${panelSlotControlJs}</script><script>${panelBrandingJs}</script><script>${panelMobileFixJs}</script><script>${panelFinanceLabelsJs}</script><script>${panelProfessionalJs}</script><script>${normalizedWipeJs}</script><script>${panelServerControlJs}</script><script>${panelPlayerCountJs}</script><script>${normalizedSeasonJs}</script><script>${panelSeasonOfficialAddonJs}</script><script>${panelSeasonStatusPatchJs}</script><script>${panelSeasonBackupAddonJs}</script><script>${panelFinanceRepairJs}</script><script>${panelMultiServerSeasonAddonJs}</script></body>`);
+const htmlWithPwa = panelV5Html.replace("</head>", `${pwaHead}</head>`).replace("</main>", `${panelTicketsHtml}</main>`);
+const page = htmlWithPwa.replace("</body>", `<script>${panelPersistentAuthJs}</script><script>${panelTransportJs}</script><script>${panelV5Js}</script><script>${panelV5PolishJs}</script><script>${panelAuthRecoveryJs}</script><script>${panelOverviewJoiningJs}</script><script>${panelModerationParityJs}</script><script>${panelIntegrityManagerJs}</script><script>${panelAlertsJs}</script><script>${panelSlotControlJs}</script><script>${panelBrandingJs}</script><script>${panelMobileFixJs}</script><script>${panelFinanceLabelsJs}</script><script>${panelProfessionalJs}</script><script>${normalizedWipeJs}</script><script>${panelServerControlJs}</script><script>${panelPlayerCountJs}</script><script>${normalizedSeasonJs}</script><script>${panelSeasonOfficialAddonJs}</script><script>${panelSeasonStatusPatchJs}</script><script>${panelSeasonBackupAddonJs}</script><script>${panelFinanceRepairJs}</script><script>${panelMultiServerSeasonAddonJs}</script><script>${panelTicketsJs}</script></body>`);
 
 export function renderAdmin(req: Request): string {
   const session = getAdminSessionV3(req);
