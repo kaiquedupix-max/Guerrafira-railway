@@ -68,7 +68,7 @@ router.post("/:id/reply", async (req, res) => {
     if (!member || !channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel))
       return res.status(403).json({ error: "Você não possui acesso a este ticket." });
     const sent = await channel.send({
-      content: `**Equipe Guerra Fria • ${String(admin?.username || "Admin").replace(/[@\\r\\n*_`]/g, "").slice(0, 60)}:**\\n${content}`,
+      content: "**Equipe Guerra Fria • " + String(admin?.username || "Admin").replace(/[@*_|]/g, "").slice(0, 60) + ":**\n" + content,
       allowedMentions: { parse: [] },
     });
     return res.json({ ok: true, id: sent.id });
