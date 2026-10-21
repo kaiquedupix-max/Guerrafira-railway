@@ -8,7 +8,7 @@ router.use(requireAdmin);
 
 const ticketCategory = () => String(process.env.DISCORD_TICKETS_CATEGORY_ID || "").trim();
 const guildId = () => String(process.env.DISCORD_GUILD_ID || "").trim();
-const validId = (value: unknown) => /^\\d{15,22}$/.test(String(value || ""));
+const validId = (value: unknown) => /^\d{15,22}$/.test(String(value || ""));
 const isTicket = (channel: any): channel is TextChannel =>
   channel?.type === ChannelType.GuildText &&
   /^ticket[-_]/i.test(channel.name || "") &&
