@@ -1,3 +1,4 @@
+import { datedWipeSchedule, wipeScheduleLabel } from "../core/wipeCalendar.js";
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
 import { auditWipe, buildWipePlan, diagnoseHost, executeProceduralWipe, executeWipe, type WipeKind } from "../core/hostWipe.js";
@@ -38,6 +39,8 @@ async function cancelPendingAutomaticVotes(reason: string): Promise<number> {
 
   return pending.rows.length;
 }
+
+router.get("/wipe/schedule",(req,res)=>{try{const server=adminServer(),date=String(req.query.date||"").trim();res.json({serverId:server,label:wipeScheduleLabel(server),...(date?datedWipeSchedule(server,date):{})});}catch(error:any){res.status(400).json({error:error?.message||"Data de wipe inválida."});}});
 
 router.get("/wipe/lock",async(_req,res)=>{try{res.json(await getWipeLockState())}catch(error:any){res.status(500).json({error:error?.message||"Falha ao consultar trava."})}});
 router.post("/wipe/lock",async(req,res)=>{try{if(typeof req.body?.unlocked!=="boolean")return void res.status(400).json({error:"Estado inválido."});const actor={id:res.locals.admin.userId,name:res.locals.admin.username};const state=await setWipeLock(req.body.unlocked,`${actor.name} (${actor.id})`);await auditWipe(state.unlocked?"WIPE_UNLOCKED":"WIPE_LOCKED",actor,`Trava alterada pelo painel: ${state.unlocked?"liberado":"travado"}.`);res.json(state)}catch(error:any){res.status(500).json({error:error?.message||"Falha ao alterar trava."})}});
