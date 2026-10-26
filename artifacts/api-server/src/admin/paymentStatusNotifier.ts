@@ -2,6 +2,7 @@ import { db, paymentsTable } from "@workspace/db";
 import { desc } from "drizzle-orm";
 import { notifySubscribedAdmins } from "./adminNotifications.js";
 import { logger } from "../lib/logger.js";
+import { paymentBuyerNames } from "./paymentBuyerNames.js";
 
 const seen = new Map<number, string>();
 let started = false;
@@ -34,11 +35,12 @@ async function scan(): Promise<void> {
     const severity = current === "approved" ? "success" as const : current === "expired" ? "warning" as const : "critical" as const;
     const method = row.method ? ` • ${row.method.toUpperCase()}` : "";
     const tier = row.vipTier ? `VIP ${row.vipTier.toUpperCase()}` : "Pagamento";
+    const buyer=(await paymentBuyerNames([{id:row.id,steam_id:row.steamId,discord_user_id:row.discordUserId}])).get(String(row.id));
 
     await notifySubscribedAdmins({
       kind: "payment",
       title: `${emoji} Pagamento ${label}`,
-      message: `${tier} • ${money(row.amount)}${method}\nStatus alterado para ${label}.${row.steamId ? `\nSteamID: ${row.steamId}` : ""}`,
+      message: `${tier} • ${money(row.amount)}${method}\nDiscord: ${buyer?.discordDisplayName}\nSteam: ${buyer?.steamName}\nStatus alterado para ${label}.${row.steamId ? `\nSteamID: ${row.steamId}` : ""}`,
       steamId: row.steamId || undefined,
       severity,
     });
