@@ -64,15 +64,19 @@ export const panelFinanceRepairJs = String.raw`
           '</tr>';
       }).join('') : '<tr><td colspan="8"><div class="empty">Nenhuma movimentação neste período.</div></td></tr>';
       $('financeRows').onclick=async function(event){
-        const button=event.target.closest('[data-payment-discord]');if(!button)return;
-        const payment=rows.find(p=>String(p.id)===button.dataset.paymentDiscord);if(!payment)return;
-        const discord=prompt('Corrigir Discord da compra #'+payment.id+'\nSteam: '+payment.steamId+'\nInforme o ID correto do Discord:',payment.discordUserId||'');
-        if(discord===null)return;const id=discord.trim();if(!/^\d{16,22}$/.test(id))return alert('ID do Discord inválido.');
-        if(id===payment.discordUserId)return;
-        if(!confirm('Compra #'+payment.id+' • Steam '+payment.steamId+'\nTrocar Discord '+payment.discordUserId+' por '+id+'?\nA entrega pendente será tentada novamente automaticamente.'))return;
+        const button=event.target.closest('[data-payment-discord],[data-payment-save]');if(!button)return;
+        const payment=rows.find(p=>String(p.id)===(button.dataset.paymentDiscord||button.dataset.paymentSave));if(!payment)return;
+        const cell=button.closest('td');
+        if(button.dataset.paymentDiscord){
+          if(cell.querySelector('[data-discord-input]'))return;
+          const box=document.createElement('div');box.innerHTML='<label>ID correto do Discord<input data-discord-input inputmode="numeric" value="'+esc(payment.discordUserId||'')+'"></label><small>Compra #'+esc(payment.id)+' • Steam '+esc(payment.steamId)+'. A entrega pendente será tentada novamente.</small><button type="button" class="btn" data-payment-save="'+esc(payment.id)+'">Salvar Discord e tentar entrega</button><small data-correction-status></small>';cell.appendChild(box);return;
+        }
+        const id=cell.querySelector('[data-discord-input]').value.trim(),status=cell.querySelector('[data-correction-status]');
+        if(!/^\d{16,22}$/.test(id)){status.textContent='ID do Discord inválido.';return;}
+        if(id===payment.discordUserId){status.textContent='Informe o novo ID do Discord.';return;}
         button.disabled=true;
-        try{const response=await fetch('/api/admin/finance/'+encodeURIComponent(payment.id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({discordUserId:id})});const result=await response.json();if(!response.ok)throw Error(result.error||'Não foi possível corrigir o Discord.');payment.discordUserId=id;renderFinance(data);alert('Discord corrigido. A entrega pendente será reprocessada pelo bot.');}
-        catch(error){alert(error.message);button.disabled=false;}
+        try{const response=await fetch('/api/admin/finance/'+encodeURIComponent(payment.id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({discordUserId:id})});const result=await response.json();if(!response.ok)throw Error(result.error||'Não foi possível corrigir o Discord.');payment.discordUserId=id;status.textContent='Discord corrigido. A entrega pendente será reprocessada pelo bot.';button.textContent='Discord corrigido';}
+        catch(error){status.textContent=error.message;button.disabled=false;}
       };
     }
 
