@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { pool } from "@workspace/db";
 import { requireAdmin } from "./guard.js";
+import { paymentBuyerNames } from "./paymentBuyerNames.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -112,11 +113,13 @@ router.get("/finance/live", async (req, res) => {
       sales: Number(row.sales || 0),
     }));
 
+    const buyers=await paymentBuyerNames(rows);
     const payments = rows.map((row: any) => {
       const amount = round(row.amount);
       const tier = String(row.vip_tier || "VIP").toUpperCase();
       const active = Boolean(row.vip_active);
       return {
+        ...buyers.get(String(row.id)),
         id: String(row.id),
         paymentId: row.mp_payment_id ? String(row.mp_payment_id) : null,
         status: "approved",
