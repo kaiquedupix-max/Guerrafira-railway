@@ -55,7 +55,7 @@ export const panelFinanceRepairJs = String.raw`
         return '<tr>' +
           '<td>' + fmt(p.dateApproved || p.dateCreated) + '</td>' +
           '<td><span class="movement ' + movementClass + '">' + movementLabel + '</span></td>' +
-          '<td>' + esc(p.description || 'Movimentação') + '<div class="financeHint">#' + esc(p.id || '—') + '</div></td>' +
+          '<td>' + esc(p.description || 'Movimentação') + '<div class="financeHint">#' + esc(p.id || '—') + '</div>' + (p.steamId ? '<small>Steam: '+esc(p.steamId)+'<br>Discord: '+esc(p.discordUserId||'—')+'</small><br><button type="button" class="btn" data-payment-discord="'+esc(p.id)+'">Corrigir Discord</button>' : '') + '</td>' +
           '<td>' + esc(p.method || '—') + '</td>' +
           '<td>' + esc(p.status || '—') + '</td>' +
           '<td>' + money(p.grossAmount || p.amount) + '</td>' +
@@ -63,6 +63,17 @@ export const panelFinanceRepairJs = String.raw`
           '<td class="' + amountClass + '"' + amountStyle + '>' + amountPrefix + money(Math.abs(signed)) + '</td>' +
           '</tr>';
       }).join('') : '<tr><td colspan="8"><div class="empty">Nenhuma movimentação neste período.</div></td></tr>';
+      $('financeRows').onclick=async function(event){
+        const button=event.target.closest('[data-payment-discord]');if(!button)return;
+        const payment=rows.find(p=>String(p.id)===button.dataset.paymentDiscord);if(!payment)return;
+        const discord=prompt('Corrigir Discord da compra #'+payment.id+'\nSteam: '+payment.steamId+'\nInforme o ID correto do Discord:',payment.discordUserId||'');
+        if(discord===null)return;const id=discord.trim();if(!/^\d{16,22}$/.test(id))return alert('ID do Discord inválido.');
+        if(id===payment.discordUserId)return;
+        if(!confirm('Compra #'+payment.id+' • Steam '+payment.steamId+'\nTrocar Discord '+payment.discordUserId+' por '+id+'?\nA entrega pendente será tentada novamente automaticamente.'))return;
+        button.disabled=true;
+        try{const response=await fetch('/api/admin/finance/'+encodeURIComponent(payment.id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({discordUserId:id})});const result=await response.json();if(!response.ok)throw Error(result.error||'Não foi possível corrigir o Discord.');payment.discordUserId=id;renderFinance(data);alert('Discord corrigido. A entrega pendente será reprocessada pelo bot.');}
+        catch(error){alert(error.message);button.disabled=false;}
+      };
     }
 
     const trend = Array.isArray(data.trend) ? data.trend : [];
