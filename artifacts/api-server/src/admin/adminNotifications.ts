@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { discordClient } from "../bot/client.js";
 import { logger } from "../lib/logger.js";
 
-export type AdminAlertKind = "anticheat" | "ban" | "kick" | "warn" | "unban" | "verify" | "vip" | "payment" | "system";
+export type AdminAlertKind = "anticheat" | "ban" | "kick" | "warn" | "unban" | "verify" | "vip" | "payment" | "ticket" | "system";
 export type AdminAlert = {
   id: string;
   kind: AdminAlertKind;
@@ -13,6 +13,7 @@ export type AdminAlert = {
   message: string;
   playerName?: string;
   steamId?: string;
+  url?: string;
   severity: "info" | "warning" | "critical" | "success";
   createdAt: string;
 };
@@ -84,7 +85,7 @@ async function notifyWebPush(row: AdminAlert): Promise<void> {
   const subscribers = await db.select().from(adminWebPushSubscriptionsTable).where(eq(adminWebPushSubscriptionsTable.enabled, true)).catch(() => []);
   if (!subscribers.length) return;
   const icon = row.kind === "anticheat" ? "🛡️" : row.kind === "payment" ? "💳" : row.severity === "critical" ? "🚨" : "";
-  const payload = JSON.stringify({ title: `${icon} ${row.title}`.trim(), body: row.message, url: "/admin", tag: `gf-${row.kind}-${row.id}`, severity: row.severity });
+  const payload = JSON.stringify({ title: `${icon} ${row.title}`.trim(), body: row.message, url: row.url || "/painel", tag: `gf-${row.kind}-${row.id}`, severity: row.severity });
   await Promise.all(subscribers.map(async sub => {
     try { await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 3600, urgency: row.severity === "critical" ? "high" : "normal" }); }
     catch (err: any) {
@@ -102,6 +103,7 @@ export async function notifySubscribedAdmins(alert: Omit<AdminAlert, "id" | "cre
   if (!recipients.length) return;
   const color = row.severity === "critical" ? 0xef4444 : row.severity === "warning" ? 0xff9a2f : row.severity === "success" ? 0x22c55e : 0x8b5cf6;
   const embed = new EmbedBuilder().setColor(color).setTitle(row.title).setDescription(row.message).setFooter({ text: "Guerra Fria • Central de Controle" }).setTimestamp();
+  if(row.url)embed.setURL(row.url);
   if (row.playerName) embed.addFields({ name: "Jogador", value: row.playerName, inline: true });
   if (row.steamId) embed.addFields({ name: "SteamID", value: `\`${row.steamId}\``, inline: true });
   await Promise.all(recipients.map(async userId => { const user = await client.users.fetch(userId).catch(() => null); if (user) await user.send({ embeds: [embed] }).catch(err => logger.warn({ err, userId }, "Failed to send admin DM notification")); }));
