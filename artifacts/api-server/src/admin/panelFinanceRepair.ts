@@ -55,7 +55,7 @@ export const panelFinanceRepairJs = String.raw`
         return '<tr>' +
           '<td>' + fmt(p.dateApproved || p.dateCreated) + '</td>' +
           '<td><span class="movement ' + movementClass + '">' + movementLabel + '</span></td>' +
-          '<td>' + esc(p.description || 'Movimentação') + '<div class="financeHint">#' + esc(p.id || '—') + '</div>' + (p.steamId ? '<small>Steam: '+esc(p.steamId)+'<br>Discord: '+esc(p.discordUserId||'—')+'</small><br><button type="button" class="btn" data-payment-discord="'+esc(p.id)+'">Corrigir Discord</button>' : '') + '</td>' +
+          '<td>' + '<b>Discord: '+esc(p.discordDisplayName||'Nome de exibição indisponível')+'</b><br><span>Steam: '+esc(p.steamName||'Nome Steam indisponível')+'</span>'+(/^https:\/\/steamcommunity\.com\/profiles\/7656119\d{10}$/.test(p.steamProfileUrl||'')?' <a href="'+esc(p.steamProfileUrl)+'" target="_blank" rel="noopener noreferrer">Abrir perfil Steam</a>':'')+'<br>' + esc(p.description || 'Movimentação') + '<div class="financeHint">#' + esc(p.id || '—') + '</div>' + (p.steamId ? '<small>Steam: '+esc(p.steamId)+'<br>Discord: '+esc(p.discordUserId||'—')+'</small><br><button type="button" class="btn" data-payment-discord="'+esc(p.id)+'">Corrigir Discord</button>' : '') + '</td>' +
           '<td>' + esc(p.method || '—') + '</td>' +
           '<td>' + esc(p.status || '—') + '</td>' +
           '<td>' + money(p.grossAmount || p.amount) + '</td>' +
