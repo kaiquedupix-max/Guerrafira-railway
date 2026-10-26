@@ -17,6 +17,7 @@ import {
 } from "discord.js";
 import { db, ticketLogsTable } from "@workspace/db";
 import { logger } from "../lib/logger.js";
+import { notifySubscribedAdmins } from "../admin/adminNotifications.js";
 
 // ─── Ticket categories ────────────────────────────────────────────────────────
 const TICKET_TYPES = [
@@ -162,6 +163,10 @@ export async function handleTicketTypeSelect(interaction: StringSelectMenuIntera
   });
 
   logger.info({ user: interaction.user.tag, type, channelId: ticketChannel.id }, "Ticket created");
+  const url=`https://discord.com/channels/${guild.id}/${ticketChannel.id}`;
+  void notifySubscribedAdmins({kind:"ticket",title:"🎟️ Novo ticket aberto",severity:"info",url,
+    message:`${interaction.member && "displayName" in interaction.member ? interaction.member.displayName : interaction.user.globalName || "Membro"} abriu um ticket.\nCategoria: ${ticketType.label}\n[Abrir ticket](${url})`,
+  }).catch(error=>logger.warn({error,channelId:ticketChannel.id},"Ticket opened notification failed"));
 }
 
 export { redirectVipToWebsite as handleVipSelect, redirectVipToWebsite as handleVipModal, redirectVipToWebsite as handleVipPayPix, redirectVipToWebsite as handleVipPayCard, redirectVipToWebsite as handlePixCopy } from "./vipWebLinks.js";
@@ -183,6 +188,8 @@ export async function handleTicketClose(interaction: ButtonInteraction): Promise
     await saveAndSendLog(channel, interaction);
   } catch (err) {
     logger.error({ err, channelId: channel.id }, "Failed to save ticket log");
+    await channel.send("Não foi possível salvar o histórico. O ticket foi mantido aberto.").catch(()=>{});
+    return;
   }
 
   setTimeout(() => channel.delete(`Fechado por ${interaction.user.tag}`).catch(() => {}), 6000);
@@ -199,14 +206,14 @@ export interface TranscriptMsg {
   attachments: string[];
 }
 
-export async function fetchTranscript(channel: TextChannel): Promise<TranscriptMsg[]> {
+export async function fetchTranscript(channel: TextChannel, strict = false): Promise<TranscriptMsg[]> {
   const messages: TranscriptMsg[] = [];
   let lastId: string | undefined;
 
   while (true) {
     const batch: Collection<string, Message> = await channel.messages
       .fetch({ limit: 100, ...(lastId ? { before: lastId } : {}) })
-      .catch(() => new Collection());
+      .catch(error => { if(strict)throw error;return new Collection(); });
 
     if (batch.size === 0) break;
 
@@ -249,10 +256,10 @@ function buildTranscriptText(channelName: string, msgs: TranscriptMsg[]): string
 
 async function saveAndSendLog(
   channel: TextChannel,
-  interaction: ButtonInteraction,
+  interaction: Pick<ButtonInteraction, "user" | "client">,
 ): Promise<void> {
   // 1. Fetch ALL messages (bots included)
-  const transcript = await fetchTranscript(channel);
+  const transcript = await fetchTranscript(channel, true);
   const text       = buildTranscriptText(channel.name, transcript);
   const buffer     = Buffer.from(text, "utf-8");
   const fileName   = `ticket-${channel.name}.txt`;
@@ -286,6 +293,7 @@ async function saveAndSendLog(
     logger.info({ channelId: channel.id, msgCount: transcript.length, participants: participantIds.length }, "Ticket log saved");
   } catch (err) {
     logger.error({ err }, "Failed to insert ticket log");
+    throw err;
   }
 
   // 5. Post transcript file IN the ticket channel (users can download before it closes)
@@ -320,6 +328,18 @@ async function saveAndSendLog(
       logger.warn({ userId: uid }, "Failed to DM ticket log — user may have DMs disabled");
     }
   }
+}
+
+const closingTickets=new Set<string>();
+export async function closeTicketFromPanel(channel: TextChannel, actorId: string): Promise<void> {
+  if(closingTickets.has(channel.id))throw new Error("Este ticket já está sendo fechado.");
+  closingTickets.add(channel.id);
+  try {
+    const user=await channel.client.users.fetch(actorId);
+    await saveAndSendLog(channel,{user,client:channel.client});
+    await channel.delete(`Fechado pelo painel por ${user.id}`);
+    logger.info({channelId:channel.id,closedBy:actorId},"Ticket closed from panel");
+  } finally { closingTickets.delete(channel.id); }
 }
 
 // ─── Public transcript builder (used by /ticketlogs command) ─────────────────
