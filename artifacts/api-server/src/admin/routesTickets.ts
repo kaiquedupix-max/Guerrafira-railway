@@ -2,6 +2,7 @@ import { Router } from "express";
 import { ChannelType, PermissionFlagsBits, type TextChannel } from "discord.js";
 import { discordClient } from "../bot/client.js";
 import { requireAdmin } from "./guard.js";
+import { closeTicketFromPanel } from "../bot/tickets.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -14,6 +15,7 @@ const isTicket = (channel: any): channel is TextChannel =>
   /^ticket[-_]/i.test(channel.name || "") &&
   Boolean(ticketCategory()) &&
   channel.parentId === ticketCategory();
+const isAdminMember=(member:any)=>!member.user?.bot&&(member.permissions.has(PermissionFlagsBits.Administrator)||Boolean(process.env.ADMIN_ROLE_ID&&member.roles.cache.has(process.env.ADMIN_ROLE_ID)));
 
 async function getGuild() {
   const client = discordClient();
@@ -34,6 +36,38 @@ router.get("/", async (_req, res) => {
   } catch { return res.status(502).json({ error: "Não foi possível carregar tickets do Discord." }); }
 });
 
+router.get("/:id/admins",async(req,res)=>{
+  try{const guild=await getGuild();if(!guild)return res.status(503).json({error:"Discord indisponível."});
+    const channel=validId(req.params.id)?await guild.channels.fetch(String(req.params.id)).catch(()=>null):null;
+    if(!isTicket(channel))return res.status(404).json({error:"Ticket não encontrado."});
+    const actor=await guild.members.fetch(res.locals.admin.userId).catch(()=>null);
+    if(!actor||!channel.permissionsFor(actor)?.has(PermissionFlagsBits.ViewChannel))return res.status(403).json({error:"Sem acesso ao ticket."});
+    const members=await guild.members.fetch();
+    return res.json({admins:[...members.values()].filter(m=>isAdminMember(m)&&channel.permissionsFor(m)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages])).map(m=>({id:m.id,name:m.nickname||m.user.globalName||"Administrador"})).sort((a,b)=>a.name.localeCompare(b.name))});
+  }catch{return res.status(502).json({error:"Não foi possível carregar administradores."});}
+});
+router.post("/:id/assign",async(req,res)=>{
+  try{const guild=await getGuild();if(!guild)return res.status(503).json({error:"Discord indisponível."});
+    const channel=validId(req.params.id)?await guild.channels.fetch(String(req.params.id)).catch(()=>null):null;
+    if(!isTicket(channel))return res.status(404).json({error:"Ticket não encontrado."});
+    const actor=await guild.members.fetch(res.locals.admin.userId).catch(()=>null);
+    if(!actor||!channel.permissionsFor(actor)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]))return res.status(403).json({error:"Sem acesso ao ticket."});
+    const target=validId(req.body?.adminId)?await guild.members.fetch(String(req.body.adminId)).catch(()=>null):null;
+    if(!target||!isAdminMember(target)||!channel.permissionsFor(target)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]))return res.status(400).json({error:"Escolha um administrador com acesso ao ticket."});
+    await channel.send({content:`🔔 <@${target.id}>, sua ajuda foi solicitada neste ticket por ${actor.nickname||actor.user.globalName||"um administrador"}.`,allowedMentions:{parse:[],users:[target.id]}});
+    return res.json({ok:true});
+  }catch{return res.status(502).json({error:"Não foi possível marcar o administrador."});}
+});
+router.post("/:id/close",async(req,res)=>{
+  if(String(req.body?.confirmation)!==String(req.params.id))return res.status(400).json({error:"Confirme o ticket que deseja fechar."});
+  try{const guild=await getGuild();if(!guild)return res.status(503).json({error:"Discord indisponível."});
+    const channel=validId(req.params.id)?await guild.channels.fetch(String(req.params.id)).catch(()=>null):null;
+    if(!isTicket(channel))return res.status(404).json({error:"Ticket não encontrado."});
+    const actor=await guild.members.fetch(res.locals.admin.userId).catch(()=>null);
+    if(!actor||!channel.permissionsFor(actor)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ManageChannels]))return res.status(403).json({error:"Sem permissão para fechar este ticket."});
+    await closeTicketFromPanel(channel,actor.id);return res.json({ok:true});
+  }catch{return res.status(502).json({error:"Não foi possível concluir o fechamento. Verifique o histórico antes de tentar novamente."});}
+});
 router.get("/:id/messages", async (req, res) => {
   if (!validId(req.params.id)) return res.status(400).json({ error: "ID inválido." });
   try {
@@ -41,10 +75,12 @@ router.get("/:id/messages", async (req, res) => {
     if (!guild) return res.status(503).json({ error: "Discord indisponível ou categoria não configurada." });
     const channel = await guild.channels.fetch(String(req.params.id)).catch(() => null);
     if (!isTicket(channel)) return res.status(404).json({ error: "Ticket não encontrado." });
+    const actor=await guild.members.fetch(res.locals.admin.userId).catch(()=>null);
+    if(!actor||!channel.permissionsFor(actor)?.has(PermissionFlagsBits.ViewChannel))return res.status(403).json({error:"Sem acesso ao ticket."});
     const before = validId(req.query.before) ? String(req.query.before) : undefined;
     const items = await channel.messages.fetch({ limit: 50, ...(before ? { before } : {}) });
     return res.json({ messages: [...items.values()].reverse().map(m => ({
-      id: m.id, author: m.author?.username || "Desconhecido", authorId: m.author?.id,
+      id: m.id, author: m.member?.nickname || m.author?.globalName || (m.author?.bot ? m.author.username : "Membro"), authorId: m.author?.id,
       avatar: m.author?.displayAvatarURL({ size: 64 }) || null,
       content: m.content, createdAt: m.createdAt.toISOString(), bot: Boolean(m.author?.bot),
       attachments: [...m.attachments.values()].map(a => ({ name: a.name, url: a.url })),
