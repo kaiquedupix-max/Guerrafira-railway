@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
 import { exchangeDiscordCode } from "./discordOAuth.js";
+import { joinGuerraFriaDiscord } from "./discordMembership.js";
+import { logger } from "../lib/logger.js";
 import { fetchDiscordUser } from "./discordUser.js";
 import { getGuerraFriaDisplayName, isGuerraFriaAdmin } from "./permissions.js";
 import { issueAdminSessionV3, revokeAdminSessionV3 } from "./sessionBearer.js";
@@ -47,7 +49,7 @@ export function adminLoginV3(req: Request, res: Response): void {
   const pwaDevice = validPwaDevice(req.query.device);
   states.set(state, { expires: Date.now() + 10 * 60 * 1000, target: raw === 'gift' ? 'gift' : raw === "duo" ? "duo" : target, pwaDevice, storeServer:req.query.server === "trio" ? "trio" : "solo-duo" });
   res.setHeader("Cache-Control", "no-store");
-  const q = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri(), scope: "identify", state });
+  const q = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri(), scope: "identify guilds.join", state });
   res.redirect(`https://discord.com/oauth2/authorize?${q.toString()}`);
 }
 
@@ -62,6 +64,12 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
   if (!token?.access_token) return void res.status(401).send("Falha ao autenticar com o Discord.");
   const user = await fetchDiscordUser(token.access_token);
   if (!user) return void res.status(401).send("Não foi possível identificar sua conta.");
+  try {
+    await joinGuerraFriaDiscord(user.id, token.access_token);
+  } catch (error) {
+    logger.error({ error, discordUserId: user.id }, "Discord community join failed during site login");
+    return void res.status(503).send("Não foi possível confirmar sua entrada no Discord do Guerra Fria. Tente fazer login novamente para autorizar a entrada no servidor.");
+  }
   const isAdmin = await isGuerraFriaAdmin(user.id);
   const displayName = await getGuerraFriaDisplayName(user.id, user.global_name || user.username);
   issueCommunitySession(res, user.id, displayName, isAdmin);
