@@ -115,7 +115,9 @@ export const panelFinanceRepairJs = String.raw`
     new MutationObserver(() => {
       if (!lastData) return;
       const balance = $('finBalance');
-      if (balance && (balance.textContent === '—' || balance.textContent === '')) renderFinance(lastData);
+      const rows=$('financeRows');
+      const missingCorrection=rows&&lastData.payments?.some(p=>p.steamId)&&!rows.querySelector('[data-payment-discord]');
+      if (missingCorrection || (balance && (balance.textContent === '—' || balance.textContent === ''))) renderFinance(lastData);
     }).observe(finance, { childList: true, subtree: true });
   }
 })();
