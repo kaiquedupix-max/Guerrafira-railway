@@ -25,9 +25,26 @@ export const panelModerationParityJs = String.raw`
     if(!/^7656119\d{10}$/.test(steamId))return;
 
     let state;
-    try{state=await api('/api/admin/player-state/'+encodeURIComponent(steamId));}catch{return;}
+    try{state=drawer.gfPlayerState||await api('/api/admin/player-state/'+encodeURIComponent(steamId));}catch{drawer.dataset.moderationParity='';return;}
 
-    const banBtn=document.getElementById('actBan');
+    if (!drawer.isConnected || host.querySelector('.drawer') !== drawer) return;
+    const banBtn=drawer.querySelector('#actBan');
+    const muteBox=document.createElement('div');
+    muteBox.className='stateCard';
+    muteBox.style.marginTop='14px';
+    muteBox.innerHTML='<b>Chat do jogo</b><small>'+(state.muted?'Silenciado até '+new Date(state.muteExpiresAt).toLocaleString('pt-BR'):'Sem mute ativo')+'</small><label for="muteDuration">Duração do mute</label><select id="muteDuration"></select><button id="actMute" type="button" class="btn">Silenciar jogador</button><button id="actUnmute" type="button" class="btn green">Remover mute</button>';
+    drawer.querySelector('.actionGrid')?.after(muteBox);
+    api('/api/admin/moderation/mute-durations').then(data=>{if(!muteBox.isConnected)return;for(const duration of data.durations||[]){const option=document.createElement('option');option.value=duration.value;option.textContent=duration.name;muteBox.querySelector('select').appendChild(option);}}).catch(error=>toast(error.message,true));
+    for(const muted of [true,false]){
+      const button=muteBox.querySelector(muted?'#actMute':'#actUnmute');
+      button.onclick=async()=>{
+        const reason=(drawer.querySelector('#actReason')?.value||'').trim();
+        if(muted&&!reason)return toast('Informe o motivo do mute.',true);
+        if(muted&&!muteBox.querySelector('select').value)return toast('Aguarde o carregamento dos prazos.',true);
+        button.disabled=true;
+        try{await post('/api/admin/moderation/'+(muted?'mute':'unmute'),{steamId,reason,duration:muteBox.querySelector('select').value});toast(muted?'Mute confirmado pelo servidor.':'Mute removido.');if(drawer.isConnected)drawer.querySelector('#closeDrawer')?.click();}catch(error){toast(error.message,true);}finally{button.disabled=false;}
+      };
+    }
     if(!state?.banned){
       if(banBtn && !document.getElementById('actPreventiveBan')){
         const preventiveBtn=document.createElement('button');
@@ -52,6 +69,7 @@ export const panelModerationParityJs = String.raw`
       return;
     }
 
+    const reasonInput=drawer.querySelector('#actReason');if(reasonInput)reasonInput.placeholder='Motivo do desbanimento (opcional)';
     const preventive=Boolean(state.preventiveBan || state.ban?.type==='preventive');
     const toolbar=drawer.querySelector('.toolbar');
     if(toolbar){
@@ -88,12 +106,11 @@ export const panelModerationParityJs = String.raw`
       banBtn.style.cssText='background:#123b28;border-color:#218a53;color:#caffdf';
       banBtn.onclick=async()=>{
         const reason=(document.getElementById('actReason')?.value||'').trim();
-        if(!reason)return toast('Informe o motivo do desbanimento.',true);
         if(!confirm('Remover o banimento deste jogador no Duo e no Trio?'))return;
         banBtn.disabled=true;banBtn.textContent='Desbanindo...';
         try{
           await post('/api/admin/moderation/unban',{steamId,reason});
-          toast(preventive?'Banimento preventivo removido com sucesso.':'Jogador desbanido com sucesso.');
+
           document.getElementById('closeDrawer')?.click();
         }catch(e){toast(e.message||'Erro ao desbanir.',true);banBtn.disabled=false;banBtn.textContent='✅ Desbanir';}
       };

@@ -35,7 +35,15 @@ const file = new URL("./.moderation-parity-bundle.mjs",import.meta.url);
 await writeFile(file,built.outputFiles[0].text);
 const api=await import(file.href);
 await unlink(file);
-state.run=async command=>{state.commands.push({server:api.adminServer(),command});return (state.fail || state.failServer===api.adminServer())?"Unknown command":"";};
+const nativeBans = new Map();
+state.run=async command=>{
+ const server=api.adminServer();state.commands.push({server,command});
+ if(state.fail || state.failServer===server)return "Unknown command";
+ const bans=nativeBans.get(server)||new Set();nativeBans.set(server,bans);
+ if(command.startsWith('banid '))bans.add(command.split(' ')[1]);
+ if(command.startsWith('unban '))bans.delete(command.split(' ')[1]);
+ return command==='banlist'?[...bans].join('\n'):'';
+};
 const steamId="76561190000000002",actor={id:"admin",name:"Admin",source:"web"};
 after(async()=>{await client.close();delete globalThis.__moderationParity;});
 

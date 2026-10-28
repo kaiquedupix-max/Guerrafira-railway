@@ -83,7 +83,7 @@ router.post("/email/preview", async (req, res) => {
     row = sample?.rows?.[0] || { discord_id:"000000000000000000",discord_name:"Jogador",steam_id:"76561190000000000",full_name:"Participante Guerra Fria",contact_email:"jogador@exemplo.com" };
   }
   const winners = template === "end" ? await getSeasonFinalWinners() : [];
-  return void res.json({ ok:true, ...buildSeasonEmail(template,row,winners) });
+  return void res.json({ ok:true, ...buildSeasonEmail(template,row!,winners) });
 });
 
 router.post("/email/send", async (req, res) => {

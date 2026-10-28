@@ -142,6 +142,7 @@ async function handleLinkModeration(message:Message):Promise<boolean>{
     if (urls.every(isAllowedGifUrl)) return false;
   }
 
+  if(!message.channel.isSendable())return false;
   if(!URL_REGEX.test(message.content)||!containsBlockedLink(message.content))return false;
   await message.delete().catch(err=>logger.warn({err,messageId:message.id},"Failed to delete blocked link"));
   const warning=await message.channel.send({content:`🚫 <@${message.author.id}>, links não são permitidos neste canal. Use os canais autorizados ou abra um ticket.`}).catch(()=>null);
@@ -150,13 +151,14 @@ async function handleLinkModeration(message:Message):Promise<boolean>{
 }
 export async function handleWipeReply(message:Message):Promise<void>{
  if(!message.guild||message.author.bot||!isWipeQuestion(message.content))return;
+ const guildId = message.guild.id;
  await onceDiscordReply(message.id,"wipe-calendar",async()=>{
  const [panels,history]=await Promise.all([
-  cachedRead(`wipe-calendar-link:${message.guild.id}`,()=>pool.query("SELECT channel_id,message_id FROM wipe_date_panels WHERE guild_id=$1",[message.guild!.id]),60000).catch(()=>({rows:[]})),
+  cachedRead(`wipe-calendar-link:${guildId}`,()=>pool.query("SELECT channel_id,message_id FROM wipe_date_panels WHERE guild_id=$1",[message.guild!.id]),60000).catch(()=>({rows:[]})),
   cachedRead("confirmed-wipe-history",()=>pool.query("SELECT server_id,MAX(created_at) AS last_wipe_at FROM mod_logs WHERE action='WIPE_COMPLETED' GROUP BY server_id"),30000).catch(()=>({rows:[]})),
  ]);
  const panel=panels.rows[0];
- const calendarUrl=panel&&[message.guild.id,panel.channel_id,panel.message_id].every(id=>/^\d{17,20}$/.test(String(id)))?`https://discord.com/channels/${message.guild.id}/${panel.channel_id}/${panel.message_id}`:undefined;
+ const calendarUrl=panel&&[guildId,panel.channel_id,panel.message_id].every(id=>/^\d{17,20}$/.test(String(id)))?`https://discord.com/channels/${guildId}/${panel.channel_id}/${panel.message_id}`:undefined;
  const lastConfirmed:Partial<Record<"solo-duo"|"trio",Date>>={};
  for(const row of history.rows){if(row.server_id==="trio")lastConfirmed.trio=new Date(row.last_wipe_at);else if(row.server_id==="solo-duo")lastConfirmed["solo-duo"]=new Date(row.last_wipe_at);}
  await message.reply({nonce:message.id,enforceNonce:true,content:buildWipeReply({server:wipeQuestionServer(message.content,message.channelId),calendarUrl,lastConfirmed}),allowedMentions:{parse:[],repliedUser:false}});

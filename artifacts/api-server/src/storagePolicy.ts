@@ -37,12 +37,12 @@ async function cleanupDatabase(): Promise<void> {
   // processamento repetido de banimentos temporários expirados.
   const oldOperationalLogs = await pool.query(`
     DELETE FROM mod_logs
-    WHERE action NOT IN ('BAN', 'VERIFICAR', 'SYSTEM_UNBAN')
+    WHERE action NOT IN ('BAN', 'PREVENTIVE_BAN', 'DESBANIR', 'VERIFICAR', 'REMOVER_VERIFICADO', 'MUTE', 'UNMUTE', 'SYSTEM_UNMUTE', 'WARN', 'WARN_REMOVED', 'SYSTEM_UNBAN', 'BAN_SYNC_PENDING', 'UNBAN_SYNC_PENDING', 'BAN_CARD_REFERENCE', 'BAN_CARD_PENDING')
       AND created_at < NOW() - INTERVAL '7 days'
   `);
   const oldUnbans = await pool.query(`
     DELETE FROM mod_logs
-    WHERE action = 'SYSTEM_UNBAN'
+    WHERE action = 'SYSTEM_UNBAN' AND NOT EXISTS (SELECT 1 FROM mod_logs b WHERE b.steam_id=mod_logs.steam_id AND b.server_id=mod_logs.server_id AND b.action IN ('BAN', 'PREVENTIVE_BAN') AND b.id<mod_logs.id)
       AND created_at < NOW() - INTERVAL '40 days'
   `);
 
