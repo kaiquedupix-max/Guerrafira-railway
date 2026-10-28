@@ -9,16 +9,16 @@ import { requireAdmin } from "./guard.js";
 const router = Router();
 router.use(requireAdmin);
 const steamRe = /^7656119\d{10}$/;
-const clean = (v: unknown, n = 64) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
+const clean = (v: unknown, n = 64) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n === 17 ? 18 : n);
 
 router.get("/:steamId", async (req, res) => {
   const steamId = clean(req.params.steamId, 17);
-  if (!steamRe.test(steamId)) return res.status(400).json({ error: "SteamID inválido." });
+  if (!steamRe.test(steamId)) return void res.status(400).json({ error: "SteamID inválido." });
   const now = Date.now();
   const [links, vips, history] = await Promise.all([
     db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId)).limit(1),
     db.select().from(vipSubscriptionsTable).where(eq(vipSubscriptionsTable.steamId, steamId)).orderBy(desc(vipSubscriptionsTable.expiresAt)),
-    db.select().from(modLogsTable).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.steamId, steamId))).orderBy(desc(modLogsTable.createdAt)).limit(200),
+    db.select().from(modLogsTable).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.steamId, steamId))).orderBy(desc(modLogsTable.createdAt), desc(modLogsTable.id)),
   ]);
 
   const removedWarningIds = new Set(history
@@ -37,6 +37,8 @@ router.get("/:steamId", async (req, res) => {
   const banned = latestBanState?.action === "BAN" || latestBanState?.action === "PREVENTIVE_BAN";
   const latestBan = banned ? latestBanState : null;
   const preventiveBan = latestBan?.action === "PREVENTIVE_BAN";
+  const latestMute = history.find(x => ["MUTE", "UNMUTE", "SYSTEM_UNMUTE"].includes(x.action));
+  const muted = latestMute?.action === "MUTE" && (!latestMute.banExpiresAt || latestMute.banExpiresAt.getTime() > now);
 
   res.json({
     booster: links[0] ? { active: links[0].active, discordUserId: links[0].discordUserId } : { active: false, discordUserId: null },
@@ -45,6 +47,8 @@ router.get("/:steamId", async (req, res) => {
     warnings: activeWarnings.length,
     banned,
     preventiveBan,
+    muted,
+    muteExpiresAt: muted ? latestMute?.banExpiresAt : null,
     ban: latestBan ? {
       type: preventiveBan ? "preventive" : "normal",
       duration: latestBan.banDuration,

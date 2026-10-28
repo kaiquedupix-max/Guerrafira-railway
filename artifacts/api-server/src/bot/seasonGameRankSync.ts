@@ -140,7 +140,7 @@ async function normalizeFirstTime(steamId: string, desired: SeasonGroup | null):
   for (const group of GROUPS) {
     if (!(await removeGroup(steamId, group))) return false;
   }
-  return desired ? addGroup(steamId, desired) : true;
+  return desired ? addGroup(steamId, desired!) : true;
 }
 
 async function saveState(steamId: string, group: SeasonGroup | null, active: boolean) {
@@ -200,7 +200,7 @@ export async function syncSeasonGameRanksOnce(): Promise<void> {
       if (previous && previous !== desired) {
         if (!(await removeGroup(steamId, previous))) { failed++; continue; }
       }
-      if (!(await addGroup(steamId, desired))) { failed++; continue; }
+      if (!desired || !(await addGroup(steamId, desired))) { failed++; continue; }
       await saveState(steamId, desired, true);
       changed++;
     }

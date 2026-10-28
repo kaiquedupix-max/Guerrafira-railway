@@ -1,5 +1,5 @@
+import { moderateChat, muteDurations, applyChatMute, withMuteLock } from "../../core/chatModeration.js";
 import { adminServer, withAdminServer } from "../../core/adminServerContext.js";
-import { executeRconRequired } from "../../core/systemActions.js";
 import {
   SlashCommandBuilder,
   PermissionFlagsBits,
@@ -9,61 +9,48 @@ import {
 } from "discord.js";
 import { and, desc, eq, gt, inArray, isNotNull, lte } from "drizzle-orm";
 import { db, modLogsTable } from "@workspace/db";
-import { searchPlayers, getPlayerBySteamId } from "../utils/players.js";
+import { searchPlayers } from "../utils/players.js";
 import { ActionError } from "../../core/systemActions.js";
-import { executeRconCommand } from "../utils/rcon.js";
 import { logger } from "../../lib/logger.js";
 
 const STEAM_ID_RE = /^7656119\d{10}$/;
 const ANONYMOUS_MODERATOR_ROLE_ID = "1538735197611360347";
 const ANONYMOUS_MODERATOR_LABEL = "Equipe de Moderação";
 
-const MUTE_DURATIONS = [
-  { name: "10 minutos", value: "10m", ms: 10 * 60_000 },
-  { name: "30 minutos", value: "30m", ms: 30 * 60_000 },
-  { name: "1 hora", value: "1h", ms: 60 * 60_000 },
-  { name: "2 horas", value: "2h", ms: 2 * 60 * 60_000 },
-  { name: "6 horas", value: "6h", ms: 6 * 60 * 60_000 },
-  { name: "12 horas", value: "12h", ms: 12 * 60 * 60_000 },
-  { name: "1 dia", value: "1d", ms: 24 * 60 * 60_000 },
-  { name: "3 dias", value: "3d", ms: 3 * 24 * 60 * 60_000 },
-  { name: "7 dias", value: "7d", ms: 7 * 24 * 60 * 60_000 },
-] as const;
+const MUTE_DURATIONS = muteDurations;
 const VALID_DURATIONS = new Set<string>(MUTE_DURATIONS.map(item => item.value));
 function safe(value: string, max = 180): string { return String(value ?? "").replace(/[\r\n\t"]/g, " ").trim().slice(0, max); }
-function safeChat(value: string, max = 160): string { return safe(value, max).replace(/[<>]/g, ""); }
 function durationLabel(value: string): string { return MUTE_DURATIONS.find(item => item.value === value)?.name ?? value; }
-function durationMs(value: string): number { return MUTE_DURATIONS.find(item => item.value === value)?.ms ?? 0; }
 async function moderatorName(interaction: ChatInputCommandInteraction): Promise<string> {
   const member = interaction.guild ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null) : null;
   if (member?.roles.cache.has(ANONYMOUS_MODERATOR_ROLE_ID)) return ANONYMOUS_MODERATOR_LABEL;
   return member?.displayName?.trim() || interaction.user.globalName?.trim() || interaction.user.username?.trim() || "Administrador";
-}
-async function dispatchRustCommand(command: string): Promise<void> {
-  await executeRconRequired(command);
 }
 
 let expiryWorkerStarted = false;
 export function startMuteExpiryChecker(): void {
   if (expiryWorkerStarted) return;
   expiryWorkerStarted = true;
+  let running = false;
   const run = async () => {
+    if (running) return;
+    running = true;
     try {
       const expired = await db.select().from(modLogsTable).where(and(
         eq(modLogsTable.action, "MUTE"), isNotNull(modLogsTable.banExpiresAt), lte(modLogsTable.banExpiresAt, new Date()),
       )).orderBy(desc(modLogsTable.id)).limit(100);
       for (const mute of expired) {
-        await withAdminServer(mute.serverId === "trio" ? "trio" : "solo-duo", async () => {
+        await withAdminServer(mute.serverId === "trio" ? "trio" : "solo-duo", async () => withMuteLock(mute.steamId, async () => {
         const [newer] = await db.select({ id: modLogsTable.id, action: modLogsTable.action }).from(modLogsTable).where(and(
           eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.steamId, mute.steamId), gt(modLogsTable.id, mute.id), inArray(modLogsTable.action, ["MUTE", "UNMUTE", "SYSTEM_UNMUTE"]),
         )).orderBy(desc(modLogsTable.id)).limit(1);
-        if (newer) return;
-        await dispatchRustCommand(`unmute ${mute.steamId}`);
+        if (newer) { await db.update(modLogsTable).set({ banExpiresAt: null }).where(eq(modLogsTable.id, mute.id)); return; }
+        await applyChatMute(mute.steamId, null);
         await db.insert(modLogsTable).values({serverId: adminServer(), action: "SYSTEM_UNMUTE", steamId: mute.steamId, playerName: mute.playerName, reason: "Tempo do mute encerrado automaticamente", adminId: "system", adminName: "Sistema Guerra Fria", publicVisible: false });
         logger.info({ steamId: mute.steamId, serverId: mute.serverId }, "Timed mute expired and native Rust unmute confirmed");
-        });
+        })).catch(error => logger.error({ error, steamId: mute.steamId }, "Mute expiry pending; retrying next cycle"));
       }
-    } catch (error) { logger.error({ error }, "Mute expiry checker failed"); }
+    } catch (error) { logger.error({ error }, "Mute expiry checker failed"); } finally { running = false; }
   };
   void run();
   setInterval(() => void run(), 30_000).unref();
@@ -87,6 +74,7 @@ export async function autocomplete(interaction: AutocompleteInteraction): Promis
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) { await interaction.editReply("❌ Sem permissão para moderar jogadores."); return; }
   try {
     const steamId = interaction.options.getString("jogador", true).trim();
     const duration = interaction.options.getString("tempo", true).trim().toLowerCase();
@@ -94,13 +82,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (!STEAM_ID_RE.test(steamId)) throw new ActionError("SteamID inválido.");
     if (!VALID_DURATIONS.has(duration)) throw new ActionError("Tempo de mute inválido. Selecione uma das opções disponíveis.");
     if (!reason) throw new ActionError("Motivo obrigatório.");
-    const player = await getPlayerBySteamId(steamId);
-    const playerName = safe(player?.playerName || `Jogador (${steamId})`, 100);
-    const adminName = await moderatorName(interaction);
-    const expiresAt = new Date(Date.now() + durationMs(duration));
-    await dispatchRustCommand(`mute ${steamId}`);
-    await db.insert(modLogsTable).values({serverId: adminServer(), action: "MUTE", steamId, playerName, reason: `${reason} | Duração: ${duration}`, adminId: interaction.user.id, adminName, banDuration: duration, banExpiresAt: expiresAt });
-    void dispatchRustCommand(`say <color=#FFB000>[JOGADOR MUTADO]</color> | <color=#FF8800>${safeChat(playerName,80)}</color> foi mutado. <color=#FFD166>Aplicado por:</color> <color=#FF4444>${safeChat(adminName,60)}</color> | <color=#FFD166>Tempo:</color> <color=#FFFFFF>${safeChat(durationLabel(duration),40)}</color> | <color=#FFD166>Motivo:</color> <color=#FFFFFF>${safeChat(reason,140)}</color>`).catch(error => logger.warn({ error }, "Mute announcement failed"));
+    const result = await moderateChat({ steamId, duration, reason, muted: true, actor: { id: interaction.user.id, name: await moderatorName(interaction), source: "discord" } });
+    const playerName = result.playerName;
     await interaction.editReply(`✅ **${playerName}** foi mutado por **${durationLabel(duration)}**.\n📝 Motivo: ${reason}`);
   } catch(error) {
     logger.error({ error }, "Mute command failed");

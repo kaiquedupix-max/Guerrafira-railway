@@ -1,6 +1,6 @@
+import { publicModerationRecords } from "../core/publicModerationRecords.js";
 import { Router } from "express";
-import { db, modLogsTable } from "@workspace/db";
-import { desc, eq } from "drizzle-orm";
+import { modLogsTable } from "@workspace/db";
 import { getCommunitySession } from "../admin/communitySession.js";
 import { getSteamProfileSummaries } from "../admin/steamProfiles.js";
 import { getGuerraFriaMember, resolveGuerraFriaDisplayNameByStoredName } from "../admin/permissions.js";
@@ -11,7 +11,7 @@ const MODERATOR_PUBLIC_LABEL = "Equipe de Moderação";
 
 router.use((req, res, next) => {
   const session = getCommunitySession(req);
-  if (!session) return res.status(401).json({ error: "Faça login com o Discord." });
+  if (!session) return void res.status(401).json({ error: "Faça login com o Discord." });
   res.locals.community = session;
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
@@ -57,8 +57,7 @@ async function publicResponsibleNames(rows: typeof modLogsTable.$inferSelect[]):
 }
 
 router.get("/records", async (_req, res) => {
-  const rows = await db.select().from(modLogsTable).where(eq(modLogsTable.publicVisible, true)).orderBy(desc(modLogsTable.createdAt)).limit(2000);
-  const filtered = rows.filter(x => ["WARN", "BAN", "VERIFICAR"].includes(String(x.action || "").toUpperCase()));
+  const filtered = await publicModerationRecords();
   const [steamProfiles, responsibleNames] = await Promise.all([
     getSteamProfileSummaries(filtered.map(x => String(x.steamId || ""))),
     publicResponsibleNames(filtered),

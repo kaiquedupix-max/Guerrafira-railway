@@ -1,4 +1,5 @@
 import { banWithAssociation, resolveBanTeam } from "../core/teamModeration.js";
+import { moderateChat, muteDurations } from "../core/chatModeration.js";
 import { Router } from "express";
 import { requireAdmin } from "./guard.js";
 import { getGuerraFriaDisplayName } from "./permissions.js";
@@ -7,7 +8,7 @@ import { ActionError, banPlayer, kickPlayer, preventiveBanPlayer, unbanPlayer, v
 
 const router = Router();
 router.use(requireAdmin);
-const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
+const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n === 17 ? 18 : n);
 const ANONYMOUS_MODERATOR_ROLE_ID = "1538735197611360347";
 const ANONYMOUS_MODERATOR_LABEL = "Moderador do servidor";
 
@@ -60,6 +61,15 @@ router.post("/kick", async (req, res) => {
 });
 router.post("/unban", async (req, res) => {
   try { res.json({ ok: true, ...(await unbanPlayer({ steamId: clean(req.body?.steamId, 17), reason: clean(req.body?.reason), actor: await actor(res) })) }); }
+  catch (error) { fail(res, error); }
+});
+router.get("/mute-durations", (_req, res) => { res.json({ durations: muteDurations.map(({ name, value }) => ({ name, value })) }); });
+router.post("/mute", async (req, res) => {
+  try { res.json({ ok: true, ...(await moderateChat({ steamId: clean(req.body?.steamId, 17), duration: clean(req.body?.duration, 8), reason: clean(req.body?.reason), muted: true, actor: await actor(res) })) }); }
+  catch (error) { fail(res, error); }
+});
+router.post("/unmute", async (req, res) => {
+  try { res.json({ ok: true, ...(await moderateChat({ steamId: clean(req.body?.steamId, 17), reason: clean(req.body?.reason), muted: false, actor: await actor(res) })) }); }
   catch (error) { fail(res, error); }
 });
 router.post("/verify", async (req, res) => {
