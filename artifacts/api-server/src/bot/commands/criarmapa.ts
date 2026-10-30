@@ -597,7 +597,7 @@ async function processScheduledWipes(client:Client):Promise<void>{
       let maps:MapOption[];try{maps=(JSON.parse(row.mapsJson) as any[]).map(normalizeMap)}catch{return}
       const map=maps[row.winnerIndex??0];if(!map||!row.wipeAt)return;
       const remaining=Math.ceil((row.wipeAt.getTime()-Date.now())/1000);const warnings=new Map([[900,"15 minutos"],[600,"10 minutos"],[300,"5 minutos"],[60,"1 minuto"]]);
-      for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await withAdminServer(map.serverId || "solo-duo", () => sendGameAnnouncement("GUERRA FRIA",`Wipe de mapa em ${label}. Blueprints preservados. Prepare-se!`)).catch(()=>null);}}
+      for(const [seconds,label]of warnings){const key=`${row.id}:${seconds}`;if(remaining<=seconds&&remaining>seconds-11&&!wipeWarnings.has(key)){wipeWarnings.add(key);await withAdminServer(map.serverId || "solo-duo", () => sendGameAnnouncement("GUERRA FRIA",`Procedimento técnico do wipe em ${label}. O servidor será liberado após o wipe oficial. Blueprints preservados.`)).catch(()=>null);}}
       if(map.mode!=="seed")return;
       const seed=Number(map.seed),size=Number(map.size);
       if(!preparedWipeBackups.has(row.id)){const saved=await loadPreparedBackup(row.id,seed,size).catch(()=>null);if(saved)preparedWipeBackups.set(row.id,saved);}
