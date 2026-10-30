@@ -93,7 +93,7 @@ export const data = new SlashCommandBuilder()
   .setName("criarmapa").setDescription("Cria uma votação de mapa para a comunidade")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addStringOption(o => o.setName("servidor").setDescription("Servidor que receberá o wipe de mapa").setRequired(true).addChoices({name:"Solo/Duo",value:"solo-duo"},{name:"Trio",value:"trio"}))
-  .addStringOption(o => o.setName("data").setDescription("Data: votação 18h e fluxo do wipe 18h25 (AAAA-MM-DD)").setRequired(true))
+  .addStringOption(o => o.setName("data").setDescription("Data do wipe (AAAA-MM-DD; horário calculado pela agenda do servidor)").setRequired(true))
   .addStringOption(o => o.setName("modo1").setDescription("Fonte do Mapa 1").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
   .addStringOption(o => o.setName("modo2").setDescription("Fonte do Mapa 2").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
   .addStringOption(o => o.setName("modo3").setDescription("Fonte do Mapa 3").setRequired(true).addChoices({name:"Seed + Size",value:"seed"},{name:"Link .map",value:"link"}))
@@ -289,7 +289,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       maps,
       images:[1,2,3].map(n=>{const a=interaction.options.getAttachment(`imagem${n}`);if(a&&!a.contentType?.startsWith("image/"))throw new Error(`imagem${n} não é uma imagem válida.`);return a?.url}),
     });
-    await interaction.editReply(`✅ **${GUERRA_FRIA_SERVERS[serverId].name} — WIPE DE MAPA (blueprints preservados)**\nVotação criada em <#${result.channelId}>.\n🏆 Resultado: <t:${Math.floor(result.endsAt/1000)}:F>.\n🧊 Wipe automático preparado: <t:${Math.floor(result.wipeAt/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
+    await interaction.editReply(`✅ **${GUERRA_FRIA_SERVERS[serverId].name} — WIPE DE MAPA (blueprints preservados)**\nVotação criada em <#${result.channelId}>.\n🏆 Resultado: <t:${Math.floor(result.endsAt/1000)}:F>.\n🛠️ Início do procedimento técnico: <t:${Math.floor(result.wipeAt/1000)}:F>.\n🧊 Wipe oficial: <t:${Math.floor((result.wipeAt+5*60_000)/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
   }catch(error){await interaction.editReply(`❌ ${error instanceof Error?error.message:"Falha ao criar votação."}`)}
 }
 
@@ -454,7 +454,7 @@ export async function forceFinishActiveMapVote(
   wipeNow: boolean,
 ): Promise<ForcedVoteResult> {
   // Compatibilidade com painel antigo: "forçar fim" só fecha a votação.
-  // O wipe permanece no horário oficial da segunda/sexta correspondente.
+  // O wipe permanece no horário oficial do servidor correspondente.
   wipeNow = false;
   if (wipeNow) {
     if (process.env.WIPE_EXECUTION_ENABLED !== "true" || process.env.WIPE_AUTOMATION_ENABLED !== "true") {
