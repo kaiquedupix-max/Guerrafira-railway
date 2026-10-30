@@ -15,9 +15,6 @@ import { cancelActiveMapVoteRuntime, forceFinishActiveMapVote } from "./criarmap
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
 const CHAT_CHANNEL_ID = "1499084541791436861";
-const VIP_ROLE_ID = "1499084540356853917";
-const BOOSTER_ROLE_ID = "1536607642364018688";
-const CHAT_CHANNEL_ID = "1499084541791436861";
 
 type MapOption = {
   name?: string;
