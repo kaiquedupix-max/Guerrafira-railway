@@ -197,12 +197,12 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
     let maps: MapOption[];
     try { maps = (JSON.parse(saved.mapsJson) as any[]).map(normalizeMap); } catch { continue; }
     // Preserve ballots while repairing future Trio votes created using the obsolete
-    // Wednesday/Sunday 18:00/13:00 schedule. Never move a wipe into the past.
+    // Wednesday 18:00 / accidental Saturday 18:30 schedule. Never move a wipe into the past.
     if (maps[0]?.serverId === "trio" && saved.endsAt.getTime() > Date.now()) {
       const legacyDate = localWipeDate(saved.endsAt);
       const day = new Date(legacyDate + "T00:00:00Z").getUTCDay();
-      const targetDate = day === 0
-        ? new Date(Date.parse(legacyDate + "T00:00:00Z") - 86400000).toISOString().slice(0, 10)
+      const targetDate = day === 6
+        ? new Date(Date.parse(legacyDate + "T00:00:00Z") + 86400000).toISOString().slice(0, 10)
         : legacyDate;
       if (day === 0 || day === 3 || day === 6) {
         const desired = datedWipeSchedule("trio", targetDate);
@@ -214,7 +214,7 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
           }).where(and(eq(mapVotesTable.id, saved.id), eq(mapVotesTable.status, "active")));
           saved.endsAt = new Date(desired.voteEndsAt);
           saved.wipeAt = new Date(desired.wipeAt);
-          logger.warn({ voteId: saved.id, targetDate }, "Future Trio map vote repaired to Wednesday/Saturday 18:30");
+          logger.warn({ voteId: saved.id, targetDate }, "Future Trio map vote repaired to Wednesday 18:30 / Sunday 13:00");
         }
       }
     }
