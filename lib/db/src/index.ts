@@ -33,13 +33,18 @@ export function ensureDatabaseSchema(): Promise<void> {
   schemaReady = (async () => {
     const client = await pool.connect();
     try {
-      const existing = await client.query(
-        "SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('mod_logs') AND attname = 'server_id' AND NOT attisdropped"
-      );
-      if (existing.rowCount) return;
       await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout = '3s'");
       await client.query("SET LOCAL statement_timeout = '15s'");
-      await client.query("ALTER TABLE mod_logs ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'");
+      await client.query("ALTER TABLE IF EXISTS mod_logs ADD COLUMN IF NOT EXISTS server_id TEXT NOT NULL DEFAULT 'solo-duo'");
+      // Versões antigas da tabela de votações não têm todas as colunas exigidas pelo agendador.
+      // Migração não destrutiva: preserva votos e executa em toda inicialização.
+      await client.query(`ALTER TABLE IF EXISTS map_votes
+        ADD COLUMN IF NOT EXISTS wipe_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS winner_index INTEGER,
+        ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS failure_reason TEXT,
+        ADD COLUMN IF NOT EXISTS created_by TEXT`);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
