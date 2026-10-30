@@ -1,11 +1,11 @@
 import type { GuerraFriaServerId } from "./servers.js";
 export function wipeCalendar(server: GuerraFriaServerId) {
   // Official weekly schedule, independent of legacy deployment variables.
-  const days = server === "trio" ? [3, 6] : [1, 5];
-  // Ambos os servidores têm wipe oficial às 18h30 de Brasília.
+  const days = server === "trio" ? [3, 0] : [1, 5];
+  // Trio: quarta 18h30 e domingo 13h; Duo: segunda e sexta 18h30.
   const hour = 18;
   const minute = 30;
-  const slots = days.map(day => ({ day, hour, minute }));
+  const slots = days.map(day => ({ day, hour: server === "trio" && day === 0 ? 13 : hour, minute: server === "trio" && day === 0 ? 0 : minute }));
   if (!days.length || days.some(n=>!Number.isInteger(n)||n<0||n>6) || !Number.isInteger(hour)||hour<0||hour>23||!Number.isInteger(minute)||minute<0||minute>59) throw new Error("Agenda de wipe inválida.");
   return { days, hour, minute, slots };
 }
