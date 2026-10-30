@@ -75,7 +75,7 @@ router.get("/wipe/status",async(_req,res)=>{
       const leaders=counts.map((value,index)=>value===max&&max>0?index:-1).filter(index=>index>=0);
       const terminal=row.status==="manual_closed"||row.status==="completed"||row.appliedAt!==null;
 
-      // Horário canônico do Guerra Fria: votação 18:00 BRT, fluxo 18:25 e wipe oficial 18:30.
+      // Horários derivados da agenda real de cada servidor (Trio domingo às 13h).
       // Nunca confiamos em wipe_at legado para exibição, pois versões antigas chegaram a gravar
       // horários deslocados. O ends_at é a âncora e o fluxo é sempre +25 minutos.
       const voteEndsMs=row.endsAt?.getTime()??null;
