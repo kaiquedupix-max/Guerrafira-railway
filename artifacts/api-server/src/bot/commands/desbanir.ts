@@ -35,7 +35,7 @@ async function getBannedPlayers(query: string) {
 export const data = new SlashCommandBuilder()
   .setName("desbanir").setDescription("Remove banimento normal ou preventivo de um jogador")
   .addStringOption(opt => opt.setName("jogador").setDescription("Jogador banido a ser desbanido").setRequired(true).setAutocomplete(true))
-  .addStringOption(opt => opt.setName("motivo").setDescription("Motivo do desbanimento").setRequired(true))
+  .addStringOption(opt => opt.setName("motivo").setDescription("Motivo do desbanimento (opcional)").setRequired(false))
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers);
 
 export async function autocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -59,7 +59,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   try {
     const result = await unbanPlayer({
       steamId,
-      reason: interaction.options.getString("motivo", true),
+      reason: interaction.options.getString("motivo") || undefined,
       actor: await moderationActor(interaction),
     });
     await interaction.editReply(`✅ **${result.playerName}** foi desbanido no **Duo e Trio**, com confirmação dos dois servidores.`);

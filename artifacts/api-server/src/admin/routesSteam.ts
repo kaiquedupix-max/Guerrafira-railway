@@ -15,10 +15,10 @@ const clean = (v: unknown, n = 64) => String(v ?? "").replace(/[\r\n\t]/g, " ").
 router.post("/change", async (req, res) => {
   const discordUserId = clean(req.body?.discordUserId, 32);
   const steamId = clean(req.body?.steamId, 17);
-  if (!discordUserId || !steamRe.test(steamId)) return res.status(400).json({ error: "Dados inválidos." });
+  if (!discordUserId || !steamRe.test(steamId)) return void res.status(400).json({ error: "Dados inválidos." });
   const [current] = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.discordUserId, discordUserId)).limit(1);
   const [owner] = await db.select().from(boosterLinksTable).where(eq(boosterLinksTable.steamId, steamId)).limit(1);
-  if (owner && owner.discordUserId !== discordUserId) return res.status(409).json({ error: "SteamID já vinculado a outro Discord." });
+  if (owner && owner.discordUserId !== discordUserId) return void res.status(409).json({ error: "SteamID já vinculado a outro Discord." });
   if (current?.active && current.steamId !== steamId) {
     if (await syncBoosterServers(current.steamId, false) === null) throw new ActionError("Um dos servidores não confirmou a remoção do Booster anterior.", 503);
     if (await syncBoosterServers(steamId, true) === null) {

@@ -36,6 +36,7 @@ export function startAdminNotificationBridge(client: Client): void {
       if (message.author.id !== client.user?.id) return;
       const embed = message.embeds[0];
       const title = embed?.title || "Atualização da administração";
+      if (/desban|unban|banimento.*expirad/i.test(title)) return;
       const description = embed?.description || message.content || "Nova ação registrada no Guerra Fria.";
       const { kind, severity } = classify(title);
       const playerName = fieldValue(message, ["jogador", "player"]);

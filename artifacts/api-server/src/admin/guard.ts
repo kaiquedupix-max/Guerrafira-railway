@@ -5,7 +5,7 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
   const session = getAdminSessionV3(req);
   if (!session) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    return res.status(401).json({ error: "not_authenticated" });
+    return void res.status(401).json({ error: "not_authenticated" });
   }
   res.locals.admin = session;
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");

@@ -96,6 +96,7 @@ async function notifyWebPush(row: AdminAlert): Promise<void> {
 }
 
 export async function notifySubscribedAdmins(alert: Omit<AdminAlert, "id" | "createdAt">, options: { additionalUserIds?: string[] } = {}): Promise<void> {
+  if (alert.kind === "unban") return;
   const row = pushAdminAlert(alert); void notifyWebPush(row).catch(err=>logger.warn({err},"Admin web push notification failed"));
   const client = discordClient(); if (!client) return;
   const subscribers = await db.select().from(adminNotificationSubscriptionsTable).where(eq(adminNotificationSubscriptionsTable.enabled, true)).catch(() => []);

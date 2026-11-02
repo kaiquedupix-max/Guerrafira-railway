@@ -1,2 +1,12 @@
 __pycache__/
 *.py[cod]
+node_modules/
+dist/
+*.tsbuildinfo
+.tsbuildinfo
+*-review.log
+.env
+.env.*
+!.env.example
+bin/
+obj/

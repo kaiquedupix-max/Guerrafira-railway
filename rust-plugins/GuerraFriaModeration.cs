@@ -7,7 +7,7 @@ using Newtonsoft.Json;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaModeration", "Mac1otaDev", "1.0.0")]
+    [Info("GuerraFriaModeration", "Mac1otaDev", "1.1.0")]
     [Description("Bloqueio de Steam/IP e consulta confiavel de times para Duo e Trio.")]
     public class GuerraFriaModeration : RustPlugin
     {
@@ -30,6 +30,7 @@ namespace Oxide.Plugins
         {
             public Dictionary<string, string> Players = new Dictionary<string, string>();
             public Dictionary<string, Rule> Rules = new Dictionary<string, Rule>();
+            public Dictionary<string, long> Mutes = new Dictionary<string, long>();
         }
         private Saved saved;
         private bool dirty;
@@ -62,6 +63,7 @@ namespace Oxide.Plugins
             catch (Exception error) { PrintError("Nao foi possivel ler os bloqueios: " + error.Message); throw; }
             saved.Players = saved.Players ?? new Dictionary<string, string>();
             saved.Rules = saved.Rules ?? new Dictionary<string, Rule>();
+            saved.Mutes = saved.Mutes ?? new Dictionary<string, long>();
             timer.Every(30f, () => { Prune(); Save(); });
         }
         private Saved InterfaceData()
@@ -74,6 +76,10 @@ namespace Oxide.Plugins
         private void Prune()
         {
             foreach (var id in saved.Rules.Where(pair => !Active(pair.Value)).Select(pair => pair.Key).ToList()) { saved.Rules.Remove(id); dirty = true; }
+            foreach (var id in saved.Mutes.Where(pair => pair.Value <= Now()).Select(pair => pair.Key).ToList())
+            {
+                saved.Mutes.Remove(id); ApplyChatMute(id, false); dirty = true;
+            }
         }
         private string Remember(Network.Connection connection)
         {
@@ -85,6 +91,48 @@ namespace Oxide.Plugins
         private void OnServerInitialized()
         {
             foreach (var player in BasePlayer.activePlayerList) Remember(player.net == null ? null : player.net.connection);
+            Prune();
+            foreach (var id in saved.Mutes.Keys) ApplyChatMute(id, true);
+        }
+        private void ApplyChatMute(string id, bool muted)
+        {
+            var player = BasePlayer.FindByID(ulong.Parse(id)) ?? BasePlayer.FindSleeping(ulong.Parse(id));
+            if (player != null) player.SetPlayerFlag(BasePlayer.PlayerFlags.ChatMute, muted);
+        }
+        private void OnPlayerConnected(BasePlayer player)
+        {
+            long expires;
+            if (saved.Mutes.TryGetValue(player.UserIDString, out expires)) ApplyChatMute(player.UserIDString, expires > Now());
+        }
+        private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
+        {
+            long expires;
+            return saved.Mutes.TryGetValue(player.UserIDString, out expires) && expires > Now() ? (object)false : null;
+        }
+        private void OnBetterChat(Dictionary<string, object> data)
+        {
+            object sender;
+            if (!data.TryGetValue("Player", out sender)) return;
+            var player = sender as Oxide.Core.Libraries.Covalence.IPlayer;
+            long expires;
+            if (player != null && saved.Mutes.TryGetValue(player.Id, out expires) && expires > Now()) data["CancelOption"] = 2;
+        }
+        [ConsoleCommand("gf.guard.mute")]
+        private void MuteChat(ConsoleSystem.Arg arg)
+        {
+            if (!Allowed(arg)) return;
+            var id = arg.GetString(0, ""); long expires;
+            if (!ValidId(id) || !long.TryParse(arg.GetString(1, ""), out expires) || expires <= Now()) { arg.ReplyWith("GF_GUARD_INVALID_PAYLOAD"); return; }
+            saved.Mutes[id] = expires; ApplyChatMute(id, true); dirty = true; Save();
+            arg.ReplyWith("GF_GUARD_MUTED " + id);
+        }
+        [ConsoleCommand("gf.guard.unmute")]
+        private void UnmuteChat(ConsoleSystem.Arg arg)
+        {
+            if (!Allowed(arg)) return;
+            var id = arg.GetString(0, ""); if (!ValidId(id)) { arg.ReplyWith("GF_GUARD_INVALID_ID"); return; }
+            saved.Mutes.Remove(id); ApplyChatMute(id, false); dirty = true; Save();
+            arg.ReplyWith("GF_GUARD_UNMUTED " + id);
         }
         private object CanClientLogin(Network.Connection connection)
         {
@@ -99,7 +147,7 @@ namespace Oxide.Plugins
             return null;
         }
         [ConsoleCommand("gf.guard.status")]
-        private void Status(ConsoleSystem.Arg arg) { if (Allowed(arg)) arg.ReplyWith("GF_GUARD_READY_1"); }
+        private void Status(ConsoleSystem.Arg arg) { if (Allowed(arg)) arg.ReplyWith("GF_GUARD_READY_2"); }
         [ConsoleCommand("gf.guard.player")]
         private void PlayerInfo(ConsoleSystem.Arg arg)
         {

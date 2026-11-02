@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
@@ -19,7 +20,7 @@ const built = await build({entryPoints:['src/bot/slotManager.ts'],bundle:true,pl
   p.onLoad({filter:/.*/,namespace:'mock'},a=>({resolveDir:process.cwd(),contents:a.path==='@workspace/db'
     ? 'export const pool={query:(sql,args)=>globalThis.__slotServers.db.query(sql,args)};'
     : a.path.includes('rcon')
-      ? `import {adminServer} from ${JSON.stringify(new URL('../src/core/adminServerContext.ts',import.meta.url).pathname)};
+      ? `import {adminServer} from ${JSON.stringify(fileURLToPath(new URL('../src/core/adminServerContext.ts',import.meta.url)))};
          export const getServerInfo=async()=>({...globalThis.__slotServers.info[adminServer()]});
          export const executeRconCommand=async command=>{const s=globalThis.__slotServers;const server=adminServer();s.commands.push({server,command});s.info[server].maxPlayers=Number(command.split(' ')[1]);return 'ok';};`
       : 'export const logger={info(){},error(){}};'}));

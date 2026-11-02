@@ -16,7 +16,7 @@ const router = Router();
 router.use(requireAdmin);
 initLiveOps();
 const steamRe = /^7656119\d{10}$/;
-const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n);
+const clean = (v: unknown, n = 300) => String(v ?? "").replace(/[\r\n\t]/g, " ").trim().slice(0, n === 17 ? 18 : n);
 type CatalogItem={id:number;shortname:string;name:string;category?:string;stack?:number};
 const itemCaches:Record<string,{items:CatalogItem[];at:number}>={"solo-duo":{items:[],at:0},trio:{items:[],at:0}};
 type RestartWarning={timer:ReturnType<typeof setTimeout>;executeAt:number;requestedBy:string};
@@ -220,8 +220,9 @@ router.post("/say", async (req, res) => {
   await runGameCommand(res, `say ${message}`);
 });
 router.post("/give", async (req, res) => {
-  const steamId = clean(req.body?.steamId, 17), item = clean(req.body?.item, 80), amount = Math.max(1, Math.min(100000, Number(req.body?.amount) || 1));
+  const steamId = clean(req.body?.steamId, 17), item = clean(req.body?.item, 80), amount = Number(req.body?.amount ?? 1);
   if (!steamRe.test(steamId) || !/^[a-z0-9._-]+$/i.test(item)) return void res.status(400).json({ error: "SteamID ou item inválido." });
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > 100000) return void res.status(400).json({ error: "Informe uma quantidade inteira entre 1 e 100000." });
   await runGameCommand(res, `inventory.giveto ${steamId} ${item} ${amount}`);
 });
 router.post("/clear-inventory", async (req, res) => {
@@ -232,6 +233,7 @@ router.post("/clear-inventory", async (req, res) => {
 router.post("/teleport", async (req, res) => {
   const from = clean(req.body?.from, 17), to = clean(req.body?.to, 17);
   if (!steamRe.test(from) || !steamRe.test(to)) return void res.status(400).json({ error: "SteamID inválido." });
+  if (from === to) return void res.status(400).json({ error: "Selecione um jogador de destino diferente." });
   await runGameCommand(res, `teleport ${from} ${to}`);
 });
 router.post("/spawn", async (req, res) => {

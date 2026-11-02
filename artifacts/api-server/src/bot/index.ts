@@ -1,11 +1,10 @@
-import { removePlayerIpBan } from "../core/ipModeration.js";
+import { expireBanIfCurrent } from "../core/systemActions.js";
 import { startServerChatChannels, chatChannelFor, chatServerFor, parseGameChat } from "./chatChannels.js";
 import { addServerOption, runForCommandServer, serverCommands } from "../core/discordServerContext.js";
 import { addTrioRconEventHandler } from "./utils/serverRcon.js";
 import { adminServer, withAdminServer } from "../core/adminServerContext.js";
 import { startNetworkStatus, handleStatusConnectButton } from "./networkStatus.js";
 import { activeBan, executeRconRequired, startNetworkBanSync } from "../core/systemActions.js";
-import { removeRustBan } from "../core/rustUnban.js";
 import { redirectVipToWebsite } from "./vipWebLinks.js";
 import {
   ActionRowBuilder,
@@ -19,12 +18,13 @@ import {
   type ChatInputCommandInteraction,
   type AutocompleteInteraction,
   type TextChannel,
+  type RESTPostAPIChatInputApplicationCommandsJSONBody,
 } from "discord.js";
 import { and, isNotNull, lte, eq, gt } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { getOnlinePlayers, executeRconCommand, getServerInfo, setRconEventHandler } from "./utils/rcon.js";
 import { upsertPlayer, setAllOffline } from "./utils/players.js";
-import { buildAutoUnbanEmbed, buildStatusEmbed } from "./utils/embeds.js";
+import { buildStatusEmbed } from "./utils/embeds.js";
 import { db, modLogsTable } from "@workspace/db";
 import { setDiscordClient } from "./client.js";
 import { startVipExpiryChecker } from "./vip.js";
@@ -117,7 +117,7 @@ menuCommand.configureMenu([...commands.values(), {
   data: { name: "loja", toJSON: () => ({ name: "loja", description: "Abrir a loja oficial de VIPs" }) },
   execute: async interaction => { await interaction.reply({ content: "**Loja oficial:** https://www.guerrafriarust.com.br/loja", flags: 64 }); },
 }]);
-ajudaCommand.configureHelp([...commands.values()].map(command => command.data.toJSON()));
+ajudaCommand.configureHelp([...commands.values()].map(command => command.data.toJSON() as RESTPostAPIChatInputApplicationCommandsJSONBody as RESTPostAPIChatInputApplicationCommandsJSONBody));
 
 export async function startBot(): Promise<void> {
   startNetworkBanSync();
@@ -266,7 +266,7 @@ async function handleConnectButton(interaction: Parameters<typeof handleTicketCr
 async function registerSlashCommands(client: Client): Promise<void> {
   const clientId = process.env.DISCORD_CLIENT_ID; const guildId = process.env.DISCORD_GUILD_ID;
   if (!clientId) { logger.warn("DISCORD_CLIENT_ID not set"); return; }
-  const commandData = [...commands.values()].map(command => command.data.toJSON());
+  const commandData = [...commands.values()].map(command => command.data.toJSON() as RESTPostAPIChatInputApplicationCommandsJSONBody);
   try {
     if (guildId) { const guild = await client.guilds.fetch(guildId); await guild.commands.set(commandData); logger.info({ guildId }, "Slash commands registered"); }
     else { await client.application?.commands.set(commandData); logger.info("Slash commands registered globally"); }
@@ -316,21 +316,21 @@ function startRconSync(): void {
 }
 
 function startBanExpiryChecker(client: Client): void {
+  let checking = false;
   async function check() {
+    if (checking) return;
+    checking = true;
+    try {
     const now = new Date();
     const expired = await db.select().from(modLogsTable).where(and(eq(modLogsTable.action, "BAN"), isNotNull(modLogsTable.banExpiresAt), lte(modLogsTable.banExpiresAt, now)));
     if (!expired.length) return;
     for (const ban of expired) {
       await withAdminServer(ban.serverId === "trio" ? "trio" : "solo-duo", async () => {
-      const current = await activeBan(ban.steamId);
-      if (!current || current.id !== ban.id) return;
-      await removeRustBan(ban.steamId, executeRconRequired);
-      await removePlayerIpBan(ban.steamId);
-      await db.insert(modLogsTable).values({ serverId: ban.serverId, action: "SYSTEM_UNBAN", steamId: ban.steamId, playerName: ban.playerName, reason: "Banimento temporário expirado", adminId: "SYSTEM", adminName: "Sistema" });
-      const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
-      if (logChannelId) { const ch = await client.channels.fetch(logChannelId).catch(() => null) as TextChannel | null; if (ch?.isSendable()) await ch.send({ embeds: [buildAutoUnbanEmbed({ playerName: ban.playerName ?? "Desconhecido", steamId: ban.steamId, originalReason: ban.reason ?? "—", duration: "temporário" })] }); }
+      await expireBanIfCurrent(ban.steamId, ban.id);
       }).catch(error => logger.error({ error, steamId: ban.steamId, server: ban.serverId }, "Ban expiry pending; retrying next cycle"));
     }
+    }
+    finally { checking = false; }
   }
   setInterval(() => check().catch(err => logger.error({ err }, "Ban expiry check error")), 60_000);
 }
@@ -345,6 +345,7 @@ function startStatusUpdater(client: Client): void {
   }
   async function update() {
     try {
+      if (!channelId) return;
       const info = await getServerInfo(); const ch = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null; if (!ch?.isSendable()) return;
       const embed = buildStatusEmbed(info); const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("status_connect").setLabel("🎮 Conectar ao Servidor").setStyle(ButtonStyle.Success)); const existing = await findExisting(ch);
       if (existing) { statusMessageId = existing.id; await existing.edit({ embeds: [embed], components: [row] }); }

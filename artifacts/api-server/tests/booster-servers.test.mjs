@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 const state=globalThis.__boosterServers={commands:[],updated:[],boosting:true,discordError:false,trioFailed:false};
 const result=await build({entryPoints:['src/bot/booster.ts'],bundle:true,platform:'node',format:'cjs',write:false,plugins:[{name:'mocks',setup(p){
- p.onLoad({filter:/\/booster\.ts$/},a=>({contents:readFileSync(a.path,'utf8')+'\nexport { syncOne, syncBoosterServers };',loader:'ts'}));
+ p.onLoad({filter:/[\\/]booster\.ts$/},a=>({contents:readFileSync(a.path,'utf8')+'\nexport { syncOne, syncBoosterServers };',loader:'ts'}));
  p.onResolve({filter:/^@workspace\/db$|serverRcon\.js$|lib\/logger\.js$/},a=>({path:a.path,namespace:'mock'}));
  p.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='@workspace/db'
  ? 'export const boosterLinksTable={discordUserId:"id"};export const db={update:()=>({set:value=>({where:async()=>globalThis.__boosterServers.updated.push(value)})})};'

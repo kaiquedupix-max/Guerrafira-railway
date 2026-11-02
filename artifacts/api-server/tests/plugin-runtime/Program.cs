@@ -3,6 +3,7 @@ using System.Text;
 using System.Reflection;
 using Newtonsoft.Json;
 using Oxide.Plugins;
+class TestChatPlayer:Oxide.Core.Libraries.Covalence.IPlayer {public string Id {get;set;}}
 class Program {
  static int checks;
  static void Check(bool ok,string label){if(!ok)throw new Exception(label);Console.WriteLine("PASS "+label);checks++;}
@@ -36,6 +37,25 @@ class Program {
   var team=new RelationshipManager.Team();team.members.Add(ulong.Parse(root));team.members.Add(alt);RelationshipManager.ServerInstance.Teams[ulong.Parse(root)]=team;
   var members=JsonConvert.DeserializeObject<object[]>(Command(plugin,"TeamInfo",root).Reply);
   Check(members.Length==2,"team lookup returns actual complete team including offline members");
+  var player=new BasePlayer{userID=ulong.Parse(root)};BasePlayer.activePlayerList.Add(player);
+  var mute=new ConsoleSystem.Arg{Args=new[]{root,(DateTimeOffset.UtcNow.ToUnixTimeSeconds()+120).ToString()}};
+  Call(plugin,"MuteChat",mute);
+  Check(mute.Reply=="GF_GUARD_MUTED "+root && player.ChatMuted,"mute returns explicit confirmation and sets native flag");
+  Check(Call(plugin,"OnPlayerChat",player,"hello",ConVar.Chat.ChatChannel.Global)!=null,"muted player cannot send global chat");
+  Check(Call(plugin,"OnPlayerChat",player,"hello",ConVar.Chat.ChatChannel.Team)!=null,"muted player cannot bypass via team chat");
+  var betterChat=new System.Collections.Generic.Dictionary<string,object>{{"Player",new TestChatPlayer{Id=root}},{"CancelOption",0}};Call(plugin,"OnBetterChat",betterChat);
+  Check((int)betterChat["CancelOption"]==2,"BetterChat cannot bypass the mute");
+  plugin=Fresh();Call(plugin,"OnServerInitialized");
+  Check(player.ChatMuted,"mute survives plugin reload");
+  var unmute=Command(plugin,"UnmuteChat",root);
+  Check(unmute.Reply=="GF_GUARD_UNMUTED "+root && !player.ChatMuted,"unmute clears native mute flag");
+  Check(Call(plugin,"OnPlayerChat",player,"hello",ConVar.Chat.ChatChannel.Global)==null,"unmuted player can chat again");
+  var invalid=new ConsoleSystem.Arg{Args=new[]{root,(DateTimeOffset.UtcNow.ToUnixTimeSeconds()-1).ToString()}};
+  Call(plugin,"MuteChat",invalid);Check(invalid.Reply=="GF_GUARD_INVALID_PAYLOAD","expired mute is rejected");
+  Call(plugin,"MuteChat",mute);
+  var saved=Newtonsoft.Json.Linq.JObject.Parse(Oxide.Core.Interface.Oxide.DataFileSystem.Json);
+  saved["Mutes"][root]=DateTimeOffset.UtcNow.ToUnixTimeSeconds()-1;Oxide.Core.Interface.Oxide.DataFileSystem.Json=saved.ToString();
+  plugin=Fresh();Call(plugin,"Prune");Check(!player.ChatMuted,"expired mute releases player without bot worker");
   Console.WriteLine(checks+" plugin runtime checks passed (Rust API adapters)");
  }
 }

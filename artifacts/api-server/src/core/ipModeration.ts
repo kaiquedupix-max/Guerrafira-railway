@@ -7,6 +7,7 @@ import { knownPlayerAddresses } from "./playerDirectory.js";
 import { logger } from "../lib/logger.js";
 import type { GuerraFriaServerId } from "./servers.js";
 const ready=new Map<string,Promise<void>>();
+export function resetModerationReadiness(): void { ready.delete(adminServer()); }
 export function normalizeAddress(value:string):string|null{
  let address=String(value||"").trim();
  if(address.startsWith("[")){const end=address.indexOf("]");if(end<0)return null;address=address.slice(1,end);}
@@ -17,14 +18,14 @@ export function normalizeAddress(value:string):string|null{
 export function ensureIpModeration():Promise<void>{
  const server=adminServer();let task=ready.get(server);if(task)return task;
  task=(async()=>{
-   if((await executeRconCommand("gf.guard.status"))?.includes("GF_GUARD_READY_1"))return;
+   if((await executeRconCommand("gf.guard.status"))?.includes("GF_GUARD_READY_2"))return;
    const source=await readFile(new URL("../assets/GuerraFriaModeration.cs",import.meta.url),"utf8").catch(()=>readFile(new URL("../../assets/GuerraFriaModeration.cs",import.meta.url),"utf8"));
    const directory=await listHostFiles("/carbon/plugins").then(()=>"/carbon/plugins").catch(()=>"/oxide/plugins");
    const existing=await readHostTextFile(directory,"GuerraFriaModeration.cs").catch(()=>null);
    if(existing?.content!==source)await writeHostTextFile(directory,"GuerraFriaModeration.cs",source);
    for(let attempt=0;attempt<10;attempt++){
      await new Promise(resolve=>setTimeout(resolve,1000));
-     if((await executeRconCommand("gf.guard.status"))?.includes("GF_GUARD_READY_1"))return;
+     if((await executeRconCommand("gf.guard.status"))?.includes("GF_GUARD_READY_2"))return;
    }
    throw new Error("O plugin de bloqueio por IP não confirmou a inicialização. Consulte a compilação do GuerraFriaModeration.cs no Rust.");
  })().catch(error=>{ready.delete(server);throw error;});ready.set(server,task);return task;

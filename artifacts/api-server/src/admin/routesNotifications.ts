@@ -38,7 +38,7 @@ router.get("/web-push", async (_req, res) => {
 router.post("/web-push", async (req, res) => {
   const admin = res.locals.admin as { userId: string };
   const sub = req.body?.subscription;
-  if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) return res.status(400).json({ error: "Assinatura push inválida." });
+  if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) return void res.status(400).json({ error: "Assinatura push inválida." });
   await saveAdminWebPushSubscription(admin.userId, sub);
   res.json({ ok: true, enabled: true });
 });

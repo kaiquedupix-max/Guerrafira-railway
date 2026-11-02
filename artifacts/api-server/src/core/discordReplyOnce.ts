@@ -1,6 +1,6 @@
 import { pool } from "@workspace/db";
 let ready:Promise<void>|undefined;
-function ensureTable(){return ready??=pool.query(`CREATE TABLE IF NOT EXISTS discord_auto_replies(message_id TEXT NOT NULL,kind TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(message_id,kind))`).catch(error=>{ready=undefined;throw error;});}
+function ensureTable(){return ready??=pool.query(`CREATE TABLE IF NOT EXISTS discord_auto_replies(message_id TEXT NOT NULL,kind TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(message_id,kind))`).then(()=>{}).catch(error=>{ready=undefined;throw error;});}
 /** A persistent claim protects overlapping deployments, not just one client. */
 export async function onceDiscordReply(messageId:string,kind:string,send:()=>Promise<unknown>):Promise<boolean>{
  await ensureTable();

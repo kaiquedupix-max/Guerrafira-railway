@@ -44,11 +44,11 @@ router.get("/records", async (_req, res) => {
 router.post("/records/:id/visibility", async (req, res) => {
   const id = Number(req.params.id);
   const visible = req.body?.visible === true;
-  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Registro inválido." });
+  if (!Number.isInteger(id) || id <= 0) return void res.status(400).json({ error: "Registro inválido." });
 
   const [record] = await db.select().from(modLogsTable).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.id, id))).limit(1);
   if (!record || !["WARN", "BAN", "VERIFICAR"].includes(String(record.action || "").toUpperCase())) {
-    return res.status(404).json({ error: "Registro público não encontrado." });
+    return void res.status(404).json({ error: "Registro público não encontrado." });
   }
 
   await db.update(modLogsTable).set({ publicVisible: visible }).where(and(eq(modLogsTable.serverId, adminServer()), eq(modLogsTable.id, id)));

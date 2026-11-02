@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
@@ -6,7 +7,7 @@ import {drizzle} from 'drizzle-orm/pglite';
 import express from 'express';
 const pg=new PGlite();
 const state=globalThis.__competitive={commands:[],db:drizzle(pg),pool:{query:async text=>{await pg.exec(text);return {rows:[]}}}};
-const schema=new URL('../../../lib/db/src/schema/playerStats.ts',import.meta.url).pathname;
+const schema=fileURLToPath(new URL('../../../lib/db/src/schema/playerStats.ts',import.meta.url)).replaceAll('\\', '/');
 const built=await build({stdin:{contents:'export {default as leaderboardRouter} from "./src/routes/leaderboardV2.ts";export {default as adminSeasonRouter} from "./src/admin/routesSeasonCurrentRegistrations.ts";export {default as auditRouter} from "./src/routes/seasonAudit.ts";export {default as transportRouter} from "./src/routes/seasonTransport.ts";export {default as seasonRouter,ensureSeasonIngestionTables} from "./src/routes/seasonIngestionSafe.ts";export * from "./src/core/seasonScores.ts";export * from "./src/core/eventSource.ts";export * from "./src/core/adminServerContext.ts";export * from "./src/core/competitiveStore.ts";export * from "./src/bot/killTracker.ts";export * from "./src/core/leaderboardReset.ts";export * from "./src/core/readCache.ts";export * from "./src/bot/season2GameRankSync.ts";export * from "'+schema+'";',resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'adapters',setup(b){
  b.onResolve({filter:/^@workspace\/db$|lib\/logger\.js|antiCheat\.js|utils\/rcon\.js|admin\/guard\.js|^\.\/guard\.js$/},a=>({path:a.path,namespace:'mock'}));
  b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='@workspace/db'?`export const db=globalThis.__competitive.db,pool=globalThis.__competitive.pool;export {playerStatsTable,trioPlayerStatsTable} from ${JSON.stringify(schema)};`:a.path.includes('guard')?'export const requireAdmin=(req,res,next)=>next();':a.path.includes('rcon')?'export const executeRconCommand=async command=>{globalThis.__competitive.commands.push(command);return "ok"};':a.path.includes('logger')?'export const logger={info(){},warn(){},error(){}};':'export const analyzeKill=async()=>{}; export const analyzeArrowHit=async()=>{};',loader:'ts',resolveDir:process.cwd()}));

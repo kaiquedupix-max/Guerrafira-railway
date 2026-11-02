@@ -67,3 +67,47 @@ test('authentication recovery starts the entire overview after a temporary initi
   assert.equal(w.document.getElementById('ovOnline').textContent,'44');assert.equal(w.document.querySelector('.view.active').id,'overview');assert.equal(w.document.getElementById('app').classList.contains('hidden'),false);
  }finally{w.close();}
 });
+
+test('panel unban accepts an empty reason and blocks duplicate actions while awaiting confirmation',async()=>{
+ const dom=new JSDOM(renderAdmin({}),{url:'https://guerrafriarust.com.br/painel',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,calls=[];let release,states=0;
+ Object.assign(w,{Headers,Request,Response,AbortSignal});w.confirm=()=>true;w.localStorage.setItem('gf_admin_server','trio');
+ w.fetch=async(input,init={})=>{const path=new URL(typeof input==='string'?input:input.url,w.location.href).pathname;let data={};
+  if(path.endsWith('/me'))data={user:{username:'Admin'},capabilities:{canViewFinance:false}};
+  if(path.endsWith('/overview'))data={summary:{},recentModeration:[]};
+  if(path.endsWith('/players'))data={players:[{steamId:'76561190000000002',playerName:'Tester',isOnline:true}],total:1};
+  if(path.includes('/player-state/')){states++;data={banned:true,warnings:0,ban:{duration:'3d',reason:'Teste'},vip:{active:false},booster:{active:false}};}
+  if(path.endsWith('/mute-durations'))data={durations:[{name:'10 minutos',value:'10m'}]};
+  if(path.endsWith('/unban')){calls.push({body:JSON.parse(init.body),server:new Headers(init.headers).get('X-GF-Server')});await new Promise(resolve=>{release=resolve});data={ok:true};}
+  return new Response(JSON.stringify(data),{status:200});
+ };
+ try{
+  for(const script of w.document.querySelectorAll('script'))w.eval(script.textContent);await wait(100);
+  w.document.querySelector('[data-view="players"]').click();await wait(30);w.document.querySelector('#playersRows tr').click();await wait(30);
+  const button=w.document.getElementById('actBan');assert.match(button.textContent,/Desbanir/);assert.equal(states,1,'the drawer state must not be fetched twice');
+  assert.equal(w.document.getElementById('actReason').value,'');button.click();button.click();await wait(10);
+  assert.equal(calls.length,1);assert.equal(calls[0].server,'trio');assert.equal(calls[0].body.reason,'');
+  w.document.getElementById('drawerBackdrop').click();assert.ok(w.document.getElementById('actBan'),'drawer cannot close while an action is pending');
+  release();await wait(30);assert.equal(w.document.getElementById('actBan'),null);
+ }finally{release?.();w.close();}
+});
+
+test('panel mute uses the shared duration list and dispatches to the selected server',async()=>{
+ const dom=new JSDOM(renderAdmin({}),{url:'https://guerrafriarust.com.br/painel',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,calls=[];
+ Object.assign(w,{Headers,Request,Response,AbortSignal});w.confirm=()=>true;w.localStorage.setItem('gf_admin_server','trio');
+ w.fetch=async(input,init={})=>{const path=new URL(typeof input==='string'?input:input.url,w.location.href).pathname;let data={};
+  if(path.endsWith('/me'))data={user:{username:'Admin'},capabilities:{canViewFinance:false}};
+  if(path.endsWith('/overview'))data={summary:{},recentModeration:[]};
+  if(path.endsWith('/players'))data={players:[{steamId:'76561190000000002',playerName:'Tester',isOnline:true}],total:1};
+  if(path.includes('/player-state/'))data={banned:false,muted:false,warnings:0,vip:{active:false},booster:{active:false}};
+  if(path.endsWith('/mute-durations'))data={durations:[{name:'10 minutos',value:'10m'},{name:'1 hora',value:'1h'}]};
+  if(path.endsWith('/mute')&&init.method==='POST'){calls.push({body:JSON.parse(init.body),server:new Headers(init.headers).get('X-GF-Server')});data={ok:true};}
+  return new Response(JSON.stringify(data),{status:200});
+ };
+ try{
+  for(const script of w.document.querySelectorAll('script'))w.eval(script.textContent);await wait(100);
+  w.document.querySelector('[data-view="players"]').click();await wait(30);w.document.querySelector('#playersRows tr').click();await wait(30);
+  assert.equal(w.document.querySelectorAll('#muteDuration option').length,2);w.document.getElementById('actMute').click();await wait(10);assert.equal(calls.length,0,'a mute still requires its reason');
+  w.document.getElementById('actReason').value='Flood';w.document.getElementById('muteDuration').value='1h';w.document.getElementById('actMute').click();await wait(30);
+  assert.equal(calls.length,1);assert.equal(calls[0].server,'trio');assert.equal(calls[0].body.duration,'1h');assert.equal(calls[0].body.reason,'Flood');
+ }finally{w.close();}
+});
