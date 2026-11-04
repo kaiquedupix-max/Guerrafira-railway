@@ -39,7 +39,7 @@ const CHAT_CHANNEL_ID = "1499084541791436861";
 const VIP_ROLE_ID = "1499084540356853917";
 const BOOSTER_ROLE_ID = "1536607642364018688";
 const ANNOUNCEMENT_INTERVAL = 60_000; // Delivery state enforces the four-hour reminder interval.
-const WIPE_DELAY_MS = 25 * 60_000;
+const WIPE_DELAY_MS = 30 * 60_000;
 const AUTO_EXECUTION_GRACE_MS = 10 * 60_000;
 
 const VIP_MENTION = `<@&${VIP_ROLE_ID}>`;
@@ -226,7 +226,7 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
       wipeAt: saved.wipeAt?.getTime() || saved.endsAt.getTime()+WIPE_DELAY_MS,
       maps,
     };
-    const correctedWipeAt=vote.endsAt+WIPE_DELAY_MS;
+    const correctedWipeAt=datedWipeSchedule(maps[0]?.serverId || "solo-duo", localWipeDate(new Date(vote.endsAt))).wipeAt;
     if(vote.wipeAt!==correctedWipeAt){vote.wipeAt=correctedWipeAt;await db.update(mapVotesTable).set({wipeAt:new Date(correctedWipeAt)}).where(eq(mapVotesTable.id,vote.id));}
     if (vote.endsAt <= Date.now()) { await finishVote(client, vote.messageId).catch(() => {}); continue; }
     scheduleRuntime(client, vote);
@@ -289,7 +289,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       maps,
       images:[1,2,3].map(n=>{const a=interaction.options.getAttachment(`imagem${n}`);if(a&&!a.contentType?.startsWith("image/"))throw new Error(`imagem${n} não é uma imagem válida.`);return a?.url}),
     });
-    await interaction.editReply(`✅ **${GUERRA_FRIA_SERVERS[serverId].name} — WIPE DE MAPA (blueprints preservados)**\nVotação criada em <#${result.channelId}>.\n🏆 Resultado: <t:${Math.floor(result.endsAt/1000)}:F>.\n🛠️ Início do procedimento técnico: <t:${Math.floor(result.wipeAt/1000)}:F>.\n🧊 Wipe oficial: <t:${Math.floor((result.wipeAt+5*60_000)/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
+    await interaction.editReply(`✅ **${GUERRA_FRIA_SERVERS[serverId].name} — WIPE DE MAPA (blueprints preservados)**\nVotação criada em <#${result.channelId}>.\n🏆 Resultado: <t:${Math.floor(result.endsAt/1000)}:F>.\n🧊 Início do wipe oficial: <t:${Math.floor(result.wipeAt/1000)}:F>.\n⭐ ${VIP_MENTION} e ${BOOSTER_MENTION} = **2 votos**.`);
   }catch(error){await interaction.editReply(`❌ ${error instanceof Error?error.message:"Falha ao criar votação."}`)}
 }
 
