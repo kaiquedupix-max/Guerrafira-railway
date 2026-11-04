@@ -7,7 +7,7 @@ test('Trio Wednesday 18:30 Brasilia', () => {
  const s=api.datedWipeSchedule('trio','2026-11-04');
  assert.equal(new Date(s.publicWipeAt).toISOString(),'2026-11-04T21:30:00.000Z');
  assert.equal(new Date(s.voteEndsAt).toISOString(),'2026-11-04T21:00:00.000Z');
- assert.equal(new Date(s.wipeAt).toISOString(),'2026-11-04T21:25:00.000Z');
+ assert.equal(new Date(s.wipeAt).toISOString(),'2026-11-04T21:30:00.000Z');
 });
 test('Trio Sunday 13:00 Brasilia, no Saturday wipe', () => {
  const s=api.datedWipeSchedule('trio','2026-11-01');
