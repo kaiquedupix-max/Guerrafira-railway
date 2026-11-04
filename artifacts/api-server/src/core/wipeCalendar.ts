@@ -19,7 +19,7 @@ export function datedWipeSchedule(server:GuerraFriaServerId,date:string){
  if(!calendar.days.includes(day.getUTCDay()))throw new Error(`O wipe do ${server === "trio" ? "Trio" : "Solo/Duo"} ocorre somente em ${wipeScheduleLabel(server)}.`);
  const slot=calendar.slots.find(slot=>slot.day===day.getUTCDay())!;
  const publicWipeAt=Date.UTC(y,m-1,d,slot.hour+3,slot.minute);
- return {publicWipeAt,voteEndsAt:publicWipeAt-30*60000,wipeAt:publicWipeAt};
+ return {publicWipeAt,voteEndsAt:publicWipeAt-30*60000,wipeAt:server === "trio" && day.getUTCDay() === 3 ? publicWipeAt : publicWipeAt-5*60000};
 }
 export function serverWipeWindow(server:GuerraFriaServerId,now=new Date()){
  const date=localWipeDate(now),[y,m,d]=date.split("-").map(Number),base=Date.UTC(y,m-1,d);
