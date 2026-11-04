@@ -6,6 +6,7 @@ const file = new URL("../src/bot/commands/criarmapa.ts", import.meta.url);
 let src = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 
 function replaceOnce(from, to, label) {
+  if(label==='constants' && src.includes('const WIPE_DELAY_MS = 30 * 60_000;')) { src=src.replace('const WIPE_DELAY_MS = 30 * 60_000;', 'const WIPE_DELAY_MS = 30 * 60_000;\nconst AUTO_EXECUTION_GRACE_MS = 10 * 60_000;'); return; }
   if(label==='canonical pending schedule repair' && src.includes('canonicalWipeAt=new Date(datedWipeSchedule(target,localWipeDate(pending.endsAt)).wipeAt);') && src.includes('if(!pending.wipeAt||pending.wipeAt.getTime()!==canonicalWipeAt.getTime())'))return;
   if(label==='same-day schedule validation' && src.includes('datedWipeSchedule(adminServer(),date)'))return;
   if (src.includes(to)) return;
