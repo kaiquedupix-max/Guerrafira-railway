@@ -8,7 +8,7 @@ import { getGuerraFriaDisplayName, isGuerraFriaAdmin } from "./permissions.js";
 import { issueAdminSessionV3, revokeAdminSessionV3 } from "./sessionBearer.js";
 import { issueCommunitySession, revokeCommunitySession } from "./communitySession.js";
 
-type Target = "admin" | "community" | "home" | "leaderboard" | "store" | "duo" | "gift" | "season" | "donation" | "promo";
+type Target = "admin" | "community" | "home" | "leaderboard" | "store" | "duo" | "gift" | "base-invaders" | "donation" | "promo";
 type LoginState = { expires: number; target: Target; pwaDevice?: string; storeServer?: "solo-duo" | "trio" };
 type PwaGrant = { token: string; expires: number };
 
@@ -44,7 +44,7 @@ export function adminLoginV3(req: Request, res: Response): void {
   const clientId = process.env.DISCORD_CLIENT_ID?.trim();
   if (!clientId) return void res.status(500).send("DISCORD_CLIENT_ID não configurado.");
   const raw = String(req.query.target || "");
-  const target: Target = raw === "community" ? "community" : raw === "home" ? "home" : raw === "leaderboard" ? "leaderboard" : raw === "store" ? "store" : raw === "season" ? "season" : raw === "donation" ? "donation" : raw === "promo" ? "promo" : "admin";
+  const target: Target = raw === "community" ? "community" : raw === "home" ? "home" : raw === "leaderboard" ? "leaderboard" : raw === "store" ? "store" : (raw === "season" || raw === "base-invaders") ? "base-invaders" : raw === "donation" ? "donation" : raw === "promo" ? "promo" : "admin";
   const state = randomUUID();
   const pwaDevice = validPwaDevice(req.query.device);
   states.set(state, { expires: Date.now() + 10 * 60 * 1000, target: raw === 'gift' ? 'gift' : raw === "duo" ? "duo" : target, pwaDevice, storeServer:req.query.server === "trio" ? "trio" : "solo-duo" });
@@ -90,7 +90,7 @@ export async function adminCallbackV3(req: Request, res: Response): Promise<void
   if (stored.target === "store") return void res.redirect("/loja?server="+(stored.storeServer || "solo-duo"));
   if (stored.target === "duo") return void res.redirect("/api/store/duo/redeem");
   if (stored.target === "gift") return void res.redirect("/api/store/gift/redeem");
-  if (stored.target === "season") return void res.redirect("/api/season/2/inscricao-oficial");
+  if (stored.target === "base-invaders") return void res.redirect("/base-invaders#inscricao");
   if (stored.target === "donation") return void res.redirect("/doar");
   if (stored.target === "promo") {
     const rawReturn = String(req.cookies?.gf_promo_return ?? "");

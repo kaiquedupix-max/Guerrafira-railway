@@ -1,6 +1,5 @@
-import { ensureOfficialSeasonTables } from "./routes/seasonOfficialRegistration.js";
 import { startBackgroundServices } from "./routes/index.js";
-import { ensureSeasonIngestionTables } from "./routes/seasonIngestionSafe.js";
+import { ensureBaseInvadersSchema } from "./routes/baseInvaders.js";
 import { ensureCompetitiveStore } from "./core/competitiveStore.js";
 import { warmIpModeration } from "./core/ipModeration.js";
 import { ensurePlayerDirectory, startPlayerDirectory } from "./core/playerDirectory.js";
@@ -27,8 +26,7 @@ async function startApplication(): Promise<void> {
   logger.info("Preparing database schema before starting the application");
   await ensureDatabaseSchema();
   await ensureCompetitiveStore();
-  await ensureSeasonIngestionTables();
-  await ensureOfficialSeasonTables();
+  await ensureBaseInvadersSchema();
   await ensurePlayerDirectory();
   await new Promise<void>((resolve, reject) => {
     const server = app.listen(port, () => resolve());
