@@ -36,8 +36,7 @@ import { startLeaderboardChannel } from "./leaderboardChannel.js";
 import { ensureGameAnnouncementPlugin } from "./utils/gameAnnouncementPlugin.js";
 import { checkExpiredRaffles, handleRaffleJoin, handleRaffleModal } from "./raffle.js";
 import { startDiscordModeration } from "./moderation.js";
-import { startSeason2DiscordRankSync } from "./season2DiscordRankSync.js";
-import { startSeason1DiscordRankCleanup } from "./season1RankCleanup.js";
+import { startSeasonDiscordRetirement } from "./seasonRetirement.js";
 import * as menuCommand from "./commands/menu.js";
 import * as banirCommand from "./commands/banir.js";
 import * as banpreventivoCommand from "./commands/banpreventivo.js";
@@ -141,7 +140,7 @@ export async function startBot(): Promise<void> {
       ["slots",()=>startSlotManager(c)], ["leaderboard channel",()=>startLeaderboardChannel(c)],
       ["VIP expiry",()=>startVipExpiryChecker(c)], ["wipe dates",()=>wipedatasCommand.startWipeDatesUpdater(c)],
       ["boosters",()=>startBoosterSystem(c)], ["VIP restoration",()=>startDuoVipRestoration(c)],
-      ["season rank sync",()=>startSeason2DiscordRankSync(c)], ["legacy rank cleanup",()=>startSeason1DiscordRankCleanup(c)],
+      ["retire Season Discord roles",()=>startSeasonDiscordRetirement(c)],
       ["tickets",()=>setupTicketPanel(c)], ["VIP store",()=>setupVipStore(c)], ["raffles",()=>checkExpiredRaffles(c)],
       ["announcements",()=>ensureGameAnnouncementPlugin()],
     ];
