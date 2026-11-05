@@ -9,7 +9,6 @@ import { renderAdmin } from "./admin/appRenderShim.js";
 import { renderCommunityPage } from "./admin/communityPage.js";
 import { renderHome } from "./admin/homePageEnhanced.js";
 import { renderStorePage } from "./admin/storePage.js";
-import { renderPromoPage } from "./admin/promoPage.js";
 import { renderDonationPage } from "./routes/donations.js";
 import { renderBaseInvadersPage } from "./routes/baseInvadersPage.js";
 import { withSiteChrome } from "./admin/siteChrome.js";
@@ -66,18 +65,8 @@ app.get("/loja",(req,res)=>{
   return res.status(200).type("html").send(withSiteChrome(renderStorePage(session.username),"home",{isAdmin:session.isAdmin,username:session.username}));
 });
 
-const renderPromo=(req:express.Request,res:express.Response)=>{
-  const session=getCommunitySession(req);
-  if(!session){
-    const target=req.originalUrl.startsWith("/promo")?req.originalUrl:"/promo";
-    res.cookie("gf_promo_return",target,{httpOnly:true,sameSite:"lax",secure:true,maxAge:10*60*1000,path:"/"});
-    return res.redirect("/api/admin/auth/login?target=promo");
-  }
-  res.setHeader("Cache-Control","no-store,no-cache,must-revalidate,proxy-revalidate");
-  return res.status(200).type("html").send(withSiteChrome(renderPromoPage(session.username),"base-invaders",{isAdmin:session.isAdmin,username:session.username}));
-};
-app.get("/promo",renderPromo);
-app.get("/promo/resgatar",renderPromo);
+app.get("/promo",(_req,res)=>res.redirect(301,"/base-invaders"));
+app.get("/promo/resgatar",(_req,res)=>res.redirect(301,"/base-invaders"));
 
 const renderIntegrity=(req:express.Request,res:express.Response)=>{
   const session=getCommunitySession(req);
