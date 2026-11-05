@@ -73,6 +73,7 @@ router.use(leaderboardWebhookRouter);
 router.use(donationsRouter);
 router.use(pwaRouter);
 router.use("/store", storeRouter);
+router.use("/promo",(_req,res)=>res.status(410).json({error:"A promoção da Season foi encerrada. Conheça o Base Invaders."}));
 router.use("/promo", promoParticipantDetailsRouter);
 router.use("/promo", promoRouter);
 router.use("/admin", adminRouter);
