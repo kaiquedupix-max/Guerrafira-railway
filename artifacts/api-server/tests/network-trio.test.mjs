@@ -72,7 +72,7 @@ test('aggregate presence adds the actual slots reported by both servers',()=>{
 });
 test('Trio wipes Wednesday 18:30 and Saturday 13:00 Brasilia and Duo retains Monday and Friday',()=>{
  const trio=calendar.datedWipeSchedule('trio','2026-10-14');assert.equal(new Date(trio.publicWipeAt).toISOString(),'2026-10-14T21:30:00.000Z');assert.equal(new Date(trio.voteEndsAt).toISOString(),'2026-10-14T21:00:00.000Z');assert.equal(new Date(trio.wipeAt).toISOString(),'2026-10-14T21:30:00.000Z');
- assert.throws(()=>calendar.datedWipeSchedule('trio','2026-10-16'),/quarta-feira e sábado/);assert.doesNotThrow(()=>calendar.datedWipeSchedule('solo-duo','2026-10-16'));
+ assert.throws(()=>calendar.datedWipeSchedule('trio','2026-10-16'),/quarta-feira às 18h30 e sábado às 13h00/);assert.doesNotThrow(()=>calendar.datedWipeSchedule('solo-duo','2026-10-16'));
  const next=calendar.serverWipeWindow('trio',new Date('2026-10-14T21:31:00Z')).next;assert.equal(new Date(next).toISOString(),'2026-10-17T16:00:00.000Z');assert.match(calendar.wipeScheduleLabel('trio'),/quarta-feira às 18h30 e sábado às 13h00/);
 });
 test('connection pages route to their own server and reject malformed configured addresses',()=>{
