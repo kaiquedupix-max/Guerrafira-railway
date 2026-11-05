@@ -39,7 +39,7 @@ app.use((req,res,next)=>{
   next();
 });
 
-app.get("/",(req,res)=>res.status(200).type("html").send(enhanceHomeHtml(renderHome(req),req)));
+app.get("/",(req,res)=>{res.setHeader("Cache-Control","no-store, max-age=0, must-revalidate");return res.status(200).type("html").send(enhanceHomeHtml(renderHome(req),req));});
 app.get("/leaderboard",(req,res)=>{
   const session=getCommunitySession(req);
   return res.status(200).type("html").send(withSiteChrome(leaderboardHtml,"leaderboard",{isAdmin:Boolean(session?.isAdmin),username:session?.username||""}));
@@ -47,7 +47,7 @@ app.get("/leaderboard",(req,res)=>{
 
 app.get("/base-invaders",(req,res)=>{
   const session=getCommunitySession(req);
-  res.setHeader("Cache-Control","no-store");
+  res.setHeader("Cache-Control","no-store, max-age=0, must-revalidate");
   return res.status(200).type("html").send(withSiteChrome(renderBaseInvadersPage(session),"base-invaders",{isAdmin:Boolean(session?.isAdmin),username:session?.username||""}));
 });
 app.get(/^\/season\d*(?:\/guia)?\/?$/i,(_req,res)=>res.redirect(301,"/base-invaders"));
