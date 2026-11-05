@@ -52,3 +52,32 @@ test("Retired Season synchronizers are not started and registrations are persist
   assert.match(registration, /CREATE TABLE IF NOT EXISTS base_invaders_teams/);
   assert.match(registration, /Array\.isArray\(input\).*input\.length !== 3/);
 });
+
+
+test("Main navigation shows Base Invaders instead of Season and points to the actual event", async () => {
+  const builtHome = await build({ entryPoints: ["src/admin/homePage.ts"], bundle: true, platform: "node", format: "esm", write: false });
+  const home = await import("data:text/javascript;base64," + Buffer.from(builtHome.outputFiles[0].text).toString("base64"));
+  const dom = new JSDOM(home.renderHome({ cookies: {} }));
+  const link = dom.window.document.querySelector('nav.menu a[href="/base-invaders"]');
+  assert.ok(link, "O menu deve apontar para a página Base Invaders");
+  assert.equal(link.textContent.trim(), "BASE INVADERS");
+  assert.equal(dom.window.document.querySelector('nav.menu a[href="/season2"]'), null);
+  assert.match(dom.window.document.querySelector(".heroActions").textContent, /BASE INVADERS/);
+  dom.window.close();
+});
+
+test("Base Invaders copy mentions only Guerra Fria, never third-party event organizers", () => {
+  const dom = new JSDOM(page.renderBaseInvadersPage(null));
+  const text = dom.window.document.querySelector("main").textContent;
+  assert.match(text, /Base Invaders da Guerra Fria/);
+  assert.doesNotMatch(text, /Rustoria|Twitch Rivals|inspirado|inspirada/i);
+  dom.window.close();
+});
+
+test("Legacy Season inscription links navigate to the new event rather than returning a broken page", async () => {
+  const apiRoutes = await readFile("src/routes/index.ts", "utf8");
+  const homeRoutes = await readFile("src/appSafe.ts", "utf8");
+  assert.match(apiRoutes, /res\.redirect\(302,"\/base-invaders#inscricao"\)/);
+  assert.match(homeRoutes, /app\.get\("\/base-invaders"/);
+  assert.match(homeRoutes, /res\.redirect\(301,"\/base-invaders"\)/);
+});
