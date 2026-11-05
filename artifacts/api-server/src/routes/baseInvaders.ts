@@ -117,4 +117,29 @@ router.get("/base-invaders/inscricoes", async (req, res) => {
   }
 });
 
+
+router.post("/base-invaders/inscricoes/:id/status", async (req, res) => {
+  const session = getCommunitySession(req);
+  const admin = getAdminSessionV3(req);
+  if (!session?.isAdmin && !admin) return void res.status(403).json({ error: "Apenas administradores podem decidir inscrições." });
+  const id = Number(req.params.id);
+  const status = req.body?.status;
+  if (!Number.isSafeInteger(id) || id <= 0 || !["pending", "approved", "rejected"].includes(status))
+    return void res.status(400).json({ error: "Inscrição ou status inválido." });
+  try {
+    const result: any = await db.execute(sql`
+      UPDATE base_invaders_teams SET status=${status},updated_at=now()
+      WHERE id=${id} RETURNING id,team_name,status
+    `);
+    if (!result?.rows?.length) return void res.status(404).json({ error: "Equipe não encontrada." });
+    logger.info({ teamId: id, status, adminId: session?.userId || admin?.userId }, "Inscrição Base Invaders moderada");
+    return void res.status(200).json({ team: result.rows[0] });
+  } catch (error: any) {
+    if (error?.code === "23505" || error?.cause?.code === "23505")
+      return void res.status(409).json({ error: "Existe outra inscrição ativa com esse capitão ou nome de equipe." });
+    logger.error({ error, teamId: id }, "Falha ao moderar Base Invaders");
+    return void res.status(500).json({ error: "Erro ao atualizar status." });
+  }
+});
+
 export default router;
