@@ -1,6 +1,6 @@
 import { publicDesignSystemCss } from "./publicDesignSystem.js";
 import { roundedThemeCss } from "./roundedTheme.js";
-export type SiteSection = "home" | "store" | "donation" | "leaderboard" | "integrity" | "admin" | "season" | "status" | "profile";
+export type SiteSection = "home" | "store" | "donation" | "leaderboard" | "integrity" | "admin" | "season" | "base-invaders" | "status" | "profile";
 import { brandThemeCss } from "./brandTheme.js";
 import { publicMilitaryThemeCss } from "./publicMilitaryTheme.js";
 
@@ -17,7 +17,7 @@ export function withSiteChrome(html: string, section: SiteSection, opts?: { isAd
     ["home", "/", "Início"],
     ["store", "/loja", "Loja"],
     ["leaderboard", "/leaderboard", "Leaderboard"],
-    ["season", "/season2", "Season"],
+    ["base-invaders", "/base-invaders", "Base Invaders"],
     ["donation", "/doar", "Doar"],
     ["status", "/api/status", "Status"],
   ];
