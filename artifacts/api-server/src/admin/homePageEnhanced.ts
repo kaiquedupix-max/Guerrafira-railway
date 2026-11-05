@@ -30,7 +30,6 @@ export function renderHome(req: Request): string {
     .replace('src="/api/home/banner"', `src="${heroUrl}" width="1983" height="793" fetchpriority="high" decoding="async"`)
     .replace('class="heroVisual reveal" data-tilt="soft"', 'class="heroVisual" aria-hidden="true"')
     .replace('ENTRE NA COMUNIDADE</h2>', 'ENTRE NA <em>COMUNIDADE</em></h2>')
-    .replace('R$ 500 EM PRÊMIOS • 15 PATENTES', 'R$ 500 EM PRÊMIOS • 15 NOVAS PATENTES • AJUSTES S2')
     .replace('<a href="/loja"><span>◇</span><b>Loja VIP</b><em>→</em></a>', '<a href="/api/perfil"><span>◎</span><b>Meu Perfil</b><em>→</em></a><a href="/loja"><span>◇</span><b>Loja VIP</b><em>→</em></a>');
 
   const css = `<link rel="preload" as="image" href="${heroUrl}">
@@ -67,7 +66,7 @@ body{background:radial-gradient(ellipse at 0% 65%,#a447091a,transparent 36%),rad
 .infoCard strong{font-size:14px;letter-spacing:0}
 .infoCard small{font-size:8px;letter-spacing:.025em;line-height:1.5}
 .infoValue b{font-size:20px;white-space:nowrap}
-.seasonBadge{padding:3px 5px;font-size:6px;margin-left:6px;white-space:nowrap}
+.eventBadge{padding:3px 5px;font-size:6px;margin-left:6px;white-space:nowrap}
 .portal{position:relative;z-index:2;padding:0 0 16px;background:transparent}
 .portalGrid{width:min(1650px,90.8%);grid-template-columns:minmax(0,1fr) minmax(0,1.07fr) minmax(0,1.13fr);gap:16px}
 .feature{height:250px;min-width:0;border-color:#293238}
@@ -124,14 +123,14 @@ a:focus-visible,button:focus-visible{outline:2px solid #ffb000;outline-offset:4p
   .heroActions{grid-template-columns:1fr;width:min(100%,460px);gap:10px;margin-top:24px}.heroActions .heroBtn:last-child{grid-column:auto}
   .heroBtn{height:51px}.ey{font-size:9px}.infoGrid{gap:10px}
   .infoCard{grid-template-columns:40px minmax(0,1fr) auto;gap:10px;padding:10px}.infoIcon{width:39px;height:42px}
-  .infoCard strong{font-size:12px}.seasonBadge{display:table;margin:4px 0 0}.infoValue b{font-size:17px}
+  .infoCard strong{font-size:12px}.eventBadge{display:table;margin:4px 0 0}.infoValue b{font-size:17px}
   .portalGrid{grid-template-columns:minmax(0,1fr)}.feature,.communityCard{height:260px;grid-column:auto}
   .storeCopy{left:46%;right:20px}.communityTop .featureTitle{font-size:30px}.communityStats{bottom:20px}
   .footer{height:auto;padding:28px 0}.footerRow{display:grid;justify-content:center;text-align:center;gap:18px}
 }
 @media(max-width:520px){
   .brand i{width:32px;height:32px}.menu a{font-size:7px;padding:0 6px;letter-spacing:.07em}.account{font-size:8px;gap:5px}.accountAvatar{width:25px;height:25px}.account b{max-width:48px}
-  .infoGrid{grid-template-columns:1fr}.infoCard{height:80px;padding:12px 15px;grid-template-columns:48px minmax(0,1fr) auto;gap:14px}.infoIcon{width:46px;height:46px}.infoCard strong{font-size:14px}.seasonBadge{display:inline-flex;margin-left:6px}
+  .infoGrid{grid-template-columns:1fr}.infoCard{height:80px;padding:12px 15px;grid-template-columns:48px minmax(0,1fr) auto;gap:14px}.infoIcon{width:46px;height:46px}.infoCard strong{font-size:14px}.eventBadge{display:inline-flex;margin-left:6px}
   .storeCopy{left:43%;right:16px}.featureTitle{font-size:28px}.featureText{font-size:11px}.outlineBtn{gap:12px;font-size:9px}
   .communityCard{padding:22px 18px;height:280px}.communityTop{gap:9px}.communityTop .featureTitle{font-size:26px}.discordMark{flex-basis:33px;height:35px}.communityStats{left:18px;right:18px;gap:8px}.communityStat+.communityStat{padding-left:8px}.communityStat strong{font-size:9px}.communityStat span{font-size:6.5px}
   .leaderHead{padding:0 12px}.leaderHead strong{font-size:10px}.leaderHead a{font-size:8px}.leaderLabel,.leaderRow{grid-template-columns:24px minmax(0,1fr) 44px 42px;padding-left:12px;padding-right:12px}

@@ -45,7 +45,7 @@ void repairWipeSchedule20260904().catch(error => console.error("Failed to repair
 
 
 const router: IRouter = Router();
-router.use((req,res,next)=>{if(/^\/season(?:\/|\d|$)/i.test(req.path))return void res.status(410).json({error:"Seasons encerradas. Acesse /base-invaders."});next();});
+router.use((req,res,next)=>{if(!/^\/season(?:\/|\d|$)/i.test(req.path))return next();if(req.method==="GET"||req.method==="HEAD"){res.setHeader("Cache-Control","no-store");return void res.redirect(302,"/base-invaders#inscricao");}return void res.status(410).json({error:"Inscrições antigas encerradas. Acesse /base-invaders."});});
 router.use(baseInvadersRouter);
 router.use(healthRouter);
 router.use(vorkenIntegrationRouter);
@@ -73,7 +73,7 @@ router.use(leaderboardWebhookRouter);
 router.use(donationsRouter);
 router.use(pwaRouter);
 router.use("/store", storeRouter);
-router.use("/promo",(_req,res)=>res.status(410).json({error:"A promoção da Season foi encerrada. Conheça o Base Invaders."}));
+router.use("/promo",(_req,res)=>res.status(410).json({error:"A promoção anterior foi encerrada. Conheça o Base Invaders."}));
 router.use("/promo", promoParticipantDetailsRouter);
 router.use("/promo", promoRouter);
 router.use("/admin", adminRouter);
