@@ -9,18 +9,22 @@ test('Trio Wednesday 18:30 Brasilia', () => {
  assert.equal(new Date(s.voteEndsAt).toISOString(),'2026-11-04T21:00:00.000Z');
  assert.equal(new Date(s.wipeAt).toISOString(),'2026-11-04T21:30:00.000Z');
 });
-test('Trio Saturday 13:00 Brasilia, no Sunday wipe', () => {
- const s=api.datedWipeSchedule('trio','2026-10-31');
- assert.equal(new Date(s.publicWipeAt).toISOString(),'2026-10-31T16:00:00.000Z');
- assert.equal(new Date(s.voteEndsAt).toISOString(),'2026-10-31T15:30:00.000Z');
- assert.equal(new Date(s.wipeAt).toISOString(),'2026-10-31T15:55:00.000Z');
- assert.deepEqual(api.wipeCalendar('trio').days,[3,6]);
- assert.equal(api.wipeScheduleLabel('trio'),'quarta-feira às 18h30 e sábado às 13h00 (Brasília)');
- assert.throws(()=>api.datedWipeSchedule('trio','2026-11-01'),/quarta-feira às 18h30 e sábado às 13h00/);
+test('Trio Sunday 13:00 Brasilia, no Saturday wipe', () => {
+ const s=api.datedWipeSchedule('trio','2026-11-08');
+ assert.equal(new Date(s.publicWipeAt).toISOString(),'2026-11-08T16:00:00.000Z');
+ assert.equal(new Date(s.voteEndsAt).toISOString(),'2026-11-08T15:30:00.000Z');
+ assert.equal(new Date(s.wipeAt).toISOString(),'2026-11-08T15:55:00.000Z');
+ assert.deepEqual(api.wipeCalendar('trio').days,[3,0]);
+ assert.equal(api.wipeScheduleLabel('trio'),'quarta-feira às 18h30 e domingo às 13h00 (Brasília)');
+ assert.throws(()=>api.datedWipeSchedule('trio','2026-11-07'),/quarta-feira às 18h30 e domingo às 13h00/);
 });
-test('Next Trio wipe Saturday 13:00 then Wednesday 18:30',()=>{
- assert.equal(new Date(api.serverWipeWindow('trio',new Date('2026-10-30T20:00:00Z')).next).toISOString(),'2026-10-31T16:00:00.000Z');
- assert.equal(new Date(api.serverWipeWindow('trio',new Date('2026-10-31T16:00:01Z')).next).toISOString(),'2026-11-04T21:30:00.000Z');
+test('Next Trio wipe Sunday 13:00 then Wednesday 18:30',()=>{
+ assert.equal(new Date(api.serverWipeWindow('trio',new Date('2026-11-07T20:00:00Z')).next).toISOString(),'2026-11-08T16:00:00.000Z');
+ assert.equal(new Date(api.serverWipeWindow('trio',new Date('2026-11-08T16:00:01Z')).next).toISOString(),'2026-11-11T21:30:00.000Z');
+});
+test('UTC Sunday still uses the Sao Paulo Saturday date until local midnight',()=>{
+ assert.equal(api.localWipeDate(new Date('2026-11-08T01:00:00Z')),'2026-11-07');
+ assert.equal(new Date(api.serverWipeWindow('trio',new Date('2026-11-08T01:00:00Z')).next).toISOString(),'2026-11-08T16:00:00.000Z');
 });
 test('Duo remains Monday and Friday 18:30',()=>{
  assert.deepEqual(api.wipeCalendar('solo-duo').days,[1,5]);
