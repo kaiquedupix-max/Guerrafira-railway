@@ -81,3 +81,35 @@ test("Legacy Season inscription links navigate to the new event rather than retu
   assert.match(homeRoutes, /app\.get\("\/base-invaders"/);
   assert.match(homeRoutes, /res\.redirect\(301,"\/base-invaders"\)/);
 });
+
+test("Registration offers closed trio and individual random draw on event day", async () => {
+  const session = { userId: "123", username: "Participante", isAdmin: false, exp: Date.now() + 1000 };
+  const dom = new JSDOM(page.renderBaseInvadersPage(session));
+  const doc = dom.window.document;
+  assert.ok(doc.querySelector('input[name="registrationMode"][value="trio"]'));
+  assert.ok(doc.querySelector('input[name="registrationMode"][value="random"]'));
+  assert.ok(doc.querySelector("#bi-trio-fields"));
+  assert.ok(doc.querySelector("#bi-random-fields[hidden][disabled]"));
+  assert.ok(doc.querySelector('input[name="soloName"]'));
+  assert.ok(doc.querySelector('input[name="soloSteamId"]'));
+  assert.match(doc.body.textContent, /dia do evento/i);
+  assert.match(doc.body.textContent, /sorteio/i);
+  const code = await readFile("src/routes/baseInvaders.ts", "utf8");
+  assert.ok(code.includes("ADD COLUMN IF NOT EXISTS registration_mode"));
+  assert.ok(code.includes("parseSinglePlayer"));
+  assert.ok(code.includes('registrationMode === "random"'));
+  assert.ok(code.includes("players[1]?.steamId"));
+  assert.ok(code.includes("SELECT id,team_name,registration_mode,players,status,created_at"));
+  dom.window.close();
+});
+
+test("Registration confirmation has a dedicated protected page", async () => {
+  const confirmationCode = await readFile("src/routes/baseInvadersConfirmationPage.ts", "utf8");
+  const app = await readFile("src/appSafe.ts", "utf8");
+  assert.ok(confirmationCode.includes("Inscrição <em>confirmada!</em>"));
+  assert.ok(confirmationCode.includes("aguardando aprovação"));
+  assert.ok(confirmationCode.includes("no dia do evento"));
+  assert.ok(confirmationCode.includes("/api/base-invaders/minha-inscricao"));
+  assert.ok(app.includes('app.get("/base-invaders/inscricao-confirmada"'));
+  assert.ok(app.includes("renderBaseInvadersConfirmationPage()"));
+});
