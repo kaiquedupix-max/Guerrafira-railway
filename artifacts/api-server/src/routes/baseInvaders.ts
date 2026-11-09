@@ -30,6 +30,7 @@ export async function ensureBaseInvadersSchema(): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS base_invaders_unique_active_name
     ON base_invaders_teams(lower(team_name)) WHERE status IN ('pending','approved')
   `);
+  await db.execute(sql`ALTER TABLE base_invaders_teams ADD COLUMN IF NOT EXISTS registration_mode TEXT NOT NULL DEFAULT 'trio'`);
 }
 
 function parsePlayers(input: unknown): Player[] | null {
@@ -47,6 +48,17 @@ function parsePlayers(input: unknown): Player[] | null {
   return players;
 }
 
+function parseSinglePlayer(input: unknown): Player[] | null {
+  if (!Array.isArray(input) || input.length !== 1) return null;
+  const item = input[0];
+  if (!item || typeof item !== "object") return null;
+  const p = item as Record<string, unknown>;
+  const name = typeof p.name === "string" ? p.name.trim() : "";
+  const id = typeof p.steamId === "string" ? p.steamId.trim() : "";
+  if (name.length < 2 || name.length > 32 || /[<>]/.test(name) || !steamId.test(id)) return null;
+  return [{ name, steamId: id }];
+}
+
 router.post("/base-invaders/inscricoes", async (req, res) => {
   const session = getCommunitySession(req);
   if (!session) return void res.status(401).json({ error: "Entre com o Discord antes de inscrever seu trio." });
@@ -57,26 +69,28 @@ router.post("/base-invaders/inscricoes", async (req, res) => {
       if (new URL(origin).host !== host) return void res.status(403).json({ error: "Origem não autorizada." });
     } catch { return void res.status(403).json({ error: "Origem inválida." }); }
   }
+  const registrationMode = req.body?.registrationMode === "random" ? "random" : "trio";
   const teamName = typeof req.body?.teamName === "string" ? req.body.teamName.trim() : "";
-  const players = parsePlayers(req.body?.players);
-  if (teamName.length < 3 || teamName.length > 36 || /[<>]/.test(teamName))
+  const players = registrationMode === "random" ? parseSinglePlayer(req.body?.players) : parsePlayers(req.body?.players);
+  if (registrationMode === "trio" && (teamName.length < 3 || teamName.length > 36 || /[<>]/.test(teamName)))
     return void res.status(400).json({ error: "O nome da equipe deve ter de 3 a 36 caracteres." });
-  if (!players) return void res.status(400).json({ error: "Informe exatamente 3 jogadores com nomes e SteamIDs 64 diferentes." });
+  if (!players) return void res.status(400).json({ error: registrationMode === "random" ? "Informe seu nick e SteamID64 válidos." : "Informe exatamente 3 jogadores com nomes e SteamIDs 64 diferentes." });
   if (req.body?.acceptRules !== true) return void res.status(400).json({ error: "É necessário aceitar o regulamento." });
+  const savedTeamName = registrationMode === "random" ? "Sorteio-" + session.userId : teamName;
   try {
     const duplicate: any = await db.execute(sql`
       SELECT 1 FROM base_invaders_teams t
       CROSS JOIN LATERAL jsonb_array_elements(t.players) p
       WHERE t.status IN ('pending','approved')
-      AND p->>'steamId' IN (${players[0].steamId},${players[1].steamId},${players[2].steamId})
+      AND p->>'steamId' IN (${players[0].steamId},${players[1]?.steamId ?? ''},${players[2]?.steamId ?? ''})
       LIMIT 1
     `);
     if (duplicate?.rows?.length) return void res.status(409).json({ error: "Um dos SteamIDs já está inscrito em outra equipe." });
     await db.execute(sql`
-      INSERT INTO base_invaders_teams(team_name,captain_discord_id,captain_discord_name,players,status)
-      VALUES (${teamName},${session.userId},${session.username},${JSON.stringify(players)}::jsonb,'pending')
+      INSERT INTO base_invaders_teams(team_name,captain_discord_id,captain_discord_name,players,status,registration_mode)
+      VALUES (${savedTeamName},${session.userId},${session.username},${JSON.stringify(players)}::jsonb,'pending',${registrationMode})
     `);
-    return void res.status(201).json({ ok: true, teamName, status: "pending", price: 0, slots: 3 });
+    return void res.status(201).json({ ok: true, teamName: registrationMode === "trio" ? savedTeamName : null, registrationMode, status: "pending", price: 0, slots: players.length });
   } catch (error: any) {
     if (error?.code === "23505" || error?.cause?.code === "23505")
       return void res.status(409).json({ error: "Esse nome de equipe ou capitão já possui uma inscrição ativa." });
@@ -90,7 +104,7 @@ router.get("/base-invaders/minha-inscricao", async (req, res) => {
   if (!session) return void res.status(401).json({ error: "Login necessário." });
   try {
     const result: any = await db.execute(sql`
-      SELECT id,team_name,players,status,created_at
+      SELECT id,team_name,registration_mode,players,status,created_at
       FROM base_invaders_teams WHERE captain_discord_id=${session.userId}
       AND status IN ('pending','approved') ORDER BY id DESC LIMIT 1
     `);
@@ -107,7 +121,7 @@ router.get("/base-invaders/inscricoes", async (req, res) => {
   if (!session?.isAdmin && !admin) return void res.status(403).json({ error: "Somente a equipe administrativa pode listar as inscrições." });
   try {
     const result: any = await db.execute(sql`
-      SELECT id,team_name,captain_discord_id,captain_discord_name,players,status,created_at
+      SELECT id,team_name,registration_mode,captain_discord_id,captain_discord_name,players,status,created_at
       FROM base_invaders_teams ORDER BY created_at DESC LIMIT 500
     `);
     return void res.status(200).json({ teams: result?.rows || [] });
