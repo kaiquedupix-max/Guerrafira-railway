@@ -611,6 +611,24 @@ namespace Oxide.Plugins
             if (entity == null) return;
 
             // Regra do regulamento: o TC fica atrás de porta, janela ou alçapão. Durante o evento, TC sem entrada por perto é removido.
+            // Regra do regulamento: uma base por time. Um segundo TC do mesmo time é removido na colocação.
+            if (entity is BuildingPrivlidge && (phase == "farm" || phase == "pvp" || phase == "raid"))
+            {
+                ulong tcOwner = entity.OwnerID;
+                if (tcOwner == 0UL && planner?.GetOwnerPlayer() != null) tcOwner = planner.GetOwnerPlayer().userID;
+                if (data.PlayerTeam.TryGetValue(tcOwner, out var tcTeamName) && data.Teams.TryGetValue(tcTeamName, out var tcTeam))
+                {
+                    var tcs = UnityEngine.Object.FindObjectsOfType<BuildingPrivlidge>()
+                        .Count(tc => tc != entity && tcTeam.Members.Contains(tc.OwnerID));
+                    if (tcs > 0)
+                    {
+                        planner?.GetOwnerPlayer()?.ChatMessage(Prefix + "Seu time já tem uma base (TC). Só é permitida uma base por time. A colocação foi removida.");
+                        entity.Kill();
+                        return;
+                    }
+                }
+            }
+
             if (entity is BuildingPrivlidge && (phase == "farm" || phase == "pvp" || phase == "raid") && !HasEntranceNearby(entity))
             {
                 planner?.GetOwnerPlayer()?.ChatMessage(Prefix + "O TC deve ficar logo atrás de uma porta, janela ou alçapão. A colocação foi removida.");
