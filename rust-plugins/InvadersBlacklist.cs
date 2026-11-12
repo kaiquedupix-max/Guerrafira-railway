@@ -27,8 +27,11 @@ namespace Oxide.Plugins
         // Itens de construção proibidos. Remove a entidade assim que ela é colocada por um jogador.
         private static readonly HashSet<string> BlacklistedDeployables = new HashSet<string>
         {
-            "snap_trap", "landmine", "spikes.floor", "watchtower.wood", "computerstation.deployed",
-            "solarpanel.large", "windmill.deployed", "battery.small.deployed", "battery.medium.deployed", "battery.large.deployed",
+            // Nomes conferidos no servidor com a sonda de deployables (item -> prefab da entidade).
+            "landmine", "spikes.floor", "spikes.trap", "watchtower.wood", "computerstation.deployed",
+            "solarpanel.large.deployed", "smallrechargablebattery.deployed", "medium.rechargable.battery.deployed", "large.rechargable.battery.deployed",
+            // shortcut: o prefab do windmill.small não apareceu na sonda; confirmar com um teste em jogo antes de confiar nessa entrada.
+            "windmill.small",
         };
 
         // Confere cada shortname ao iniciar: nome que o jogo não reconhece aparece no log para correção.

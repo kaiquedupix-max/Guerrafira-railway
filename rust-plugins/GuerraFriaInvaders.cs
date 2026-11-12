@@ -608,7 +608,17 @@ namespace Oxide.Plugins
         private void OnEntityBuilt(Planner planner, GameObject go)
         {
             var entity = go?.ToBaseEntity();
-            if (entity == null || !DeployableLimits.TryGetValue(entity.ShortPrefabName, out var limit)) return;
+            if (entity == null) return;
+
+            // Regra do regulamento: o TC fica atrás de porta, janela ou alçapão. Durante o evento, TC sem entrada por perto é removido.
+            if (entity is BuildingPrivlidge && (phase == "farm" || phase == "pvp" || phase == "raid") && !HasEntranceNearby(entity))
+            {
+                planner?.GetOwnerPlayer()?.ChatMessage(Prefix + "O TC deve ficar logo atrás de uma porta, janela ou alçapão. A colocação foi removida.");
+                entity.Kill();
+                return;
+            }
+
+            if (!DeployableLimits.TryGetValue(entity.ShortPrefabName, out var limit)) return;
 
             var builder = planner?.GetOwnerPlayer();
             ulong ownerId = entity.OwnerID;
@@ -622,6 +632,16 @@ namespace Oxide.Plugins
 
             entity.Kill();
             builder?.ChatMessage(Prefix + $"Limite de {limit} por time atingido para este item: foi removido.");
+        }
+
+        // Aproximação da regra do TC atrás de entrada: procura porta, janela ou alçapão a até 2,5 m do TC.
+        // shortcut: não verifica o caminho livre nem a posição exata atrás da entrada; ajustar depois do teste em jogo.
+        private bool HasEntranceNearby(BaseEntity tc)
+        {
+            return UnityEngine.Object.FindObjectsOfType<BaseEntity>().Any(e =>
+                e != tc
+                && (e.ShortPrefabName.Contains("door") || e.ShortPrefabName.Contains("window") || e.ShortPrefabName.Contains("hatch"))
+                && Vector3.Distance(e.transform.position, tc.transform.position) <= 2.5f);
         }
 
         private bool IsSameTeam(ulong a, ulong b)
