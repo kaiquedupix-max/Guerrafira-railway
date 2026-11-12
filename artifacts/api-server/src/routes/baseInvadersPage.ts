@@ -5,7 +5,7 @@ const registrationForm = `
 <form id="bi-form" class="bi-form" autocomplete="on">
   <div class="bi-choices" role="group" aria-label="Modalidade de inscrição">
     <label class="bi-choice"><input type="radio" name="registrationMode" value="trio" checked><span><strong>TRIO FECHADO</strong><small>Já tenho uma equipe com três jogadores.</small></span></label>
-    <label class="bi-choice"><input type="radio" name="registrationMhode" value="random"><span><strong>INSCRIÇÃO ALEATÓRIA</strong><small>Não tenho equipe e quero participar do sorteio no dia do evento.</small></span></label>
+    <label class="bi-choice"><input type="radio" name="registrationMode" value="random"><span><strong>INSCRIÇÃO ALEATÓRIA</strong><small>Não tenho equipe e quero participar do sorteio no dia do evento.</small></span></label>
   </div>
   <fieldset id="bi-trio-fields" class="bi-mode-panel">
   <label>Nome da equipe<input name="teamName" maxlength="36" minlength="3" placeholder="Ex.: Frost Raiders" required></label>
