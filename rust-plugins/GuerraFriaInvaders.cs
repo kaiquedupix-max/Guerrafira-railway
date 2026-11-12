@@ -536,10 +536,16 @@ namespace Oxide.Plugins
             if (attacker == null || victim == null || attacker.userID == victim.userID) return;
             if (IsSameTeam(attacker.userID, victim.userID)) return;
 
+            // Regra do regulamento: a eliminação só vale ponto se o eliminado estava armado, com a arma na mão.
+            // shortcut: a checagem roda em OnPlayerDeath; se o servidor já tiver largado o inventário nesse ponto, a kill pode ser descartada indevidamente.
+            var held = victim.GetActiveItem()?.GetHeldEntity();
+            if (!(held is BaseProjectile) && !(held is BaseMelee)) return;
+
             if (data.PlayerTeam.TryGetValue(attacker.userID, out var teamName) && data.Teams.TryGetValue(teamName, out var team))
             {
                 team.Score += 1;
                 SaveData();
+                Broadcast($"<color=#66ccff>{teamName}</color> ganhou <b>+1</b> ponto: {attacker.displayName} eliminou {victim.displayName}. (total: {team.Score})");
             }
         }
 
