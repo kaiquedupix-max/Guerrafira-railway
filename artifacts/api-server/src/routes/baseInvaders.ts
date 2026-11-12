@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { timingSafeEqual } from "node:crypto";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { getCommunitySession } from "../admin/communitySession.js";
@@ -153,6 +154,57 @@ router.post("/base-invaders/inscricoes/:id/status", async (req, res) => {
       return void res.status(409).json({ error: "Existe outra inscrição ativa com esse capitão ou nome de equipe." });
     logger.error({ error, teamId: id }, "Falha ao moderar Base Invaders");
     return void res.status(500).json({ error: "Erro ao atualizar status." });
+  }
+});
+
+// Contagem pública de inscrições ativas (pendentes e aprovadas). Não expõe nomes nem SteamIDs.
+router.get("/base-invaders/contagem", async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const result: any = await db.execute(sql`
+SELECT registration_mode, COUNT(*)::int AS teams, COALESCE(SUM(jsonb_array_length(players)), 0)::int AS players
+FROM base_invaders_teams WHERE status IN ('pending','approved') GROUP BY registration_mode
+`);
+    let trioTeams = 0;
+    let trioPlayers = 0;
+    let soloPlayers = 0;
+    for (const row of result?.rows || []) {
+      if (row.registration_mode === "random") soloPlayers += Number(row.players);
+      else {
+        trioTeams += Number(row.teams);
+        trioPlayers += Number(row.players);
+      }
+    }
+    return void res.status(200).json({ trioTeams, trioPlayers, soloPlayers, totalPlayers: trioPlayers + soloPlayers });
+  } catch (error) {
+    logger.error({ error }, "Erro ao contar inscrições Base Invaders");
+    return void res.status(500).json({ error: "Falha ao contar inscrições." });
+  }
+});
+
+// Exporta só as inscrições aprovadas para o plugin do servidor. Protegido por token compartilhado (INVADERS_SYNC_TOKEN).
+router.get("/base-invaders/exportacao", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const expected = process.env.INVADERS_SYNC_TOKEN || "";
+  const provided = String(req.get("x-invaders-token") || "");
+  const authorized = expected.length > 0
+    && provided.length === expected.length
+    && timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (!authorized) return void res.status(401).json({ error: "Token inválido." });
+  try {
+    const result: any = await db.execute(sql`
+SELECT id,team_name,registration_mode,players FROM base_invaders_teams WHERE status='approved' ORDER BY id
+`);
+    const teams = (result?.rows || []).map((row: any) => ({
+      id: row.id,
+      teamName: row.team_name,
+      mode: row.registration_mode,
+      players: row.players,
+    }));
+    return void res.status(200).json({ teams });
+  } catch (error) {
+    logger.error({ error }, "Erro ao exportar inscrições Base Invaders");
+    return void res.status(500).json({ error: "Falha ao exportar inscrições." });
   }
 });
 

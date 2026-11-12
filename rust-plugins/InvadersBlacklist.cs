@@ -11,15 +11,15 @@ namespace Oxide.Plugins
         private const string Prefix = "<color=#ffcc00>[Base Invaders]</color> ";
 
         // Itens proibidos no evento, pelo regulamento do Base Invaders.
-        // shortcut: os shortnames foram escritos de memória; confirme cada um no log de "item not found" no primeiro teste.
+        // Shortnames conferidos no servidor (c.reload InvadersBlacklist não mostra aviso). Deployables ainda não foram conferidos.
         private static readonly HashSet<string> BlacklistedItems = new HashSet<string>
         {
             // Armas e atachamentos
-            "weapon.mod.silencer", "weapon.mod.8x.scope", "hmlmg", "m16", "shotgun.double", "trap.bar.shotgun",
+            "weapon.mod.silencer", "weapon.mod.8x.scope", "hmlmg", "m16a2", "shotgun.double", "gamesroom.shotgun.trap",
             // Explosivos e arremessáveis
             "explosive.satchel", "grenade.f1", "grenade.molotov", "grenade.flashbang", "grenade.smoke",
             // Munições incendiárias
-            "ammo.rifle.incendiary", "ammo.pistol.fire", "rocket.fire",
+            "ammo.rifle.incendiary", "ammo.pistol.fire", "ammo.rocket.fire",
             // Armadura
             "heavy.plate.helmet", "heavy.plate.jacket", "heavy.plate.pants",
         };
@@ -30,6 +30,18 @@ namespace Oxide.Plugins
             "snap_trap", "landmine", "spikes.floor", "watchtower.wood", "computerstation.deployed",
             "solarpanel.large", "windmill.deployed", "battery.small.deployed", "battery.medium.deployed", "battery.large.deployed",
         };
+
+        // Confere cada shortname ao iniciar: nome que o jogo não reconhece aparece no log para correção.
+        private void OnServerInitialized()
+        {
+            foreach (var shortname in BlacklistedItems)
+            {
+                if (ItemManager.FindItemDefinition(shortname) == null)
+                {
+                    PrintWarning($"Shortname de item proibido não encontrado: {shortname}");
+                }
+            }
+        }
 
         private void OnItemAddedToContainer(ItemContainer container, Item item)
         {

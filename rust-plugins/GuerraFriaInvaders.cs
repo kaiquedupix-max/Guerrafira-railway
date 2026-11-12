@@ -41,9 +41,27 @@ namespace Oxide.Plugins
             public Dictionary<ulong, string> PlayerTeam = new Dictionary<ulong, string>();
         }
 
+        private readonly Dictionary<string, RaidState> activeRaids = new Dictionary<string, RaidState>(StringComparer.OrdinalIgnoreCase);
+        private const int RaidIdleSeconds = 600;
+        private const int RaidDefensePointsMax = 40;
+
+        private class RaidState
+        {
+            public DateTime Start;
+            public DateTime LastHit;
+        }
+
+        protected override void LoadDefaultConfig()
+        {
+            // Token deve ser o mesmo INVADERS_SYNC_TOKEN configurado no site. Vazio desativa a sincronização.
+            Config["SyncUrl"] = "https://www.guerrafriarust.com.br/api/base-invaders/exportacao";
+            Config["SyncToken"] = "";
+        }
+
         private void Init()
         {
             LoadData();
+            timer.Every(60f, () => CheckRaids(false));
         }
 
         private void Unload()
@@ -228,7 +246,7 @@ namespace Oxide.Plugins
                 arg.ReplyWith("O evento já está em andamento.");
                 return;
             }
-            StartEvent();
+            BeginStart();
         }
 
         [ConsoleCommand("invaders.stop")]
@@ -242,6 +260,81 @@ namespace Oxide.Plugins
             phase = "parado";
             phaseEndsAt = DateTime.MinValue;
             Broadcast("Evento encerrado pela administração.");
+        }
+
+        // Antes de sortear, puxa as inscrições aprovadas do site. Sem token ou sem resposta, segue só com as inscrições in-game.
+        private void BeginStart()
+        {
+            var token = Config["SyncToken"]?.ToString() ?? "";
+            var url = Config["SyncUrl"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(url))
+            {
+                PrintWarning("Sincronização com o site desativada (SyncToken vazio). Usando só inscrições in-game.");
+                StartEvent();
+                return;
+            }
+
+            var headers = new Dictionary<string, string> { { "x-invaders-token", token } };
+            webrequest.Enqueue(url, null, (code, body) =>
+            {
+                if (code != 200 || string.IsNullOrEmpty(body))
+                {
+                    PrintWarning($"Falha ao sincronizar com o site (HTTP {code}). Usando só inscrições in-game.");
+                    StartEvent();
+                    return;
+                }
+                try
+                {
+                    ImportApprovedRegistrations(body);
+                }
+                catch (Exception ex)
+                {
+                    PrintError($"Inscrições do site inválidas: {ex.Message}. Usando só inscrições in-game.");
+                }
+                StartEvent();
+            }, this, headers: headers);
+        }
+
+        // Só entra o que foi aprovado no site. Times de 3 vêm prontos; solos entram na lista para o sorteio.
+        private void ImportApprovedRegistrations(string json)
+        {
+            var root = Newtonsoft.Json.Linq.JObject.Parse(json);
+            var teams = (Newtonsoft.Json.Linq.JArray)root["teams"];
+            if (teams == null) return;
+
+            int imported = 0;
+            foreach (var item in teams)
+            {
+                var mode = (string)item["mode"];
+                var name = (string)item["teamName"];
+                var players = (Newtonsoft.Json.Linq.JArray)item["players"];
+                if (players == null || players.Count == 0) continue;
+
+                var ids = players.Select(p => ulong.Parse((string)p["steamId"])).ToList();
+                if (mode == "random")
+                {
+                    foreach (var id in ids)
+                    {
+                        if (AlreadyRegistered(id)) continue;
+                        data.Solos.Add(id);
+                        imported++;
+                    }
+                    continue;
+                }
+
+                if (ids.Count != TeamSize || ids.Any(AlreadyRegistered) || data.Teams.ContainsKey(name)) continue;
+                data.Teams[name] = new TeamData { Name = name, Members = ids };
+                foreach (var id in ids) data.PlayerTeam[id] = name;
+                imported++;
+            }
+
+            SaveData();
+            PrintWarning($"Sincronizado com o site: {imported} inscrição(ões) aprovada(s) importada(s).");
+        }
+
+        private bool AlreadyRegistered(ulong id)
+        {
+            return data.PlayerTeam.ContainsKey(id) || data.Solos.Contains(id);
         }
 
         private void StartEvent()
@@ -314,6 +407,7 @@ namespace Oxide.Plugins
                     SetPhase("raid", RaidMinutes);
                     break;
                 case "raid":
+                    CheckRaids(true);
                     phase = "fim";
                     phaseEndsAt = DateTime.MinValue;
                     Broadcast("Base Invaders encerrado. Confira o placar com /invaders.");
@@ -336,9 +430,17 @@ namespace Oxide.Plugins
         // ---------- Regras de combate ----------
 
         // Farm/Build: sem dano a jogadores. PVP: bloqueia fogo amigo entre membros do mesmo time.
-        private object OnEntityTakeDamage(BasePlayer victim, HitInfo info)
+        private object OnEntityTakeDamage(BaseCombatEntity victim, HitInfo info)
         {
             if (victim == null || info == null) return null;
+
+            var victimPlayer = victim as BasePlayer;
+            if (victimPlayer == null)
+            {
+                TrackRaid(victim, info);
+                return null;
+            }
+
             if (phase == "farm")
             {
                 info.damageTypes.ScaleAll(0f);
@@ -346,11 +448,50 @@ namespace Oxide.Plugins
             }
 
             var attacker = info.InitiatorPlayer;
-            if (attacker != null && IsSameTeam(attacker.userID, victim.userID))
+            if (attacker != null && IsSameTeam(attacker.userID, victimPlayer.userID))
             {
                 info.damageTypes.ScaleAll(0f);
             }
             return null;
+        }
+
+        // Defesa de raid: a cada 10 min de raid contínua contra a base de um time, o defensor soma 10 pontos (teto 40).
+        // shortcut: fórmula de 10 pts/10 min é uma aproximação do "até +40, mais para raids longas"; confirmar com a regra oficial.
+        private void TrackRaid(BaseCombatEntity victim, HitInfo info)
+        {
+            if (phase != "raid") return;
+            var attacker = info.InitiatorPlayer;
+            if (attacker == null || victim.OwnerID == 0) return;
+            if (!data.PlayerTeam.TryGetValue(victim.OwnerID, out var defenderTeam)) return;
+            if (data.PlayerTeam.TryGetValue(attacker.userID, out var attackerTeam) && attackerTeam == defenderTeam) return;
+
+            var now = DateTime.UtcNow;
+            if (!activeRaids.TryGetValue(defenderTeam, out var raid))
+            {
+                raid = new RaidState { Start = now };
+                activeRaids[defenderTeam] = raid;
+                Broadcast($"Raid contra <color=#ff6666>{defenderTeam}</color> começou. Zona vermelha ativa.");
+            }
+            raid.LastHit = now;
+        }
+
+        private void CheckRaids(bool force)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var entry in activeRaids.ToList())
+            {
+                var raid = entry.Value;
+                if (!force && (now - raid.LastHit).TotalSeconds < RaidIdleSeconds) continue;
+
+                activeRaids.Remove(entry.Key);
+                var minutes = (raid.LastHit - raid.Start).TotalMinutes;
+                var points = Math.Min(RaidDefensePointsMax, 10 * (int)(minutes / 10));
+                if (points <= 0 || !data.Teams.TryGetValue(entry.Key, out var team)) continue;
+
+                team.Score += points;
+                SaveData();
+                Broadcast($"<color=#66ccff>{entry.Key}</color> defendeu a raid (+{points}).");
+            }
         }
 
         private void OnPlayerDeath(BasePlayer victim, HitInfo info)
