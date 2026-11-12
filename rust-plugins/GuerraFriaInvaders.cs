@@ -62,7 +62,7 @@ namespace Oxide.Plugins
             Config["SyncToken"] = "";
             // false: as checagens de geometria só avisam o admin no console (nada é removido).
             // true: a colocação que viola a regra é removida. Ative depois de validar no teste em jogo.
-            Config["EnforceGeometry"] = false;
+            Config["EnforceGeometry"] = true;
         }
 
         private bool EnforceGeometry => Config["EnforceGeometry"] is bool b && b;
