@@ -1,21 +1,34 @@
 import {
+  ActionRowBuilder,
   ActivityType,
+  ButtonBuilder,
+  ButtonStyle,
   Client,
+  ContainerBuilder,
   EmbedBuilder,
   Events,
   GatewayIntentBits,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
+  MessageFlags,
+  SeparatorBuilder,
   SlashCommandBuilder,
+  TextDisplayBuilder,
   type ChatInputCommandInteraction,
   type Message,
+  type MessageCreateOptions,
+  type MessageEditOptions,
 } from "discord.js";
 import { logger } from "../lib/logger.js";
 import { buildInscritosEmbed, buildPreviaEmbed, loadTotals, type Totals } from "../bot/commands/invaders.js";
 
 // Sub bot "Guerra Fria Invaders": aplicação própria no Discord, com token próprio (INVADERS_BOT_TOKEN).
-// Mostra inscritos e informações do evento, e mantém um painel que se atualiza sozinho no canal configurado.
+// O painel usa Components V2 (container com banner), atualiza sozinho no canal INVADERS_PANEL_CHANNEL_ID.
 
-const PANEL_TITLE = "Base Invaders • Painel ao vivo";
 const SITE_URL = "https://www.guerrafriarust.com.br/base-invaders";
+// Banner já publicado no canal #guerra-fria-invaders (Estandarte Dourado), hospedado no GitHub.
+const BANNER_URL = "https://raw.githubusercontent.com/vkvucks-ai/guerrafriainvaders/main/Estandarte%20Dourado%20Guerra%20Fria.png";
+const ACCENT = 0xffca57;
 const PANEL_INTERVAL_MS = 5 * 60 * 1000;
 
 const command = new SlashCommandBuilder()
@@ -25,26 +38,49 @@ const command = new SlashCommandBuilder()
   .addSubcommand(sub => sub.setName("previa-sorteio").setDescription("Quantos trios sairiam com os inscritos solo."))
   .addSubcommand(sub => sub.setName("info").setDescription("Formato, fases e como se inscrever."));
 
-function buildPainelEmbed(t: Totals): EmbedBuilder {
+// JSON v2 (Components V2): um container com banner, contagens ao vivo, cronograma, pontuação e botão de inscrição.
+export function buildPainel(t: Totals): ContainerBuilder {
   const trioTeams = t.trioTeamsPending + t.trioTeamsApproved;
   const solo = t.soloPending + t.soloApproved;
   const atualizado = Math.floor(Date.now() / 1000);
-  return new EmbedBuilder()
-    .setColor(0xffb800)
-    .setTitle(PANEL_TITLE)
-    .setDescription(`Inscrições gratuitas em trio ou solo. Atualizado <t:${atualizado}:R>.`)
-    .addFields(
-      { name: "Equipes em trio", value: `**${trioTeams}** (${t.trioTeamsApproved} aprovadas)`, inline: true },
-      { name: "Jogadores em trio", value: `**${t.trioPlayers}**`, inline: true },
-      { name: "Inscritos solo", value: `**${solo}**`, inline: true },
-      { name: "Fases", value: "Build 90 min • PVP 90 min • Raid 120 min" },
-      { name: "Inscrição", value: `[Inscreva-se no site](${SITE_URL})` },
-    );
+  return new ContainerBuilder()
+    .setAccentColor(ACCENT)
+    .addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(BANNER_URL).setDescription("Base Invaders")),
+    )
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent("# 🏆 BASE INVADERS\n**Guerra Fria Rust** • Trio • 5 horas • Grátis"))
+    .addSeparatorComponents(new SeparatorBuilder())
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent([
+      "### 📊 Inscrições",
+      `🧩 **${trioTeams}** equipes em trio (${t.trioTeamsApproved} aprovadas)`,
+      `👥 **${t.trioPlayers}** jogadores em trio`,
+      `🎲 **${solo}** solos aguardando o sorteio`,
+    ].join("\n")))
+    .addSeparatorComponents(new SeparatorBuilder())
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent([
+      "### 🕐 Cronograma",
+      "🔨 **Build/Farm** • 90 min",
+      "⚔️ **PVP** • 90 min",
+      "💥 **Raid** • 120 min",
+    ].join("\n")))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent([
+      "### 🏅 Pontuação",
+      "☠️ Kill **+1** • 🏰 TC destruído **+40**",
+      "📦 Bradley/Heli **+3** • 🔓 Hackable **+10**",
+      "🛡️ Defesa de raid **até +40**",
+    ].join("\n")))
+    .addSeparatorComponents(new SeparatorBuilder())
+    .addActionRowComponents(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setLabel("Inscrever-se grátis").setStyle(ButtonStyle.Link).setURL(SITE_URL).setEmoji("📝"),
+      ),
+    )
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# Atualizado <t:${atualizado}:R> • atualiza sozinho a cada 5 min`));
 }
 
 function buildInfoEmbed(): EmbedBuilder {
   return new EmbedBuilder()
-    .setColor(0xffb800)
+    .setColor(ACCENT)
     .setTitle("Base Invaders • Informações")
     .setDescription("Evento de 5 horas, em trios de 3 jogadores. Sem taxa de inscrição.")
     .addFields(
@@ -92,13 +128,16 @@ export async function startInvadersBot(): Promise<void> {
       logger.warn({ panelChannelId }, "Canal do painel Invaders não é de texto");
       return;
     }
-    const embed = buildPainelEmbed(await loadTotals());
+    const container = buildPainel(await loadTotals());
+    // discord.js tipa componentes V2 com uma versão de discord-api-types diferente da do builder; o JSON enviado é válido.
+    const payload: unknown = { flags: MessageFlags.IsComponentsV2, components: [container.toJSON()] };
     if (!panel && client.user) {
+      // Reaproveita o painel já postado pelo bot, para não duplicar após reinício.
       const recent = await channel.messages.fetch({ limit: 25 });
-      panel = recent.find(m => m.author.id === client.user?.id && m.embeds[0]?.title === PANEL_TITLE) ?? null;
+      panel = recent.find(m => m.author.id === client.user?.id && m.components.length > 0) ?? null;
     }
-    if (panel) await panel.edit({ embeds: [embed] });
-    else panel = await channel.send({ embeds: [embed] });
+    if (panel) await panel.edit(payload as MessageEditOptions);
+    else panel = await channel.send(payload as MessageCreateOptions);
   }
 
   client.once(Events.ClientReady, async ready => {
