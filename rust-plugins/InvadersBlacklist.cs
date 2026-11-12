@@ -20,6 +20,8 @@ namespace Oxide.Plugins
             "explosive.satchel", "grenade.f1", "grenade.molotov", "grenade.flashbang", "grenade.smoke",
             // Munições incendiárias
             "ammo.rifle.incendiary", "ammo.pistol.fire", "ammo.rocket.fire",
+            // Energia: turbina eólica (item confirmado na sonda do servidor). Bateria e painel solar são bloqueados como construção.
+            "generator.wind.scrap",
             // Armadura
             "heavy.plate.helmet", "heavy.plate.jacket", "heavy.plate.pants",
         };
@@ -28,10 +30,8 @@ namespace Oxide.Plugins
         private static readonly HashSet<string> BlacklistedDeployables = new HashSet<string>
         {
             // Nomes conferidos no servidor com a sonda de deployables (item -> prefab da entidade).
-            "landmine", "spikes.floor", "spikes.trap", "watchtower.wood", "computerstation.deployed",
+            "landmine", "spikes.floor", "spikes.trap", "watchtower.wood", "computerstation.deployed", "electric.windmill.small",
             "solarpanel.large.deployed", "smallrechargablebattery.deployed", "medium.rechargable.battery.deployed", "large.rechargable.battery.deployed",
-            // shortcut: o prefab do windmill.small não apareceu na sonda; confirmar com um teste em jogo antes de confiar nessa entrada.
-            "windmill.small",
         };
 
         // Confere cada shortname ao iniciar: nome que o jogo não reconhece aparece no log para correção.

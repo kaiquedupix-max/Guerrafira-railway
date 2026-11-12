@@ -23,6 +23,7 @@ namespace Oxide.Plugins
 
         private StoredData data;
         private readonly HashSet<ulong> claimedCrates = new HashSet<ulong>();
+        private readonly Dictionary<ulong, bool> armedAtDeath = new Dictionary<ulong, bool>();
         private string phase = "parado";
         private DateTime phaseEndsAt = DateTime.MinValue;
         private readonly System.Random random = new System.Random();
@@ -514,6 +515,13 @@ namespace Oxide.Plugins
                 return null;
             }
 
+            // Guarda se o jogador estava armado no golpe que o mata. Assim a regra não depende do inventário, que o servidor pode soltar antes do OnPlayerDeath.
+            if (victimPlayer.health - info.damageTypes.Total() <= 0f)
+            {
+                var heldAtHit = victimPlayer.GetActiveItem()?.GetHeldEntity();
+                armedAtDeath[victimPlayer.userID] = heldAtHit is BaseProjectile || heldAtHit is BaseMelee;
+            }
+
             if (phase == "farm")
             {
                 info.damageTypes.ScaleAll(0f);
@@ -574,10 +582,10 @@ namespace Oxide.Plugins
             if (attacker == null || victim == null || attacker.userID == victim.userID) return;
             if (IsSameTeam(attacker.userID, victim.userID)) return;
 
-            // Regra do regulamento: a eliminação só vale ponto se o eliminado estava armado, com a arma na mão.
-            // shortcut: a checagem roda em OnPlayerDeath; se o servidor já tiver largado o inventário nesse ponto, a kill pode ser descartada indevidamente.
-            var held = victim.GetActiveItem()?.GetHeldEntity();
-            if (!(held is BaseProjectile) && !(held is BaseMelee)) return;
+            // Regra do regulamento: a eliminação só vale ponto se o eliminado estava armado, com a arma na mão no golpe fatal.
+            var armed = armedAtDeath.TryGetValue(victim.userID, out var wasArmed) && wasArmed;
+            armedAtDeath.Remove(victim.userID);
+            if (!armed) return;
 
             if (data.PlayerTeam.TryGetValue(attacker.userID, out var teamName) && data.Teams.TryGetValue(teamName, out var team))
             {
