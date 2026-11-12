@@ -22,6 +22,7 @@ namespace Oxide.Plugins
         private const string DataFile = "GuerraFriaInvaders";
 
         private StoredData data;
+        private readonly HashSet<ulong> claimedCrates = new HashSet<ulong>();
         private string phase = "parado";
         private DateTime phaseEndsAt = DateTime.MinValue;
         private readonly System.Random random = new System.Random();
@@ -366,6 +367,54 @@ namespace Oxide.Plugins
             }
         }
 
+        // TC destruído por outro time: +40. Só conta quando o TC tem dono registrado em time.
+        private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
+        {
+            if (phase != "pvp" && phase != "raid") return;
+            if (!(entity is BuildingPrivlidge)) return;
+            var attacker = info?.InitiatorPlayer;
+            if (attacker == null) return;
+            if (!data.PlayerTeam.TryGetValue(entity.OwnerID, out var ownerTeam)) return;
+            if (!data.PlayerTeam.TryGetValue(attacker.userID, out var attackerTeam)) return;
+            if (ownerTeam == attackerTeam) return;
+
+            if (data.Teams.TryGetValue(attackerTeam, out var team))
+            {
+                team.Score += 40;
+                SaveData();
+                Broadcast($"<color=#66ccff>{attackerTeam}</color> destruiu o TC de <color=#ff6666>{ownerTeam}</color> (+40).");
+            }
+        }
+
+        // Crates de evento: Bradley e Patrol Heli valem +3; hackable vale +10. Cada crate pontua uma vez.
+        private void OnLootEntityEnd(BasePlayer player, LootContainer container)
+        {
+            if (phase != "pvp" && phase != "raid") return;
+            if (player == null || container == null) return;
+            if (!data.PlayerTeam.TryGetValue(player.userID, out var teamName)) return;
+            if (!data.Teams.TryGetValue(teamName, out var team)) return;
+
+            int points;
+            switch (container.ShortPrefabName)
+            {
+                case "bradley_crate":
+                case "heli_crate":
+                    points = 3;
+                    break;
+                case "codelockedhackablecrate":
+                    points = 10;
+                    break;
+                default:
+                    return;
+            }
+
+            var crateId = container.net != null ? container.net.ID.Value : 0UL;
+            if (!claimedCrates.Add(crateId)) return;
+            team.Score += points;
+            SaveData();
+            Broadcast($"<color=#66ccff>{teamName}</color> garantiu uma crate ({container.ShortPrefabName}) (+{points}).");
+        }
+
         private bool IsSameTeam(ulong a, ulong b)
         {
             return data.PlayerTeam.TryGetValue(a, out var ta)
@@ -373,7 +422,7 @@ namespace Oxide.Plugins
                 && ta == tb;
         }
 
-        // shortcut: pontuação só de kills (+1). Falta TC destruído (+40), crates (+3/+10) e defesa de raid. Próximo passo: hooks de entidade e marcação de TC.
+        // shortcut: defesa de raid (até +40) ainda não pontua. Próximo passo: medir o tempo de raid por TC e somar ao defensor.
 
         // ---------- Consulta ----------
 
