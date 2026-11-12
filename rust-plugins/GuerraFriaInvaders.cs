@@ -17,6 +17,8 @@ namespace Oxide.Plugins
         private const int PvpMinutes = 90;
         private const int RaidMinutes = 120;
         private const int TeamSize = 3;
+        // Vagas do evento: as 33 primeiras equipes a entrar no servidor durante o evento jogam; as demais são desconectadas.
+        private const int MaxActiveTeams = 33;
 
         private const string Prefix = "<color=#ffcc00>[Base Invaders]</color> ";
         private const string DataFile = "GuerraFriaInvaders";
@@ -40,6 +42,7 @@ namespace Oxide.Plugins
             public Dictionary<string, TeamData> Teams = new Dictionary<string, TeamData>(StringComparer.OrdinalIgnoreCase);
             public List<ulong> Solos = new List<ulong>();
             public Dictionary<ulong, string> PlayerTeam = new Dictionary<ulong, string>();
+            public List<string> ActiveTeams = new List<string>();
         }
 
         private readonly Dictionary<string, RaidState> activeRaids = new Dictionary<string, RaidState>(StringComparer.OrdinalIgnoreCase);
@@ -57,6 +60,67 @@ namespace Oxide.Plugins
             // Token deve ser o mesmo INVADERS_SYNC_TOKEN configurado no site. Vazio desativa a sincronização.
             Config["SyncUrl"] = "https://www.guerrafriarust.com.br/api/base-invaders/exportacao";
             Config["SyncToken"] = "";
+            // false: as checagens de geometria só avisam o admin no console (nada é removido).
+            // true: a colocação que viola a regra é removida. Ative depois de validar no teste em jogo.
+            Config["EnforceGeometry"] = false;
+        }
+
+        private bool EnforceGeometry => Config["EnforceGeometry"] is bool b && b;
+
+        // Checagens de geometria do regulamento. Heurísticas por distância e contagem de peças.
+        // Em modo de aviso, só registra no console; em modo de enforcement, remove a peça infratora.
+        private bool GeometryViolation(BaseEntity entity, BasePlayer builder, string reason)
+        {
+            var msg = $"[Geometria] {entity.ShortPrefabName}: {reason}";
+            PrintWarning(msg);
+            builder?.ChatMessage(Prefix + reason + (EnforceGeometry ? " A colocação foi removida." : " (aviso: ainda não é obrigatório)"));
+            if (!EnforceGeometry) return false;
+            entity.Kill();
+            return true;
+        }
+
+        // Caminho livre até o TC: a linha entre a entrada e o TC não pode ter parede ou fundação no meio.
+        private bool PathBlocked(BaseEntity tc)
+        {
+            foreach (var entrance in UnityEngine.Object.FindObjectsOfType<BaseEntity>()
+                .Where(e => e != tc && IsEntrance(e) && Vector3.Distance(e.transform.position, tc.transform.position) <= 2.5f))
+            {
+                var from = entrance.transform.position;
+                var to = tc.transform.position;
+                var blockers = Physics.RaycastAll(from, (to - from).normalized, Vector3.Distance(from, to))
+                    .Select(h => h.collider?.GetComponentInParent<BaseEntity>())
+                    .Where(b => b != null && b != entrance && b != tc && (b.ShortPrefabName.Contains("wall") || b.ShortPrefabName.Contains("foundation")))
+                    .Any();
+                if (!blockers) return false;
+            }
+            return true;
+        }
+
+        private static bool IsEntrance(BaseEntity e) =>
+            e.ShortPrefabName.Contains("door") || e.ShortPrefabName.Contains("window") || e.ShortPrefabName.Contains("hatch");
+
+        // TC selado: paredes fechando pelo menos 4 lados a até 1 m do TC.
+        private bool TcSealed(BaseEntity tc)
+        {
+            var sides = new[] { Vector3.forward, Vector3.back, Vector3.left, Vector3.right };
+            int closed = 0;
+            foreach (var dir in sides)
+            {
+                var origin = tc.transform.position + Vector3.up * 0.5f;
+                if (Physics.Raycast(origin, dir, 1f))
+                    closed++;
+            }
+            return closed >= 4;
+        }
+
+        // Extensão de fundação com parede: parede sobre uma fundação que não está colada a um TC da equipe.
+        private bool WallOnExtraFoundation(BaseEntity wall)
+        {
+            if (!wall.ShortPrefabName.Contains("wall")) return false;
+            return UnityEngine.Object.FindObjectsOfType<BaseEntity>()
+                .Any(f => f.ShortPrefabName.Contains("foundation")
+                    && Vector3.Distance(f.transform.position, wall.transform.position) <= 1.5f
+                    && !UnityEngine.Object.FindObjectsOfType<BuildingPrivlidge>().Any(tc => Vector3.Distance(tc.transform.position, f.transform.position) <= 6f));
         }
 
         private void Init()
@@ -373,16 +437,113 @@ namespace Oxide.Plugins
             return data.PlayerTeam.ContainsKey(id) || data.Solos.Contains(id);
         }
 
-        private void StartEvent()
-        {
-            var leftover = FormTrios();
-            SaveData();
+        // Fila de solos, em ordem de entrada no servidor. Quem não tem time e está inscrito solo entra aqui.
+        private readonly List<ulong> soloQueue = new List<ulong>();
+        private bool eventLocked;
 
-            if (leftover.Count > 0)
+        // Controle de vagas e montagem dos trios:
+        // - Time já formado: ocupa uma das 33 vagas quando o primeiro membro entra.
+        // - Solo inscrito: entra na fila pela ordem de chegada; a cada 3 solos na fila, forma-se um trio no sorteio.
+        // - Ao completar 33 equipes, o evento trava: quem não está em equipe ativa é desconectado e não reconecta até o fim.
+        private void OnPlayerInit(BasePlayer player)
+        {
+            if (player == null || player.IsAdmin) return;
+            if (phase == "parado" || phase == "fim") return;
+
+            if (data.PlayerTeam.TryGetValue(player.userID, out var teamName))
             {
-                PrintWarning($"{leftover.Count} solo(s) sem trio completo: {string.Join(", ", leftover)}");
+                if (data.ActiveTeams.Contains(teamName)) return;
+                if (eventLocked || data.ActiveTeams.Count >= MaxActiveTeams)
+                {
+                    player.Kick($"O evento já tem {MaxActiveTeams} equipes em jogo. Você não pode entrar até o fim do evento.");
+                    return;
+                }
+                ActivateTeam(teamName);
+                return;
             }
 
+            if (eventLocked)
+            {
+                player.Kick($"O evento já tem {MaxActiveTeams} equipes em jogo. Você não pode entrar até o fim do evento.");
+                return;
+            }
+            if (!data.Solos.Contains(player.userID))
+            {
+                player.Kick("Você não está inscrito neste evento.");
+                return;
+            }
+            if (!soloQueue.Contains(player.userID)) soloQueue.Add(player.userID);
+            Broadcast($"{player.displayName} entrou na fila solo ({soloQueue.Count} na fila).");
+            TryFormTrios();
+        }
+
+        private void OnPlayerDisconnected(BasePlayer player)
+        {
+            if (player == null) return;
+            soloQueue.Remove(player.userID);
+        }
+
+        private void ActivateTeam(string teamName)
+        {
+            data.ActiveTeams.Add(teamName);
+            SaveData();
+            Broadcast($"<color=#66ccff>{teamName}</color> entrou no evento ({data.ActiveTeams.Count}/{MaxActiveTeams}).");
+            CheckLock();
+        }
+
+        // Forma trios com os solos da fila, pela ordem de entrada: pega os 3 primeiros e embaralha a formação.
+        private void TryFormTrios()
+        {
+            while (!eventLocked && soloQueue.Count >= TeamSize)
+            {
+                var group = soloQueue.Take(TeamSize).ToList();
+                soloQueue.RemoveRange(0, TeamSize);
+                var shuffled = group.OrderBy(_ => random.Next()).ToList();
+
+                string name;
+                int index = data.Teams.Count + 1;
+                do { name = $"Sorteio-{index++}"; } while (data.Teams.ContainsKey(name));
+                var team = new TeamData { Name = name, Members = shuffled };
+                data.Teams[name] = team;
+                foreach (var id in shuffled)
+                {
+                    data.PlayerTeam[id] = name;
+                    data.Solos.Remove(id);
+                }
+                SaveData();
+                Broadcast($"Trio sorteado <color=#66ccff>{name}</color>: {string.Join(", ", shuffled.Select(id => NameOf(id)))}.");
+                ActivateTeam(name);
+            }
+        }
+
+        private string NameOf(ulong id)
+        {
+            var online = BasePlayer.activePlayerList.FirstOrDefault(p => p.userID == id);
+            return online != null ? online.displayName : id.ToString();
+        }
+
+        // Ao completar as 33 equipes, trava o evento e desconecta todo mundo que não está em equipe ativa.
+        private void CheckLock()
+        {
+            if (eventLocked || data.ActiveTeams.Count < MaxActiveTeams) return;
+            eventLocked = true;
+            soloQueue.Clear();
+            Broadcast($"As {MaxActiveTeams} equipes estão completas. O restante foi desconectado e não pode reconectar até o fim do evento.");
+            foreach (var p in BasePlayer.activePlayerList.ToList())
+            {
+                if (p == null || p.IsAdmin) continue;
+                if (data.PlayerTeam.TryGetValue(p.userID, out var t) && data.ActiveTeams.Contains(t)) continue;
+                p.Kick("O evento está completo com 33 equipes. Você não pode entrar até o fim do evento.");
+            }
+        }
+
+        private void StartEvent()
+        {
+            // Solos não são sorteados agora: montam trios conforme entram no servidor (ver TryFormTrios).
+            data.ActiveTeams.Clear();
+            soloQueue.Clear();
+            eventLocked = false;
+            SaveData();
             SetPhase("farm", FarmMinutes);
         }
 
@@ -711,9 +872,35 @@ namespace Oxide.Plugins
 
             if (entity is BuildingPrivlidge && (phase == "farm" || phase == "pvp" || phase == "raid") && !HasEntranceNearby(entity))
             {
-                planner?.GetOwnerPlayer()?.ChatMessage(Prefix + "O TC deve ficar logo atrás de uma porta, janela ou alçapão. A colocação foi removida.");
-                entity.Kill();
-                return;
+                if (GeometryViolation(entity, planner?.GetOwnerPlayer(), "O TC deve ficar logo atrás de uma porta, janela ou alçapão.")) return;
+            }
+
+            // Geometria: caminho livre até o TC e TC selado.
+            if (entity is BuildingPrivlidge && phase != "parado" && phase != "fim")
+            {
+                if (PathBlocked(entity) && GeometryViolation(entity, planner?.GetOwnerPlayer(), "O caminho até o TC está bloqueado por parede ou fundação.")) return;
+                if (TcSealed(entity) && GeometryViolation(entity, planner?.GetOwnerPlayer(), "TC selado não é permitido.")) return;
+            }
+
+            // Geometria: parede em fundação extra (sem TC da equipe por perto).
+            if (entity.ShortPrefabName.Contains("wall") && phase != "parado" && phase != "fim" && WallOnExtraFoundation(entity))
+            {
+                if (GeometryViolation(entity, planner?.GetOwnerPlayer(), "Parede em fundação extra não é permitida.")) return;
+            }
+
+            // Geometria: limites de compound (china walls) e de barricada metálica por time.
+            // shortcut: 12 china walls e 6 barricadas são limites heurísticos; ajustar com os números do teste em jogo.
+            if ((entity.ShortPrefabName == "wall.external.high.china" || entity.ShortPrefabName == "barricade.metal") && phase != "parado" && phase != "fim")
+            {
+                ulong geoOwner = entity.OwnerID;
+                if (geoOwner == 0UL && planner?.GetOwnerPlayer() != null) geoOwner = planner.GetOwnerPlayer().userID;
+                if (data.PlayerTeam.TryGetValue(geoOwner, out var geoTeamName) && data.Teams.TryGetValue(geoTeamName, out var geoTeam))
+                {
+                    int limitGeo = entity.ShortPrefabName == "barricade.metal" ? 6 : 12;
+                    int geoCount = UnityEngine.Object.FindObjectsOfType<BaseEntity>()
+                        .Count(e => e.ShortPrefabName == entity.ShortPrefabName && geoTeam.Members.Contains(e.OwnerID));
+                    if (geoCount > limitGeo && GeometryViolation(entity, planner?.GetOwnerPlayer(), $"Limite de {limitGeo} {entity.ShortPrefabName} por time atingido.")) return;
+                }
             }
 
             if (!DeployableLimits.TryGetValue(entity.ShortPrefabName, out var limit)) return;
