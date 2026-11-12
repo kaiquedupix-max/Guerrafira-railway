@@ -127,6 +127,8 @@ namespace Oxide.Plugins
         {
             LoadData();
             timer.Every(60f, () => CheckRaids(false));
+            // Atualiza as inscrições aprovadas do site a cada 5 min, para o cadastro valer antes e durante o evento.
+            timer.Every(300f, () => SyncRegistrations());
         }
 
         private void Unload()
@@ -362,6 +364,26 @@ namespace Oxide.Plugins
             }, this, headers: headers);
         }
 
+        // Puxa as inscrições aprovadas do site sem iniciar o evento. Chamado a cada 5 min e antes do início.
+        private void SyncRegistrations()
+        {
+            var token = Config["SyncToken"]?.ToString() ?? "";
+            var url = Config["SyncUrl"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(url)) return;
+
+            var headers = new Dictionary<string, string> { { "x-invaders-token", token } };
+            webrequest.Enqueue(url, null, (code, body) =>
+            {
+                if (code != 200 || string.IsNullOrEmpty(body))
+                {
+                    PrintWarning($"Sincronização de cadastros falhou (HTTP {code}).");
+                    return;
+                }
+                try { ImportApprovedRegistrations(body); }
+                catch (Exception ex) { PrintError($"Cadastros do site inválidos: {ex.Message}"); }
+            }, this, headers: headers);
+        }
+
         // Antes de sortear, puxa as inscrições aprovadas do site. Sem token ou sem resposta, segue só com as inscrições in-game.
         private void BeginStart()
         {
@@ -448,6 +470,16 @@ namespace Oxide.Plugins
         private void OnPlayerInit(BasePlayer player)
         {
             if (player == null || player.IsAdmin) return;
+
+            // Sem cadastro (time ou inscrição solo aprovada), ninguém entra, o tempo todo. Admins e owners passam.
+            bool registered = data.PlayerTeam.ContainsKey(player.userID) || data.Solos.Contains(player.userID);
+            if (!registered)
+            {
+                player.Kick("Você não está cadastrado neste evento. Faça sua inscrição no site.");
+                return;
+            }
+
+            // Antes do início e depois do fim, cadastrado entra normalmente; as vagas só valem durante o evento.
             if (phase == "parado" || phase == "fim") return;
 
             if (data.PlayerTeam.TryGetValue(player.userID, out var teamName))
