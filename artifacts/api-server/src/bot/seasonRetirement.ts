@@ -109,7 +109,7 @@ export async function retireSeasonDiscordOnce(client: Client): Promise<void> {
         continue;
       }
       try {
-        await role.delete("Encerramento do sistema Season; substituído por Base Invaders");
+        await role.delete("Encerramento do sistema Season; substituído por Guerra Fria Invaders");
         removedRoles++;
       } catch (error) {
         failures++;

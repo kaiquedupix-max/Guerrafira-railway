@@ -10,7 +10,7 @@ const built = await build({
 });
 const page = await import("data:text/javascript;base64," + Buffer.from(built.outputFiles[0].text).toString("base64"));
 
-test("Base Invaders shows a free trio event of five hours with an unannounced Saturday", () => {
+test("Guerra Fria Invaders shows a free trio event of five hours with an unannounced Saturday", () => {
   const dom = new JSDOM(page.renderBaseInvadersPage(null));
   const text = dom.window.document.body.textContent;
   assert.match(text, /BASE\s*INVADERS/i);
@@ -54,22 +54,22 @@ test("Retired Season synchronizers are not started and registrations are persist
 });
 
 
-test("Main navigation shows Base Invaders instead of Season and points to the actual event", async () => {
+test("Main navigation shows Guerra Fria Invaders instead of Season and points to the actual event", async () => {
   const builtHome = await build({ entryPoints: ["src/admin/homePage.ts"], bundle: true, platform: "node", format: "esm", write: false });
   const home = await import("data:text/javascript;base64," + Buffer.from(builtHome.outputFiles[0].text).toString("base64"));
   const dom = new JSDOM(home.renderHome({ cookies: {} }));
   const link = dom.window.document.querySelector('nav.menu a[href="/base-invaders"]');
-  assert.ok(link, "O menu deve apontar para a página Base Invaders");
-  assert.equal(link.textContent.trim(), "BASE INVADERS");
+  assert.ok(link, "O menu deve apontar para a página Guerra Fria Invaders");
+  assert.equal(link.textContent.trim(), "GUERRA FRIA INVADERS");
   assert.equal(dom.window.document.querySelector('nav.menu a[href="/season2"]'), null);
-  assert.match(dom.window.document.querySelector(".heroActions").textContent, /BASE INVADERS/);
+  assert.match(dom.window.document.querySelector(".heroActions").textContent, /GUERRA FRIA INVADERS/);
   dom.window.close();
 });
 
-test("Base Invaders copy mentions only Guerra Fria, never third-party event organizers", () => {
+test("Guerra Fria Invaders copy mentions only Guerra Fria, never third-party event organizers", () => {
   const dom = new JSDOM(page.renderBaseInvadersPage(null));
   const text = dom.window.document.querySelector("main").textContent;
-  assert.match(text, /Base Invaders da Guerra Fria/);
+  assert.match(text, /Guerra Fria Invaders/);
   assert.doesNotMatch(text, /Rustoria|Twitch Rivals|inspirado|inspirada/i);
   dom.window.close();
 });

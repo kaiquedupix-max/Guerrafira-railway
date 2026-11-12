@@ -33,7 +33,7 @@ const PANEL_INTERVAL_MS = 5 * 60 * 1000;
 
 const command = new SlashCommandBuilder()
   .setName("invaders")
-  .setDescription("Base Invaders: inscritos, prévia do sorteio e informações do evento.")
+  .setDescription("Guerra Fria Invaders: inscritos, prévia do sorteio e informações do evento.")
   .addSubcommand(sub => sub.setName("inscritos").setDescription("Quantas equipes e jogadores já estão inscritos."))
   .addSubcommand(sub => sub.setName("previa-sorteio").setDescription("Quantos trios sairiam com os inscritos solo."))
   .addSubcommand(sub => sub.setName("info").setDescription("Formato, fases e como se inscrever."));
@@ -46,9 +46,9 @@ export function buildPainel(t: Totals): ContainerBuilder {
   return new ContainerBuilder()
     .setAccentColor(ACCENT)
     .addMediaGalleryComponents(
-      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(BANNER_URL).setDescription("Base Invaders")),
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(BANNER_URL).setDescription("Guerra Fria Invaders")),
     )
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent("# 🏆 BASE INVADERS\n**Guerra Fria Rust** • Trio • 5 horas • Grátis"))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent("# 🏆 GUERRA FRIA INVADERS\n**Guerra Fria Rust** • Trio • 5 horas • Grátis"))
     .addSeparatorComponents(new SeparatorBuilder())
     .addTextDisplayComponents(new TextDisplayBuilder().setContent([
       "### 📊 Inscrições",
@@ -81,7 +81,7 @@ export function buildPainel(t: Totals): ContainerBuilder {
 function buildInfoEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(ACCENT)
-    .setTitle("Base Invaders • Informações")
+    .setTitle("Guerra Fria Invaders • Informações")
     .setDescription("Evento de 5 horas, em trios de 3 jogadores. Sem taxa de inscrição.")
     .addFields(
       { name: "Fases", value: "Build/Farm 90 min • PVP 90 min • Raid 120 min" },
@@ -142,7 +142,7 @@ export async function startInvadersBot(): Promise<void> {
 
   client.once(Events.ClientReady, async ready => {
     logger.info({ tag: ready.user.tag }, "Guerra Fria Invaders online");
-    client.user?.setActivity("Base Invaders", { type: ActivityType.Watching });
+    client.user?.setActivity("Guerra Fria Invaders", { type: ActivityType.Watching });
     if (guildId) {
       // Se o bot ainda não estiver no servidor, o registro falha aqui sem derrubar o processo.
       try {

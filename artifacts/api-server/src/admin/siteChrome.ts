@@ -17,7 +17,7 @@ export function withSiteChrome(html: string, section: SiteSection, opts?: { isAd
     ["home", "/", "Início"],
     ["store", "/loja", "Loja"],
     ["leaderboard", "/leaderboard", "Leaderboard"],
-    ["base-invaders", "/base-invaders", "Base Invaders"],
+    ["base-invaders", "/base-invaders", "Guerra Fria Invaders"],
     ["donation", "/doar", "Doar"],
     ["status", "/api/status", "Status"],
   ];

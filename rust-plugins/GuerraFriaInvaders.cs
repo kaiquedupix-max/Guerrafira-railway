@@ -9,7 +9,7 @@ using UnityEngine;
 namespace Oxide.Plugins
 {
     [Info("GuerraFriaInvaders", "Guerra Fria", "1.0.0")]
-    [Description("Base Invaders da Guerra Fria: inscrição em trio ou solo, sorteio de solos em trios e controle de fases")]
+    [Description("Guerra Fria Invaders: inscrição em trio ou solo, sorteio de solos em trios e controle de fases")]
     public class GuerraFriaInvaders : RustPlugin
     {
         // Janela total de 5h: 1h30 farm/build, 1h30 PVP, 2h raid.
@@ -20,7 +20,7 @@ namespace Oxide.Plugins
         // Vagas do evento: as 33 primeiras equipes a entrar no servidor durante o evento jogam; as demais são desconectadas.
         private const int MaxActiveTeams = 33;
 
-        private const string Prefix = "<color=#ffcc00>[Base Invaders]</color> ";
+        private const string Prefix = "<color=#ffcc00>[Guerra Fria Invaders]</color> ";
         private const string DataFile = "GuerraFriaInvaders";
 
         private StoredData data;
@@ -41,6 +41,7 @@ namespace Oxide.Plugins
         {
             public Dictionary<string, TeamData> Teams = new Dictionary<string, TeamData>(StringComparer.OrdinalIgnoreCase);
             public List<ulong> Solos = new List<ulong>();
+            public HashSet<ulong> Approved = new HashSet<ulong>();
             public Dictionary<ulong, string> PlayerTeam = new Dictionary<ulong, string>();
             public List<string> ActiveTeams = new List<string>();
         }
@@ -129,6 +130,8 @@ namespace Oxide.Plugins
             timer.Every(60f, () => CheckRaids(false));
             // Atualiza as inscrições aprovadas do site a cada 5 min, para o cadastro valer antes e durante o evento.
             timer.Every(300f, () => SyncRegistrations());
+            // Busca as aprovações logo ao carregar, para ninguém aprovado ser barrado até o primeiro ciclo de 5 min.
+            SyncRegistrations();
         }
 
         private void Unload()
@@ -169,6 +172,11 @@ namespace Oxide.Plugins
             if (phase != "parado")
             {
                 player.ChatMessage(Prefix + "Inscrições fechadas. O evento já começou.");
+                return;
+            }
+            if (!IsRegistered(player))
+            {
+                player.ChatMessage(Prefix + "Você não está cadastrado no site. Faça sua inscrição antes de entrar na lista solo.");
                 return;
             }
             if (data.PlayerTeam.ContainsKey(player.userID))
@@ -224,6 +232,11 @@ namespace Oxide.Plugins
                 player.ChatMessage(Prefix + "Informe um nome de time com até 24 caracteres.");
                 return;
             }
+            if (!IsRegistered(player))
+            {
+                player.ChatMessage(Prefix + "Você não está cadastrado no site. Faça sua inscrição antes de criar um time.");
+                return;
+            }
             if (data.PlayerTeam.ContainsKey(player.userID) || data.Solos.Contains(player.userID))
             {
                 player.ChatMessage(Prefix + "Você já está em um time ou na lista solo.");
@@ -261,6 +274,11 @@ namespace Oxide.Plugins
             if (target == null)
             {
                 player.ChatMessage(Prefix + "Jogador não encontrado online. Ele precisa estar no servidor.");
+                return;
+            }
+            if (!IsRegistered(target))
+            {
+                player.ChatMessage(Prefix + "Esse jogador não está cadastrado no site.");
                 return;
             }
             if (data.PlayerTeam.ContainsKey(target.userID) || data.Solos.Contains(target.userID))
@@ -424,6 +442,17 @@ namespace Oxide.Plugins
             var teams = (Newtonsoft.Json.Linq.JArray)root["teams"];
             if (teams == null) return;
 
+            // O site é a fonte da verdade: quem não está aprovado lá não entra em /solo nem /trio.
+            var approved = new HashSet<ulong>();
+            foreach (var item in teams)
+            {
+                var approvedPlayers = (Newtonsoft.Json.Linq.JArray)item["players"];
+                if (approvedPlayers == null) continue;
+                foreach (var p in approvedPlayers) approved.Add(ulong.Parse((string)p["steamId"]));
+            }
+            data.Approved = approved;
+            data.Solos.RemoveAll(id => !approved.Contains(id));
+
             int imported = 0;
             foreach (var item in teams)
             {
@@ -459,6 +488,12 @@ namespace Oxide.Plugins
             return data.PlayerTeam.ContainsKey(id) || data.Solos.Contains(id);
         }
 
+        // Cadastro vale quando o site aprovou (ou já está em time vindo do site). Admins e owners sempre passam.
+        private bool IsRegistered(BasePlayer player)
+        {
+            return player.IsAdmin || data.Approved.Contains(player.userID) || data.PlayerTeam.ContainsKey(player.userID);
+        }
+
         // Fila de solos, em ordem de entrada no servidor. Quem não tem time e está inscrito solo entra aqui.
         private readonly List<ulong> soloQueue = new List<ulong>();
         private bool eventLocked;
@@ -472,7 +507,7 @@ namespace Oxide.Plugins
             if (player == null || player.IsAdmin) return;
 
             // Sem cadastro (time ou inscrição solo aprovada), ninguém entra, o tempo todo. Admins e owners passam.
-            bool registered = data.PlayerTeam.ContainsKey(player.userID) || data.Solos.Contains(player.userID);
+            bool registered = IsRegistered(player);
             if (!registered)
             {
                 player.Kick("Você não está cadastrado neste evento. Faça sua inscrição no site.");
@@ -633,7 +668,7 @@ namespace Oxide.Plugins
             var ranking = data.Teams.Values.OrderByDescending(t => t.Score).ToList();
             if (ranking.Count == 0)
             {
-                Broadcast("Nenhum time pontuou neste Base Invaders.");
+                Broadcast("Nenhum time pontuou neste Guerra Fria Invaders.");
                 return;
             }
             var medals = new[] { "🥇", "🥈", "🥉" };
@@ -676,7 +711,7 @@ namespace Oxide.Plugins
                     CheckRaids(true);
                     phase = "fim";
                     phaseEndsAt = DateTime.MinValue;
-                    Broadcast("Base Invaders encerrado.");
+                    Broadcast("Guerra Fria Invaders encerrado.");
                     AnnouncePodium();
                     break;
             }

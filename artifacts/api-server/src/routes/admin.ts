@@ -32,7 +32,7 @@ router.use((req, _res, next) => {
 router.get("/auth/login", adminLoginV3);
 router.get("/auth/callback", adminCallbackV3);
 router.get("/auth/logout", adminLogoutV3);
-router.use("/season",(_req,res)=>res.status(410).json({error:"Seasons encerradas. Use Base Invaders."}));
+router.use("/season",(_req,res)=>res.status(410).json({error:"Seasons encerradas. Use Guerra Fria Invaders."}));
 router.use(readRoutes);
 router.use("/moderation", moderationRoutes);
 router.use("/warnings", warningRoutes);

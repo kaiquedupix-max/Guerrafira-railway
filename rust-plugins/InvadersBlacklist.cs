@@ -5,12 +5,12 @@ using UnityEngine;
 namespace Oxide.Plugins
 {
     [Info("InvadersBlacklist", "Guerra Fria", "1.0.0")]
-    [Description("Base Invaders: remove itens e bloqueia construções proibidas pelo regulamento")]
+    [Description("Guerra Fria Invaders: remove itens e bloqueia construções proibidas pelo regulamento")]
     public class InvadersBlacklist : RustPlugin
     {
-        private const string Prefix = "<color=#ffcc00>[Base Invaders]</color> ";
+        private const string Prefix = "<color=#ffcc00>[Guerra Fria Invaders]</color> ";
 
-        // Itens proibidos no evento, pelo regulamento do Base Invaders.
+        // Itens proibidos no evento, pelo regulamento do Guerra Fria Invaders.
         // Shortnames conferidos no servidor (c.reload InvadersBlacklist não mostra aviso). Deployables ainda não foram conferidos.
         private static readonly HashSet<string> BlacklistedItems = new HashSet<string>
         {

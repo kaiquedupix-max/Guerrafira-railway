@@ -8,7 +8,7 @@ const ACTIVE_STATUSES: string[] = ["pending", "approved"];
 
 export const data = new SlashCommandBuilder()
   .setName("invaders")
-  .setDescription("Base Invaders: acompanhe as inscrições e a prévia do sorteio.")
+  .setDescription("Guerra Fria Invaders: acompanhe as inscrições e a prévia do sorteio.")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addSubcommand(sub => sub.setName("inscritos").setDescription("Mostra quantas equipes e jogadores já estão inscritos."))
   .addSubcommand(sub => sub.setName("previa-sorteio").setDescription("Mostra quantos trios sairiam com os inscritos solo."));
@@ -56,7 +56,7 @@ export function buildInscritosEmbed(t: Totals): EmbedBuilder {
   const solo = t.soloPending + t.soloApproved;
   return new EmbedBuilder()
     .setColor(0xffb800)
-    .setTitle("Base Invaders • Inscrições")
+    .setTitle("Guerra Fria Invaders • Inscrições")
     .addFields(
       { name: "Equipes em trio", value: `**${trioTeams}** (${t.trioTeamsApproved} aprovadas, ${t.trioTeamsPending} pendentes)`, inline: false },
       { name: "Jogadores em trio", value: `**${t.trioPlayers}**`, inline: true },
@@ -75,7 +75,7 @@ export function buildPreviaEmbed(t: Totals): EmbedBuilder {
     : `${sobra} solo(s) ficariam de fora. Use o preenchimento de times incompletos antes de sortear.`;
   return new EmbedBuilder()
     .setColor(0xffb800)
-    .setTitle("Base Invaders • Prévia do sorteio")
+    .setTitle("Guerra Fria Invaders • Prévia do sorteio")
     .setDescription(`Com **${solo}** inscritos solo, o sorteio formaria **${trios}** trio(s) de 3 jogadores.`)
     .addFields({ name: "Sobras", value: sobraTexto })
     .setFooter({ text: "Prévia apenas informativa. O sorteio real é feito pela administração no dia do evento." });
@@ -89,7 +89,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     const embed = sub === "previa-sorteio" ? buildPreviaEmbed(totals) : buildInscritosEmbed(totals);
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
-    logger.error({ error, subcommand: sub }, "Falha ao consultar inscrições do Base Invaders pelo bot");
+    logger.error({ error, subcommand: sub }, "Falha ao consultar inscrições do Guerra Fria Invaders pelo bot");
     await interaction.editReply("Não consegui consultar as inscrições agora. Tente de novo em instantes.");
   }
 }

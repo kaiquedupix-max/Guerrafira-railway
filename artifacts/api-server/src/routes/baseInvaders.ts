@@ -97,7 +97,7 @@ router.post("/base-invaders/inscricoes", async (req, res) => {
   } catch (error: any) {
     if (error?.code === "23505" || error?.cause?.code === "23505")
       return void res.status(409).json({ error: "Esse nome de equipe ou capitão já possui uma inscrição ativa." });
-    logger.error({ error }, "Falha na inscrição Base Invaders");
+    logger.error({ error }, "Falha na inscrição Guerra Fria Invaders");
     return void res.status(500).json({ error: "Não foi possível salvar sua inscrição. Tente novamente." });
   }
 });
@@ -113,7 +113,7 @@ router.get("/base-invaders/minha-inscricao", async (req, res) => {
     `);
     return void res.status(200).json({ registration: result?.rows?.[0] || null });
   } catch (error) {
-    logger.error({ error }, "Erro ao consultar inscrição Base Invaders");
+    logger.error({ error }, "Erro ao consultar inscrição Guerra Fria Invaders");
     return void res.status(500).json({ error: "Falha ao consultar inscrição." });
   }
 });
@@ -129,7 +129,7 @@ router.get("/base-invaders/inscricoes", async (req, res) => {
     `);
     return void res.status(200).json({ teams: result?.rows || [] });
   } catch (error) {
-    logger.error({ error }, "Erro ao listar Base Invaders");
+    logger.error({ error }, "Erro ao listar Guerra Fria Invaders");
     return void res.status(500).json({ error: "Falha ao carregar equipes." });
   }
 });
@@ -149,12 +149,12 @@ router.post("/base-invaders/inscricoes/:id/status", async (req, res) => {
       WHERE id=${id} RETURNING id,team_name,status
     `);
     if (!result?.rows?.length) return void res.status(404).json({ error: "Equipe não encontrada." });
-    logger.info({ teamId: id, status, adminId: session?.userId || admin?.userId }, "Inscrição Base Invaders moderada");
+    logger.info({ teamId: id, status, adminId: session?.userId || admin?.userId }, "Inscrição Guerra Fria Invaders moderada");
     return void res.status(200).json({ team: result.rows[0] });
   } catch (error: any) {
     if (error?.code === "23505" || error?.cause?.code === "23505")
       return void res.status(409).json({ error: "Existe outra inscrição ativa com esse capitão ou nome de equipe." });
-    logger.error({ error, teamId: id }, "Falha ao moderar Base Invaders");
+    logger.error({ error, teamId: id }, "Falha ao moderar Guerra Fria Invaders");
     return void res.status(500).json({ error: "Erro ao atualizar status." });
   }
 });
@@ -179,7 +179,7 @@ FROM base_invaders_teams WHERE status IN ('pending','approved') GROUP BY registr
     }
     return void res.status(200).json({ trioTeams, trioPlayers, soloPlayers, totalPlayers: trioPlayers + soloPlayers });
   } catch (error) {
-    logger.error({ error }, "Erro ao contar inscrições Base Invaders");
+    logger.error({ error }, "Erro ao contar inscrições Guerra Fria Invaders");
     return void res.status(500).json({ error: "Falha ao contar inscrições." });
   }
 });
@@ -205,7 +205,7 @@ SELECT id,team_name,registration_mode,players FROM base_invaders_teams WHERE sta
     }));
     return void res.status(200).json({ teams });
   } catch (error) {
-    logger.error({ error }, "Erro ao exportar inscrições Base Invaders");
+    logger.error({ error }, "Erro ao exportar inscrições Guerra Fria Invaders");
     return void res.status(500).json({ error: "Falha ao exportar inscrições." });
   }
 });

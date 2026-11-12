@@ -2,7 +2,7 @@ export function renderBaseInvadersConfirmationPage(): string {
   return String.raw`<!doctype html><html lang="pt-BR"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Inscrição confirmada | Base Invaders - Guerra Fria</title>
+<title>Inscrição confirmada | Guerra Fria Invaders</title>
 <style>
 :root{color-scheme:dark;font-family:Inter,Arial,Helvetica,sans-serif;background:#080d0e;color:#f2f4f2}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 65% 15%,#66502555,transparent 42%),#080d0e}
@@ -16,7 +16,7 @@ export function renderBaseInvadersConfirmationPage(): string {
 .bi-confirm-wrap a{display:inline-block;padding:14px 19px;background:#f3bc4e;color:#16120a;text-decoration:none;font-weight:900;border-radius:7px;font-size:12px}
 </style></head><body>
 <main class="bi-confirm-wrap">
-  <span class="bi-confirm-tag">GUERRA FRIA RUST • BASE INVADERS</span>
+  <span class="bi-confirm-tag">GUERRA FRIA RUST • GUERRA FRIA INVADERS</span>
   <h1>Inscrição <em>confirmada!</em></h1>
   <p>Recebemos seu cadastro gratuitamente. A participação ainda está sujeita à aprovação da organização.</p>
   <div id="bi-confirm-details" class="bi-confirm-details" role="status" aria-live="polite">Consultando os dados da sua inscrição...</div>
