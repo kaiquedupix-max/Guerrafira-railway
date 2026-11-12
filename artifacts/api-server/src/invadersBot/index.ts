@@ -27,7 +27,7 @@ import { buildInscritosEmbed, buildPreviaEmbed, loadTotals, type Totals } from "
 
 const SITE_URL = "https://www.guerrafriarust.com.br/base-invaders";
 // Banner "Estandarte Dourado" usado no canal #guerra-fria-invaders, hospedado no próprio site.
-const BANNER_URL = "https://www.guerrafriarust.com.br/invaders-banner.png";
+const BANNER_URL = "https://www.guerrafriarust.com.br/api/base-invaders/banner.png";
 const ACCENT = 0xffca57;
 const PANEL_INTERVAL_MS = 5 * 60 * 1000;
 

@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { getCommunitySession } from "../admin/communitySession.js";
@@ -206,6 +208,17 @@ SELECT id,team_name,registration_mode,players FROM base_invaders_teams WHERE sta
     logger.error({ error }, "Erro ao exportar inscrições Base Invaders");
     return void res.status(500).json({ error: "Falha ao exportar inscrições." });
   }
+});
+
+// Banner do painel do Discord: serve o arquivo de public/ para o Discord carregar pela URL.
+router.get("/base-invaders/banner.png", (_req, res) => {
+  const file = [
+    path.resolve(process.cwd(), "artifacts/api-server/public/invaders-banner.png"),
+    path.resolve(process.cwd(), "public/invaders-banner.png"),
+  ].find(existsSync);
+  if (!file) return void res.status(404).end();
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  return void res.sendFile(file);
 });
 
 export default router;
