@@ -26,8 +26,8 @@ import { buildInscritosEmbed, buildPreviaEmbed, loadTotals, type Totals } from "
 // O painel usa Components V2 (container com banner), atualiza sozinho no canal INVADERS_PANEL_CHANNEL_ID.
 
 const SITE_URL = "https://www.guerrafriarust.com.br/base-invaders";
-// Banner já publicado no canal #guerra-fria-invaders (Estandarte Dourado), hospedado no GitHub.
-const BANNER_URL = "https://raw.githubusercontent.com/vkvucks-ai/guerrafriainvaders/main/Estandarte%20Dourado%20Guerra%20Fria.png";
+// Banner "Estandarte Dourado" usado no canal #guerra-fria-invaders, hospedado no próprio site.
+const BANNER_URL = "https://www.guerrafriarust.com.br/invaders-banner.png";
 const ACCENT = 0xffca57;
 const PANEL_INTERVAL_MS = 5 * 60 * 1000;
 

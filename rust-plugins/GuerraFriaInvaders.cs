@@ -262,6 +262,41 @@ namespace Oxide.Plugins
             Broadcast("Evento encerrado pela administração.");
         }
 
+        // Teste de sincronização: baixa as aprovadas do site e só mostra a contagem no console. Não grava nada e não inicia o evento.
+        [ConsoleCommand("invaders.preview")]
+        private void CmdPreview(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin)
+            {
+                arg.ReplyWith("Sem permissão.");
+                return;
+            }
+            var token = Config["SyncToken"]?.ToString() ?? "";
+            var url = Config["SyncUrl"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(url))
+            {
+                arg.ReplyWith("SyncToken vazio: sincronização desativada.");
+                return;
+            }
+            var headers = new Dictionary<string, string> { { "x-invaders-token", token } };
+            webrequest.Enqueue(url, null, (code, body) =>
+            {
+                if (code != 200 || string.IsNullOrEmpty(body))
+                {
+                    PrintWarning($"Preview: falha HTTP {code} ao falar com o site.");
+                    return;
+                }
+                var teams = (Newtonsoft.Json.Linq.JArray)Newtonsoft.Json.Linq.JObject.Parse(body)["teams"];
+                int trios = 0, solos = 0;
+                foreach (var item in teams ?? new Newtonsoft.Json.Linq.JArray())
+                {
+                    if ((string)item["mode"] == "random") solos += ((Newtonsoft.Json.Linq.JArray)item["players"]).Count;
+                    else trios++;
+                }
+                PrintWarning($"Preview: {trios} trio(s) aprovado(s) e {solos} solo(s) aprovado(s) no site. Nada foi gravado.");
+            }, this, headers: headers);
+        }
+
         // Antes de sortear, puxa as inscrições aprovadas do site. Sem token ou sem resposta, segue só com as inscrições in-game.
         private void BeginStart()
         {
@@ -554,6 +589,33 @@ namespace Oxide.Plugins
             team.Score += points;
             SaveData();
             Broadcast($"<color=#66ccff>{teamName}</color> garantiu uma crate ({container.ShortPrefabName}) (+{points}).");
+        }
+
+        // Limites por time (regulamento): 1 auto turret, 1 flame turret e 1 shotgun trap. O excedente é removido ao ser colocado.
+        private static readonly Dictionary<string, int> DeployableLimits = new Dictionary<string, int>
+        {
+            { "autoturret_deployed", 1 },
+            { "flameturret.deployed", 1 },
+            { "guntrap.deployed", 1 },
+        };
+
+        private void OnEntityBuilt(Planner planner, GameObject go)
+        {
+            var entity = go?.ToBaseEntity();
+            if (entity == null || !DeployableLimits.TryGetValue(entity.ShortPrefabName, out var limit)) return;
+
+            var builder = planner?.GetOwnerPlayer();
+            ulong ownerId = entity.OwnerID;
+            if (ownerId == 0UL && builder != null) ownerId = builder.userID;
+            if (!data.PlayerTeam.TryGetValue(ownerId, out var teamName) || !data.Teams.TryGetValue(teamName, out var team)) return;
+
+            // shortcut: conta as entidades por OwnerID no momento da colocação; não cobre a entidade se o servidor reatribuir o dono depois.
+            var count = UnityEngine.Object.FindObjectsOfType<BaseEntity>()
+                .Count(e => e.ShortPrefabName == entity.ShortPrefabName && team.Members.Contains(e.OwnerID));
+            if (count <= limit) return;
+
+            entity.Kill();
+            builder?.ChatMessage(Prefix + $"Limite de {limit} por time atingido para este item: foi removido.");
         }
 
         private bool IsSameTeam(ulong a, ulong b)
