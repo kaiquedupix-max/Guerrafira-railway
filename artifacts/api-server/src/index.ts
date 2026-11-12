@@ -7,6 +7,7 @@ import { ensureDatabaseSchema } from "@workspace/db";
 import app from "./appSafe";
 import { logger } from "./lib/logger";
 import { startBot } from "./bot/index";
+import { startInvadersBot } from "./invadersBot/index";
 
 const rawPort = process.env["PORT"];
 
@@ -37,6 +38,7 @@ async function startApplication(): Promise<void> {
   startPlayerDirectory();
   warmIpModeration();
   startBot().catch(err => logger.error({ err }, "Discord bot failed to start"));
+  startInvadersBot().catch(err => logger.error({ err }, "Guerra Fria Invaders bot failed to start"));
 }
 
 startApplication().catch(err => {

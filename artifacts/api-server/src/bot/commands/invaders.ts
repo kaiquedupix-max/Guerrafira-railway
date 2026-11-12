@@ -15,7 +15,7 @@ export const data = new SlashCommandBuilder()
 
 type GroupRow = { registration_mode: string; status: string; teams: string; players: string };
 
-type Totals = {
+export type Totals = {
   trioTeamsPending: number;
   trioTeamsApproved: number;
   trioPlayers: number;
@@ -24,7 +24,7 @@ type Totals = {
 };
 
 // Uma consulta agregada, sem trazer os jogadores para a memória do bot.
-async function loadTotals(): Promise<Totals> {
+export async function loadTotals(): Promise<Totals> {
   const { rows } = await pool.query<GroupRow>(
     `SELECT registration_mode, status, COUNT(*)::text AS teams,
             COALESCE(SUM(jsonb_array_length(players)), 0)::text AS players
@@ -51,7 +51,7 @@ async function loadTotals(): Promise<Totals> {
   return totals;
 }
 
-function buildInscritosEmbed(t: Totals): EmbedBuilder {
+export function buildInscritosEmbed(t: Totals): EmbedBuilder {
   const trioTeams = t.trioTeamsPending + t.trioTeamsApproved;
   const solo = t.soloPending + t.soloApproved;
   return new EmbedBuilder()
@@ -66,7 +66,7 @@ function buildInscritosEmbed(t: Totals): EmbedBuilder {
     .setFooter({ text: "Inscrições rejeitadas não entram na contagem." });
 }
 
-function buildPreviaEmbed(t: Totals): EmbedBuilder {
+export function buildPreviaEmbed(t: Totals): EmbedBuilder {
   const solo = t.soloPending + t.soloApproved;
   const trios = Math.floor(solo / 3);
   const sobra = solo % 3;
