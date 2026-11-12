@@ -427,7 +427,44 @@ namespace Oxide.Plugins
             phase = next;
             phaseEndsAt = DateTime.UtcNow.AddMinutes(minutes);
             Broadcast($"Fase <color=#66ccff>{PhaseLabel(next)}</color> começou. Duração: {minutes} minutos.");
+            // Avisos de contagem regressiva: 10 min e 1 min antes do fim da fase.
+            if (minutes > 10) timer.Once((minutes - 10) * 60f, () => Broadcast($"Faltam <b>10 minutos</b> para o fim da fase {PhaseLabel(next)}."));
+            if (minutes > 1) timer.Once((minutes - 1) * 60f, () => Broadcast($"Faltam <b>1 minuto</b> para o fim da fase {PhaseLabel(next)}."));
             timer.Once(minutes * 60f, () => AdvancePhase(next));
+        }
+
+        // Pódio do evento: top 3 pelo placar; empate no terceiro lugar é mostrado.
+        private void AnnouncePodium()
+        {
+            var ranking = data.Teams.Values.OrderByDescending(t => t.Score).ToList();
+            if (ranking.Count == 0)
+            {
+                Broadcast("Nenhum time pontuou neste Base Invaders.");
+                return;
+            }
+            var medals = new[] { "🥇", "🥈", "🥉" };
+            for (int i = 0; i < Math.Min(3, ranking.Count); i++)
+            {
+                Broadcast($"{medals[i]} <color=#66ccff>{ranking[i].Name}</color> — {ranking[i].Score} pontos");
+            }
+            if (ranking.Count > 1 && ranking[0].Score == ranking[1].Score)
+            {
+                Broadcast("Empate no primeiro lugar: a organização decide o desempate conforme o regulamento.");
+            }
+        }
+
+        // Console do admin: lista times e placar sem alterar nada.
+        [ConsoleCommand("invaders.teams")]
+        private void CmdTeams(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin)
+            {
+                arg.ReplyWith("Sem permissão.");
+                return;
+            }
+            var lines = data.Teams.Values.OrderByDescending(t => t.Score)
+                .Select(t => $"{t.Name}: {t.Score} pontos ({t.Members.Count}/{TeamSize})");
+            arg.ReplyWith(string.Join("\n", lines));
         }
 
         // Só avança quando o timer da fase atual dispara, para não encerrar o evento antes da hora.
@@ -445,7 +482,8 @@ namespace Oxide.Plugins
                     CheckRaids(true);
                     phase = "fim";
                     phaseEndsAt = DateTime.MinValue;
-                    Broadcast("Base Invaders encerrado. Confira o placar com /invaders.");
+                    Broadcast("Base Invaders encerrado.");
+                    AnnouncePodium();
                     break;
             }
         }
@@ -597,6 +635,9 @@ namespace Oxide.Plugins
             Broadcast($"<color=#66ccff>{teamName}</color> garantiu uma crate ({container.ShortPrefabName}) (+{points}).");
         }
 
+        private static readonly string[] TurretNames = { "autoturret_deployed", "flameturret.deployed", "guntrap.deployed" };
+        private static readonly string[] BannedNearTurret = { "xmas.lightstring.deployed", "xmas.advanced.lights.deployed" };
+
         // Limites por time (regulamento): 1 auto turret, 1 flame turret e 1 shotgun trap. O excedente é removido ao ser colocado.
         private static readonly Dictionary<string, int> DeployableLimits = new Dictionary<string, int>
         {
@@ -611,6 +652,37 @@ namespace Oxide.Plugins
             if (entity == null) return;
 
             // Regra do regulamento: o TC fica atrás de porta, janela ou alçapão. Durante o evento, TC sem entrada por perto é removido.
+            // Regra do regulamento: nada de enfeite de Natal em torre, nem persiana atrás do TC.
+            // shortcut: checagem por distância (2 m para torre, 2,5 m para TC); não distingue janela de frente da persiana.
+            if (BannedNearTurret.Contains(entity.ShortPrefabName) && UnityEngine.Object.FindObjectsOfType<BaseEntity>()
+                .Any(t => TurretNames.Contains(t.ShortPrefabName) && Vector3.Distance(t.transform.position, entity.transform.position) <= 2f))
+            {
+                planner?.GetOwnerPlayer()?.ChatMessage(Prefix + "Enfeites de Natal não podem ficar em torres. A colocação foi removida.");
+                entity.Kill();
+                return;
+            }
+            if (entity.ShortPrefabName.StartsWith("shutter.") && phase != "parado" && phase != "fim" && UnityEngine.Object.FindObjectsOfType<BuildingPrivlidge>()
+                .Any(tc => Vector3.Distance(tc.transform.position, entity.transform.position) <= 2.5f))
+            {
+                planner?.GetOwnerPlayer()?.ChatMessage(Prefix + "Persianas não são permitidas atrás ou ao lado do TC. A colocação foi removida.");
+                entity.Kill();
+                return;
+            }
+
+            // Regra do regulamento: bunker não é permitido. Aproximação: TC cercado por muitas paredes a até 3 m é removido.
+            // shortcut: limiar de 16 paredes é um palpite; ajustar depois do teste em jogo.
+            if (entity is BuildingPrivlidge && phase != "parado" && phase != "fim")
+            {
+                var walls = UnityEngine.Object.FindObjectsOfType<BaseEntity>()
+                    .Count(w => w != entity && w.ShortPrefabName.Contains("wall") && Vector3.Distance(w.transform.position, entity.transform.position) <= 3f);
+                if (walls >= 16)
+                {
+                    planner?.GetOwnerPlayer()?.ChatMessage(Prefix + "Design tipo bunker não é permitido. A colocação do TC foi removida.");
+                    entity.Kill();
+                    return;
+                }
+            }
+
             // Regra do regulamento: uma base por time. Um segundo TC do mesmo time é removido na colocação.
             if (entity is BuildingPrivlidge && (phase == "farm" || phase == "pvp" || phase == "raid"))
             {
