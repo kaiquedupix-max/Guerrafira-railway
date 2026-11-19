@@ -25,7 +25,56 @@ const registrationForm = `
   <p class="bi-msg" id="bi-msg" role="status" aria-live="polite"></p>
 </form>
 <script>
-(()=>{const form=document.getElementById('bi-form');if(!form)return;const msg=document.getElementById('bi-msg'),btn=document.getElementById('bi-submit'),team=form.querySelector('#bi-trio-fields'),random=form.querySelector('#bi-random-fields'),third=team.querySelectorAll('.player')[2];const set=(s,ok)=>{msg.textContent=s;msg.style.color=ok?'#8eebac':'#ffb5ac'};const sync=()=>{const mode=form.querySelector('input[name="registrationMode"]:checked').value,isRandom=mode==='random',isDuo=mode==='duo';team.hidden=isRandom;team.disabled=isRandom;random.hidden=!isRandom;random.disabled=!isRandom;third.hidden=isDuo;third.querySelectorAll('input').forEach(input=>input.disabled=isDuo)};form.querySelectorAll('input[name="registrationMode"]').forEach(input=>input.addEventListener('change',sync));sync();fetch('/api/base-invaders/minha-inscricao',{credentials:'same-origin'}).then(r=>r.ok?r.json():null).then(d=>{if(d?.registration){const reg=d.registration;set(reg.registration_mode==='random'?'Você já se inscreveu sem equipe. Ela será completada no início do evento.':reg.registration_mode==='duo'?'Você já inscreveu o duo '+reg.team_name+'.':'Você já inscreveu a equipe '+reg.team_name+'.',true);btn.disabled=true;const a=document.createElement('a');a.href='/base-invaders/inscricao-confirmada';a.textContent='VER MINHA INSCRIÇÃO ↗';a.className='bi-confirm-link';msg.after(a)}}).catch(()=>{});form.addEventListener('submit',async e=>{e.preventDefault();btn.disabled=true;set('Registrando sua inscrição...',true);const f=new FormData(form),registrationMode=String(f.get('registrationMode')||'trio'),players=registrationMode==='random'?[{name:String(f.get('soloName')||'').trim(),steamId:String(f.get('soloSteamId')||'').trim()}]:[1,2,...(registrationMode==='duo'?[]:[3])].map(i=>({name:String(f.get('name'+i)||'').trim(),steamId:String(f.get('steam'+i)||'').trim()}));try{const r=await fetch('/api/base-invaders/inscricoes',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({registrationMode,teamName:String(f.get('teamName')||'').trim(),players,acceptRules:f.get('accept')==='on'})});const d=await r.json();if(!r.ok)throw Error(d.error||'Falha na inscrição.');window.location.assign('/base-invaders/inscricao-confirmada')}catch(error){set(error.message||'Erro ao realizar inscrição.',false);btn.disabled=false;}})})();
+(()=>{
+  const form=document.getElementById('bi-form');
+  if(!form)return;
+  const msg=document.getElementById('bi-msg'),btn=document.getElementById('bi-submit'),team=form.querySelector('#bi-trio-fields'),random=form.querySelector('#bi-random-fields'),third=team.querySelectorAll('.player')[2];
+  const set=(s,ok)=>{msg.textContent=s;msg.style.color=ok?'#8eebac':'#ffb5ac'};
+  const sync=()=>{const mode=form.querySelector('input[name="registrationMode"]:checked').value,isRandom=mode==='random',isDuo=mode==='duo';team.hidden=isRandom;team.disabled=isRandom;random.hidden=!isRandom;random.disabled=!isRandom;third.hidden=isDuo;third.querySelectorAll('input').forEach(input=>input.disabled=isDuo)};
+  form.querySelectorAll('input[name="registrationMode"]').forEach(input=>input.addEventListener('change',sync));
+  sync();
+
+  function ownerEditor(reg){
+    form.hidden=true;
+    const isRandom=reg.registration_mode==='random',editor=document.createElement('form'),style=document.createElement('style');
+    style.textContent='.bi-owner-editor{margin-top:22px;padding:22px;border:1px solid #405049;border-radius:10px;background:#0b1111}.bi-owner-editor h3{margin:0 0 8px}.bi-owner-editor p{color:#aab7b1;line-height:1.5}.bi-owner-team{display:block;margin:18px 0}.bi-owner-team input,.bi-owner-player input{width:100%;padding:12px;background:#080d0e;border:1px solid #394641;border-radius:6px;color:#eef3f0}.bi-owner-player{display:grid;grid-template-columns:1fr 1fr auto;gap:9px;align-items:end;margin:10px 0}.bi-owner-player label{min-width:0}.bi-owner-remove{padding:11px;border:0;border-radius:6px;background:#7d2828;color:#fff;cursor:pointer}.bi-owner-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}.bi-owner-actions button{padding:12px 16px;border:0;border-radius:6px;font-weight:900;cursor:pointer}.bi-owner-save{background:#f0b63f;color:#14110c}.bi-owner-add{background:#2c3a37;color:#fff}.bi-owner-message{min-height:20px;margin:14px 0 0}.bi-owner-message.error{color:#ffb5ac}.bi-owner-message.success{color:#8eebac}@media(max-width:700px){.bi-owner-player{grid-template-columns:1fr}.bi-owner-remove{justify-self:start}}';
+    editor.className='bi-owner-editor';
+    const heading=document.createElement('h3');heading.textContent=isRandom?'Edite sua inscrição':('Edite a equipe '+reg.team_name);
+    const status=document.createElement('p');status.textContent='Situação: '+(reg.status==='approved'?'aprovada':'aguardando aprovação')+'. Você pode manter até três jogadores na equipe.';
+    const nameLabel=document.createElement('label');nameLabel.className='bi-owner-team';nameLabel.textContent='Nome da equipe';
+    const nameInput=document.createElement('input');nameInput.value=reg.team_name;nameInput.minLength=3;nameInput.maxLength=36;nameInput.required=true;nameInput.disabled=isRandom;nameLabel.append(nameInput);nameLabel.hidden=isRandom;
+    const rows=document.createElement('div'),add=document.createElement('button');add.type='button';add.className='bi-owner-add';add.textContent='Adicionar jogador';
+    function updateRows(){rows.querySelectorAll('.bi-owner-remove').forEach(b=>b.disabled=rows.children.length<=1);add.hidden=isRandom||rows.children.length>=3}
+    function addPlayer(player){
+      const row=document.createElement('div');row.className='bi-owner-player';
+      const nameWrap=document.createElement('label');nameWrap.textContent='Nome no Rust';const name=document.createElement('input');name.value=player.name||'';name.minLength=2;name.maxLength=32;name.required=true;name.placeholder='Nick no Rust';nameWrap.append(name);
+      const steamWrap=document.createElement('label');steamWrap.textContent='SteamID64';const steam=document.createElement('input');steam.value=player.steamId||'';steam.required=true;steam.maxLength=17;steam.inputMode='numeric';steam.pattern='7656119[0-9]{10}';steam.placeholder='7656119xxxxxxxxxx';steamWrap.append(steam);
+      const remove=document.createElement('button');remove.type='button';remove.className='bi-owner-remove';remove.textContent='Remover';remove.addEventListener('click',()=>{row.remove();updateRows()});
+      row.append(nameWrap,steamWrap,remove);rows.append(row);updateRows();
+    }
+    for(const player of (Array.isArray(reg.players)?reg.players:[]))addPlayer(player);
+    add.addEventListener('click',()=>{if(rows.children.length<3)addPlayer({name:'',steamId:''})});
+    const actions=document.createElement('div');actions.className='bi-owner-actions';actions.append(add);
+    const save=document.createElement('button');save.type='submit';save.className='bi-owner-save';save.textContent='Salvar inscrição';actions.append(save);
+    const message=document.createElement('p');message.className='bi-owner-message';message.setAttribute('role','status');message.setAttribute('aria-live','polite');
+    editor.append(style,heading,status,nameLabel,rows,actions,message);form.after(editor);
+    editor.addEventListener('submit',async e=>{
+      e.preventDefault();save.disabled=true;message.className='bi-owner-message';message.textContent='Salvando inscrição...';
+      const players=[...rows.children].map(row=>({name:row.querySelector('input').value.trim(),steamId:row.querySelectorAll('input')[1].value.trim()}));
+      try{
+        const r=await fetch('/api/base-invaders/minha-inscricao',{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({teamName:nameInput.value.trim(),players})});
+        const d=await r.json();if(!r.ok)throw Error(d.error||'Falha ao salvar a inscrição.');
+        reg=d.registration;heading.textContent=isRandom?'Edite sua inscrição':('Edite a equipe '+reg.team_name);status.textContent='Inscrição salva. Situação: '+(reg.status==='approved'?'aprovada':'aguardando aprovação')+'.';
+        message.className='bi-owner-message success';message.textContent='Alterações salvas.';
+      }catch(error){message.className='bi-owner-message error';message.textContent=error.message||'Falha ao salvar a inscrição.'}
+      save.disabled=false;updateRows();
+    });
+    updateRows();
+  }
+
+  fetch('/api/base-invaders/minha-inscricao',{credentials:'same-origin'}).then(r=>r.ok?r.json():null).then(d=>{if(d?.registration)ownerEditor(d.registration)}).catch(()=>{});
+  form.addEventListener('submit',async e=>{e.preventDefault();btn.disabled=true;set('Registrando sua inscrição...',true);const f=new FormData(form),registrationMode=String(f.get('registrationMode')||'trio'),players=registrationMode==='random'?[{name:String(f.get('soloName')||'').trim(),steamId:String(f.get('soloSteamId')||'').trim()}]:[1,2,...(registrationMode==='duo'?[]:[3])].map(i=>({name:String(f.get('name'+i)||'').trim(),steamId:String(f.get('steam'+i)||'').trim()}));try{const r=await fetch('/api/base-invaders/inscricoes',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({registrationMode,teamName:String(f.get('teamName')||'').trim(),players,acceptRules:f.get('accept')==='on'})});const d=await r.json();if(!r.ok)throw Error(d.error||'Falha na inscrição.');window.location.assign('/base-invaders/inscricao-confirmada')}catch(error){set(error.message||'Erro ao realizar inscrição.',false);btn.disabled=false;}});
+})();
 </script>
 `;
 
