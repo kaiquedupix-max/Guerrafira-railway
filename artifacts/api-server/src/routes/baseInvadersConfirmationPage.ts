@@ -33,8 +33,8 @@ export function renderBaseInvadersConfirmationPage(): string {
       if(!reg){el.textContent='Nenhuma inscrição ativa encontrada nesta conta. Volte à página do evento para se inscrever.';return}
       const random=reg.registration_mode==='random';
       const lines=[
-        random?'Modalidade: inscrição aleatória (individual)':'Modalidade: trio fechado',
-        random?'O sorteio e a montagem do seu trio serão realizados pela organização no dia do evento.':'Equipe: '+reg.team_name,
+        random?'Modalidade: inscrição sem equipe':reg.registration_mode==='duo'?'Modalidade: duo':'Modalidade: trio',
+        random?'Você será distribuído entre as equipes incompletas no início do evento.':'Equipe: '+reg.team_name+' ('+(reg.players||[]).length+'/3 jogadores)',
         'Situação: '+(reg.status==='approved'?'inscrição aprovada':'aguardando aprovação')
       ];
       for(const line of lines){const p=document.createElement('p');p.textContent=line;el.append(p)}

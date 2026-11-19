@@ -8,8 +8,8 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("GuerraFriaInvaders", "Guerra Fria", "1.0.0")]
-    [Description("Guerra Fria Invaders: inscrição em trio ou solo, sorteio de solos em trios e controle de fases")]
+    [Info("GuerraFriaInvaders", "Guerra Fria", "1.1.0")]
+    [Description("Guerra Fria Invaders: inscrição em duo, trio ou solo e controle de fases")]
     public class GuerraFriaInvaders : RustPlugin
     {
         // Janela total de 5h: 1h30 farm/build, 1h30 PVP, 2h raid.
@@ -35,6 +35,7 @@ namespace Oxide.Plugins
             public string Name;
             public List<ulong> Members = new List<ulong>();
             public int Score;
+            public long RegistrationId;
         }
 
         private class StoredData
@@ -191,7 +192,7 @@ namespace Oxide.Plugins
             }
             data.Solos.Add(player.userID);
             SaveData();
-            player.ChatMessage(Prefix + "Inscrito solo. No início do evento você será sorteado em um trio.");
+            player.ChatMessage(Prefix + "Inscrito sem equipe. No início do evento você completará uma equipe incompleta.");
         }
 
         [ChatCommand("trio")]
@@ -372,13 +373,13 @@ namespace Oxide.Plugins
                     return;
                 }
                 var teams = (Newtonsoft.Json.Linq.JArray)Newtonsoft.Json.Linq.JObject.Parse(body)["teams"];
-                int trios = 0, solos = 0;
+                int teamsCount = 0, solos = 0;
                 foreach (var item in teams ?? new Newtonsoft.Json.Linq.JArray())
                 {
                     if ((string)item["mode"] == "random") solos += ((Newtonsoft.Json.Linq.JArray)item["players"]).Count;
-                    else trios++;
+                    else teamsCount++;
                 }
-                PrintWarning($"Preview: {trios} trio(s) aprovado(s) e {solos} solo(s) aprovado(s) no site. Nada foi gravado.");
+                PrintWarning($"Preview: {teamsCount} equipe(s) aprovada(s) e {solos} jogador(es) sem equipe no site. Nada foi gravado.");
             }, this, headers: headers);
         }
 
@@ -435,7 +436,7 @@ namespace Oxide.Plugins
             }, this, headers: headers);
         }
 
-        // Só entra o que foi aprovado no site. Times de 3 vêm prontos; solos entram na lista para o sorteio.
+        // Só entra o que foi aprovado no site. Duos/trios vêm prontos; solos completam as equipes no início.
         private void ImportApprovedRegistrations(string json)
         {
             var root = Newtonsoft.Json.Linq.JObject.Parse(json);
@@ -443,6 +444,7 @@ namespace Oxide.Plugins
             if (teams == null) return;
 
             // O site é a fonte da verdade: quem não está aprovado lá não entra em /solo nem /trio.
+            var previousApproved = new HashSet<ulong>(data.Approved);
             var approved = new HashSet<ulong>();
             foreach (var item in teams)
             {
@@ -451,7 +453,26 @@ namespace Oxide.Plugins
                 foreach (var p in approvedPlayers) approved.Add(ulong.Parse((string)p["steamId"]));
             }
             data.Approved = approved;
-            data.Solos.RemoveAll(id => !approved.Contains(id));
+            if (phase != "parado")
+            {
+                SaveData();
+                return;
+            }
+            data.Solos.RemoveAll(id => !approved.Contains(id) || previousApproved.Contains(id));
+
+            foreach (var item in teams)
+            {
+                var name = (string)item["teamName"];
+                if ((string)item["mode"] != "random" && data.Teams.TryGetValue(name, out var legacy) && legacy.RegistrationId == 0)
+                    legacy.RegistrationId = (long)item["id"];
+            }
+
+            foreach (var team in data.Teams.Values.Where(t => t.RegistrationId > 0).ToList())
+            {
+                foreach (var id in team.Members)
+                    if (data.PlayerTeam.TryGetValue(id, out var current) && current == team.Name) data.PlayerTeam.Remove(id);
+                data.Teams.Remove(team.Name);
+            }
 
             int imported = 0;
             foreach (var item in teams)
@@ -473,9 +494,10 @@ namespace Oxide.Plugins
                     continue;
                 }
 
-                if (ids.Count != TeamSize || ids.Any(AlreadyRegistered) || data.Teams.ContainsKey(name)) continue;
-                data.Teams[name] = new TeamData { Name = name, Members = ids };
+                if (ids.Count < 1 || ids.Count > TeamSize || ids.Any(AlreadyRegistered) || data.Teams.ContainsKey(name)) continue;
+                data.Teams[name] = new TeamData { Name = name, Members = ids, RegistrationId = (long)item["id"] };
                 foreach (var id in ids) data.PlayerTeam[id] = name;
+                foreach (var id in ids) data.Solos.Remove(id);
                 imported++;
             }
 
@@ -498,7 +520,7 @@ namespace Oxide.Plugins
         private readonly List<ulong> soloQueue = new List<ulong>();
         private bool eventLocked;
 
-        // Controle de vagas e montagem dos trios:
+        // Controle de vagas e montagem das equipes:
         // - Time já formado: ocupa uma das 33 vagas quando o primeiro membro entra.
         // - Solo inscrito: entra na fila pela ordem de chegada; a cada 3 solos na fila, forma-se um trio no sorteio.
         // - Ao completar 33 equipes, o evento trava: quem não está em equipe ativa é desconectado e não reconecta até o fim.
@@ -558,7 +580,7 @@ namespace Oxide.Plugins
             CheckLock();
         }
 
-        // Forma trios com os solos da fila, pela ordem de entrada: pega os 3 primeiros e embaralha a formação.
+        // Forma trios com os solos da fila, pela ordem de entrada.
         private void TryFormTrios()
         {
             while (!eventLocked && soloQueue.Count >= TeamSize)
@@ -606,7 +628,7 @@ namespace Oxide.Plugins
 
         private void StartEvent()
         {
-            // Solos não são sorteados agora: montam trios conforme entram no servidor (ver TryFormTrios).
+            FormTrios();
             data.ActiveTeams.Clear();
             soloQueue.Clear();
             eventLocked = false;
@@ -614,9 +636,8 @@ namespace Oxide.Plugins
             SetPhase("farm", FarmMinutes);
         }
 
-        // Preenche times incompletos primeiro e depois forma trios com os solos restantes.
-        // Quem sobrar (menos de 3) é devolvido para o admin revisar.
-        private List<ulong> FormTrios()
+        // Completa os times inscritos primeiro e distribui os demais jogadores em equipes de até 3.
+        private void FormTrios()
         {
             var pool = data.Solos.OrderBy(_ => random.Next()).ToList();
 
@@ -632,12 +653,12 @@ namespace Oxide.Plugins
             }
 
             int index = 1;
-            while (pool.Count >= TeamSize)
+            while (pool.Count > 0)
             {
                 string name;
                 do { name = $"Sorteio-{index++}"; } while (data.Teams.ContainsKey(name));
                 var team = new TeamData { Name = name };
-                for (int i = 0; i < TeamSize; i++)
+                for (int i = 0; i < TeamSize && pool.Count > 0; i++)
                 {
                     var id = pool[0];
                     pool.RemoveAt(0);
@@ -648,7 +669,6 @@ namespace Oxide.Plugins
             }
 
             data.Solos.Clear();
-            return pool;
         }
 
         private void SetPhase(string next, int minutes)

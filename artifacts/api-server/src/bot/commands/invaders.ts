@@ -58,7 +58,7 @@ export function buildInscritosEmbed(t: Totals): EmbedBuilder {
     .setColor(0xffb800)
     .setTitle("Guerra Fria Invaders • Inscrições")
     .addFields(
-      { name: "Equipes em trio", value: `**${trioTeams}** (${t.trioTeamsApproved} aprovadas, ${t.trioTeamsPending} pendentes)`, inline: false },
+      { name: "Equipes inscritas", value: `**${trioTeams}** (${t.trioTeamsApproved} aprovadas, ${t.trioTeamsPending} pendentes)`, inline: false },
       { name: "Jogadores em trio", value: `**${t.trioPlayers}**`, inline: true },
       { name: "Inscritos solo", value: `**${solo}** (${t.soloApproved} aprovados, ${t.soloPending} pendentes)`, inline: true },
       { name: "Total de jogadores", value: `**${t.trioPlayers + solo}**`, inline: false },

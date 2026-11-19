@@ -37,7 +37,7 @@ export async function ensureBaseInvadersSchema(): Promise<void> {
 }
 
 function parsePlayers(input: unknown): Player[] | null {
-  if (!Array.isArray(input) || input.length !== 3) return null;
+  if (!Array.isArray(input) || input.length < 1 || input.length > 3) return null;
   const players: Player[] = [];
   for (const item of input) {
     if (!item || typeof item !== "object") return null;
@@ -47,8 +47,13 @@ function parsePlayers(input: unknown): Player[] | null {
     if (name.length < 2 || name.length > 32 || !steamId.test(id)) return null;
     players.push({ name, steamId: id });
   }
-  if (new Set(players.map(p => p.steamId)).size !== 3) return null;
+  if (new Set(players.map(p => p.steamId)).size !== players.length) return null;
   return players;
+}
+
+function parsePair(input: unknown): Player[] | null {
+  const players = parsePlayers(input);
+  return players?.length === 2 ? players : null;
 }
 
 function parseSinglePlayer(input: unknown): Player[] | null {
@@ -72,12 +77,14 @@ router.post("/base-invaders/inscricoes", async (req, res) => {
       if (new URL(origin).host !== host) return void res.status(403).json({ error: "Origem não autorizada." });
     } catch { return void res.status(403).json({ error: "Origem inválida." }); }
   }
-  const registrationMode = req.body?.registrationMode === "random" ? "random" : "trio";
+  const registrationMode = ["random", "duo"].includes(req.body?.registrationMode) ? req.body.registrationMode : "trio";
   const teamName = typeof req.body?.teamName === "string" ? req.body.teamName.trim() : "";
-  const players = registrationMode === "random" ? parseSinglePlayer(req.body?.players) : parsePlayers(req.body?.players);
-  if (registrationMode === "trio" && (teamName.length < 3 || teamName.length > 36 || /[<>]/.test(teamName)))
+  const parsedTeam = registrationMode === "duo" ? parsePair(req.body?.players) : parsePlayers(req.body?.players);
+  const players = registrationMode === "random" ? parseSinglePlayer(req.body?.players)
+    : registrationMode === "duo" ? parsedTeam : parsedTeam?.length === 3 ? parsedTeam : null;
+  if (registrationMode !== "random" && (teamName.length < 3 || teamName.length > 36 || /[<>]/.test(teamName)))
     return void res.status(400).json({ error: "O nome da equipe deve ter de 3 a 36 caracteres." });
-  if (!players) return void res.status(400).json({ error: registrationMode === "random" ? "Informe seu nick e SteamID64 válidos." : "Informe exatamente 3 jogadores com nomes e SteamIDs 64 diferentes." });
+  if (!players) return void res.status(400).json({ error: registrationMode === "random" ? "Informe seu nick e SteamID64 válidos." : registrationMode === "duo" ? "Informe exatamente 2 jogadores com nomes e SteamIDs64 diferentes." : "Informe exatamente 3 jogadores com nomes e SteamIDs64 diferentes." });
   if (req.body?.acceptRules !== true) return void res.status(400).json({ error: "É necessário aceitar o regulamento." });
   const savedTeamName = registrationMode === "random" ? "Sorteio-" + session.userId : teamName;
   try {
@@ -93,7 +100,7 @@ router.post("/base-invaders/inscricoes", async (req, res) => {
       INSERT INTO base_invaders_teams(team_name,captain_discord_id,captain_discord_name,players,status,registration_mode)
       VALUES (${savedTeamName},${session.userId},${session.username},${JSON.stringify(players)}::jsonb,'pending',${registrationMode})
     `);
-    return void res.status(201).json({ ok: true, teamName: registrationMode === "trio" ? savedTeamName : null, registrationMode, status: "pending", price: 0, slots: players.length });
+    return void res.status(201).json({ ok: true, teamName: registrationMode !== "random" ? savedTeamName : null, registrationMode, status: "pending", price: 0, slots: players.length });
   } catch (error: any) {
     if (error?.code === "23505" || error?.cause?.code === "23505")
       return void res.status(409).json({ error: "Esse nome de equipe ou capitão já possui uma inscrição ativa." });
@@ -156,6 +163,41 @@ router.post("/base-invaders/inscricoes/:id/status", async (req, res) => {
       return void res.status(409).json({ error: "Existe outra inscrição ativa com esse capitão ou nome de equipe." });
     logger.error({ error, teamId: id }, "Falha ao moderar Guerra Fria Invaders");
     return void res.status(500).json({ error: "Erro ao atualizar status." });
+  }
+});
+
+router.put("/base-invaders/inscricoes/:id", async (req, res) => {
+  const session = getCommunitySession(req);
+  const admin = getAdminSessionV3(req);
+  if (!session?.isAdmin && !admin) return void res.status(403).json({ error: "Somente a equipe administrativa pode editar as inscrições." });
+  const id = Number(req.params.id);
+  const teamName = typeof req.body?.teamName === "string" ? req.body.teamName.trim() : "";
+  const players = parsePlayers(req.body?.players);
+  if (!Number.isSafeInteger(id) || id <= 0) return void res.status(400).json({ error: "Equipe inválida." });
+  if (!teamName || teamName.length > 36 || /[<>]/.test(teamName)) return void res.status(400).json({ error: "O nome da equipe deve ter até 36 caracteres." });
+  if (!players) return void res.status(400).json({ error: "Mantenha de 1 a 3 jogadores com nomes e SteamIDs64 válidos e diferentes." });
+  try {
+    const duplicate: any = await db.execute(sql`
+      SELECT 1 FROM base_invaders_teams t
+      CROSS JOIN LATERAL jsonb_array_elements(t.players) p
+      WHERE t.id<>${id} AND t.status IN ('pending','approved')
+      AND p->>'steamId' IN (${players[0].steamId},${players[1]?.steamId ?? ''},${players[2]?.steamId ?? ''})
+      LIMIT 1
+    `);
+    if (duplicate?.rows?.length) return void res.status(409).json({ error: "Um dos SteamIDs já está inscrito em outra equipe." });
+    const result: any = await db.execute(sql`
+      UPDATE base_invaders_teams SET team_name=${teamName},players=${JSON.stringify(players)}::jsonb,
+        registration_mode=CASE WHEN registration_mode='random' THEN 'random' ELSE ${players.length === 3 ? "trio" : "duo"} END,updated_at=now()
+      WHERE id=${id} RETURNING id,team_name,registration_mode,players,status
+    `);
+    if (!result?.rows?.length) return void res.status(404).json({ error: "Equipe não encontrada." });
+    logger.info({ teamId: id, adminId: session?.userId || admin?.userId }, "Inscrição Guerra Fria Invaders editada");
+    return void res.status(200).json({ team: result.rows[0] });
+  } catch (error: any) {
+    if (error?.code === "23505" || error?.cause?.code === "23505")
+      return void res.status(409).json({ error: "Já existe uma inscrição ativa com esse nome de equipe." });
+    logger.error({ error, teamId: id }, "Falha ao editar inscrição Guerra Fria Invaders");
+    return void res.status(500).json({ error: "Erro ao editar a equipe." });
   }
 });
 
