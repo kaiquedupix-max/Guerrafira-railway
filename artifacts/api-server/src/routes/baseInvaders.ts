@@ -189,6 +189,27 @@ router.get("/base-invaders/inscricoes", async (req, res) => {
 });
 
 
+router.delete("/base-invaders/inscricoes/:id", async (req, res) => {
+  const session = getCommunitySession(req);
+  const admin = getAdminSessionV3(req);
+  if (!session?.isAdmin && !admin) return void res.status(403).json({ error: "Somente administradores podem excluir inscrições." });
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return void res.status(400).json({ error: "Equipe inválida." });
+  try {
+    const result: any = await db.execute(sql`
+      UPDATE base_invaders_teams SET status='deleted',updated_at=now()
+      WHERE id=${id} AND status<>'deleted'
+      RETURNING id,team_name,status
+    `);
+    if (!result?.rows?.length) return void res.status(404).json({ error: "Equipe não encontrada ou já excluída." });
+    logger.info({ teamId: id, adminId: session?.userId || admin?.userId }, "Inscrição Guerra Fria Invaders excluída");
+    return void res.status(200).json({ team: result.rows[0] });
+  } catch (error) {
+    logger.error({ error, teamId: id }, "Falha ao excluir inscrição Guerra Fria Invaders");
+    return void res.status(500).json({ error: "Erro ao excluir a equipe." });
+  }
+});
+
 router.post("/base-invaders/inscricoes/:id/status", async (req, res) => {
   const session = getCommunitySession(req);
   const admin = getAdminSessionV3(req);

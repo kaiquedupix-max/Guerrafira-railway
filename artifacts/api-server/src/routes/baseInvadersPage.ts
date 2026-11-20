@@ -129,6 +129,7 @@ const adminSection = `<section class="bi-admin" id="bi-admin" aria-label="Aprova
     <button type="button" class="bi-tab" data-filter="pending" aria-pressed="true">Pendentes</button>
     <button type="button" class="bi-tab" data-filter="approved" aria-pressed="false">Aprovadas</button>
     <button type="button" class="bi-tab" data-filter="rejected" aria-pressed="false">Rejeitadas</button>
+    <button type="button" class="bi-tab" data-filter="deleted" aria-pressed="false">Excluídas</button>
     <button type="button" class="bi-tab" data-filter="all" aria-pressed="false">Todas</button>
     <button type="button" class="bi-tab" id="bi-admin-refresh">Atualizar</button>
   </div>
@@ -145,7 +146,7 @@ const adminSection = `<section class="bi-admin" id="bi-admin" aria-label="Aprova
   const stats=document.getElementById('bi-admin-stats');
   const msg=document.getElementById('bi-admin-msg');
   const tabs=root.querySelectorAll('.bi-tab[data-filter]');
-  const LABEL={pending:'Pendente',approved:'Aprovada',rejected:'Rejeitada'};
+  const LABEL={pending:'Pendente',approved:'Aprovada',rejected:'Rejeitada',deleted:'Excluída'};
   let all=[];
   let filter='pending';
   const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e};
@@ -165,7 +166,7 @@ const adminSection = `<section class="bi-admin" id="bi-admin" aria-label="Aprova
     top.append(el('h3','',random?'Inscrição sem equipe':t.team_name));
     const pills=el('div','bi-pills');
     pills.append(el('span','bi-pill '+(random?'bi-pill-solo':'bi-pill-trio'),random?'Solo':t.registration_mode==='duo'?'Duo':(t.players||[]).length+'/3'));
-    pills.append(el('span','bi-pill bi-pill-'+t.status,LABEL[t.status]||t.status));
+    pills.append(el('span','bi-pill '+(t.status==='deleted'?'bi-pill-rejected':'bi-pill-'+t.status),LABEL[t.status]||t.status));
     top.append(pills);
     const meta=el('div','bi-meta','Capitão: '+t.captain_discord_name+' • #'+t.id+' • '+fmtDate(t.created_at));
     const teamName=el('input','bi-edit-name');teamName.value=t.team_name;teamName.maxLength=36;teamName.disabled=random;teamName.setAttribute('aria-label','Nome da equipe');
@@ -177,9 +178,16 @@ const adminSection = `<section class="bi-admin" id="bi-admin" aria-label="Aprova
     const button=(label,cls,next)=>{const b=el('button','bi-btn '+cls,label);b.type='button';b.addEventListener('click',()=>setStatus(t.id,next,b));return b};
     const add=el('button','bi-btn bi-btn-back','Adicionar jogador');add.type='button';add.hidden=random;add.addEventListener('click',()=>{if(list.children.length>=3){msg.textContent='Cada equipe pode ter no máximo 3 jogadores.';return}list.append(playerRow({name:'',steamId:''}))});
     const save=el('button','bi-btn bi-btn-ok','Salvar equipe');save.type='button';save.addEventListener('click',()=>saveTeam(t.id,{teamName:teamName.value,players:[...list.querySelectorAll('li')].map(row=>({name:row.querySelector('[data-player-name]').value,steamId:row.querySelector('[data-player-steam]').value}))},save));
-    if(t.status!=='approved')actions.append(button('Aprovar','bi-btn-ok','approved'));
-    if(t.status!=='rejected')actions.append(button('Rejeitar','bi-btn-no','rejected'));
-    if(t.status!=='pending')actions.append(button('Voltar a pendente','bi-btn-back','pending'));
+    if(t.status==='deleted'){
+      actions.append(button('Restaurar para pendente','bi-btn-back','pending'));
+    }else{
+      if(t.status!=='approved')actions.append(button('Aprovar','bi-btn-ok','approved'));
+      if(t.status!=='rejected')actions.append(button('Rejeitar','bi-btn-no','rejected'));
+      if(t.status!=='pending')actions.append(button('Voltar a pendente','bi-btn-back','pending'));
+      const remove=el('button','bi-btn bi-btn-no',random?'Excluir inscrição':'Excluir equipe');
+      remove.type='button';remove.addEventListener('click',()=>deleteTeam(t.id,t.team_name,remove));
+      actions.append(remove);
+    }
     article.append(top,meta,teamName,list,add,actions,save);
     return article;
   }
@@ -221,6 +229,17 @@ const adminSection = `<section class="bi-admin" id="bi-admin" aria-label="Aprova
       if(t)t.status=status;
       render();
     }catch(e){msg.textContent=e.message||'Falha ao atualizar a inscrição.';btn.disabled=false}
+  }
+
+  async function deleteTeam(id,name,btn){
+    if(!window.confirm('Excluir '+(name||'esta inscrição')+'? Ela sairá da lista ativa e da sincronização do evento.'))return;
+    btn.disabled=true;msg.textContent='';
+    try{
+      const r=await fetch('/api/base-invaders/inscricoes/'+encodeURIComponent(id),{method:'DELETE',credentials:'same-origin'});
+      const j=await r.json();if(!r.ok)throw Error(j.error||'Falha ao excluir a equipe.');
+      const item=all.find(t=>t.id===id);if(item)item.status='deleted';
+      render();
+    }catch(e){msg.textContent=e.message||'Falha ao excluir a equipe.';btn.disabled=false}
   }
 
   async function saveTeam(id,body,btn){
