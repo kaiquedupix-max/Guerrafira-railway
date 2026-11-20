@@ -198,7 +198,7 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
     try { maps = (JSON.parse(saved.mapsJson) as any[]).map(normalizeMap); } catch { continue; }
     // Preserve ballots while moving future Trio votes to the next valid Saturday slot.
     if (maps[0]?.serverId === "trio" && saved.endsAt.getTime() > Date.now()) {
-      const desired = nextWipeScheduleOnOrAfter("trio", localWipeDate(saved.endsAt));
+      const desired = nextWipeScheduleOnOrAfter("trio", localWipeDate(new Date()));
       if (saved.endsAt.getTime() !== desired.voteEndsAt || saved.wipeAt?.getTime() !== desired.wipeAt) {
         await db.update(mapVotesTable).set({
           endsAt: new Date(desired.voteEndsAt),
@@ -583,7 +583,7 @@ async function processScheduledWipes(client:Client):Promise<void>{
         try { canonical=datedWipeSchedule(target,scheduledDate); }
         catch(error) {
           if(target!=="trio")throw error;
-          canonical=nextWipeScheduleOnOrAfter("trio",scheduledDate);
+          canonical=nextWipeScheduleOnOrAfter("trio",localWipeDate(new Date()),Date.now()-25*60000);
         }
       } catch(error) {
         await db.update(mapVotesTable).set({status:"failed",failureReason:error instanceof Error?error.message:"Agenda incompatível"}).where(eq(mapVotesTable.id,pending.id));
