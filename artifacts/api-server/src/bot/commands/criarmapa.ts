@@ -1,5 +1,5 @@
 import { announceMapVote, announcementFeedChannelIds, generalChatChannelId } from "../mapVoteAnnouncements.js";
-import { datedWipeSchedule, serverWipeWindow, localWipeDate, wipeScheduleLabel } from "../../core/wipeCalendar.js";
+import { datedWipeSchedule, nextWipeScheduleOnOrAfter, serverWipeWindow, localWipeDate, wipeScheduleLabel } from "../../core/wipeCalendar.js";
 import { adminServer, withAdminServer, hostSettings } from "../../core/adminServerContext.js";
 import { GUERRA_FRIA_SERVERS, parseServerId, type GuerraFriaServerId } from "../../core/servers.js";
 import {
@@ -196,26 +196,17 @@ export async function restoreActiveMapVotes(client: Client): Promise<void> {
   for (const saved of savedVotes) {
     let maps: MapOption[];
     try { maps = (JSON.parse(saved.mapsJson) as any[]).map(normalizeMap); } catch { continue; }
-    // Preserve ballots while repairing future Trio votes created using the obsolete
-    // Wednesday 18:00 / accidental Saturday 18:30 schedule. Never move a wipe into the past.
+    // Preserve ballots while moving future Trio votes to the next valid Saturday slot.
     if (maps[0]?.serverId === "trio" && saved.endsAt.getTime() > Date.now()) {
-      const legacyDate = localWipeDate(saved.endsAt);
-      const day = new Date(legacyDate + "T00:00:00Z").getUTCDay();
-      const targetDate = day === 6
-        ? new Date(Date.parse(legacyDate + "T00:00:00Z") + 86400000).toISOString().slice(0, 10)
-        : legacyDate;
-      if (day === 0 || day === 3 || day === 6) {
-        const desired = datedWipeSchedule("trio", targetDate);
-        if (desired.voteEndsAt > Date.now() + 5 * 60000 &&
-            (saved.endsAt.getTime() !== desired.voteEndsAt || saved.wipeAt?.getTime() !== desired.wipeAt)) {
-          await db.update(mapVotesTable).set({
-            endsAt: new Date(desired.voteEndsAt),
-            wipeAt: new Date(desired.wipeAt),
-          }).where(and(eq(mapVotesTable.id, saved.id), eq(mapVotesTable.status, "active")));
-          saved.endsAt = new Date(desired.voteEndsAt);
-          saved.wipeAt = new Date(desired.wipeAt);
-          logger.warn({ voteId: saved.id, targetDate }, "Future Trio map vote repaired to Wednesday 18:30 / Sunday 13:00");
-        }
+      const desired = nextWipeScheduleOnOrAfter("trio", localWipeDate(saved.endsAt));
+      if (saved.endsAt.getTime() !== desired.voteEndsAt || saved.wipeAt?.getTime() !== desired.wipeAt) {
+        await db.update(mapVotesTable).set({
+          endsAt: new Date(desired.voteEndsAt),
+          wipeAt: new Date(desired.wipeAt),
+        }).where(and(eq(mapVotesTable.id, saved.id), eq(mapVotesTable.status, "active")));
+        saved.endsAt = new Date(desired.voteEndsAt);
+        saved.wipeAt = new Date(desired.wipeAt);
+        logger.warn({ voteId: saved.id, targetDate: desired.date }, "Future Trio map vote repaired to Saturday 18:00");
       }
     }
     const vote: MapVoteRuntime = {
@@ -585,10 +576,23 @@ async function processScheduledWipes(client:Client):Promise<void>{
     const now=new Date();
     const pendingScheduleRows=await db.select().from(mapVotesTable).where(and(eq(mapVotesTable.status,"selected"),isNull(mapVotesTable.appliedAt)));
     for(const pending of pendingScheduleRows){
-      let canonicalWipeAt:Date;
-      try { const target=normalizeMap(JSON.parse(pending.mapsJson)[0],0).serverId || "solo-duo"; canonicalWipeAt=new Date(datedWipeSchedule(target,localWipeDate(pending.endsAt)).wipeAt); } catch(error) { await db.update(mapVotesTable).set({status:"failed",failureReason:error instanceof Error?error.message:"Agenda incompatível"}).where(eq(mapVotesTable.id,pending.id)); continue; }
-      if(!pending.wipeAt||pending.wipeAt.getTime()!==canonicalWipeAt.getTime()){
-        await db.update(mapVotesTable).set({wipeAt:canonicalWipeAt}).where(eq(mapVotesTable.id,pending.id));
+      let canonical:ReturnType<typeof datedWipeSchedule>;
+      try {
+        const target=normalizeMap(JSON.parse(pending.mapsJson)[0],0).serverId || "solo-duo";
+        const scheduledDate=localWipeDate(pending.endsAt);
+        try { canonical=datedWipeSchedule(target,scheduledDate); }
+        catch(error) {
+          if(target!=="trio")throw error;
+          canonical=nextWipeScheduleOnOrAfter("trio",scheduledDate);
+        }
+      } catch(error) {
+        await db.update(mapVotesTable).set({status:"failed",failureReason:error instanceof Error?error.message:"Agenda incompatível"}).where(eq(mapVotesTable.id,pending.id));
+        continue;
+      }
+      const canonicalEndsAt=new Date(canonical.voteEndsAt),canonicalWipeAt=new Date(canonical.wipeAt);
+      if(pending.endsAt.getTime()!==canonicalEndsAt.getTime()||!pending.wipeAt||pending.wipeAt.getTime()!==canonicalWipeAt.getTime()){
+        await db.update(mapVotesTable).set({endsAt:canonicalEndsAt,wipeAt:canonicalWipeAt}).where(eq(mapVotesTable.id,pending.id));
+        pending.endsAt=canonicalEndsAt;
         pending.wipeAt=canonicalWipeAt;
       }
     }

@@ -1,11 +1,11 @@
 import type { GuerraFriaServerId } from "./servers.js";
 export function wipeCalendar(server: GuerraFriaServerId) {
   // Official weekly schedule, independent of legacy deployment variables.
-  const days = server === "trio" ? [3, 0] : [1, 5];
-  // Trio: quarta 18h30 e domingo 13h; Duo: segunda e sexta 18h30.
+  const days = server === "trio" ? [6] : [1, 5];
+  // Trio: sábado 18h; Duo: segunda e sexta 18h30.
   const hour = 18;
-  const minute = 30;
-  const slots = days.map(day => ({ day, hour: server === "trio" && day === 0 ? 13 : hour, minute: server === "trio" && day === 0 ? 0 : minute }));
+  const minute = server === "trio" ? 0 : 30;
+  const slots = days.map(day => ({ day, hour, minute }));
   if (!days.length || days.some(n=>!Number.isInteger(n)||n<0||n>6) || !Number.isInteger(hour)||hour<0||hour>23||!Number.isInteger(minute)||minute<0||minute>59) throw new Error("Agenda de wipe inválida.");
   return { days, hour, minute, slots };
 }
@@ -19,7 +19,17 @@ export function datedWipeSchedule(server:GuerraFriaServerId,date:string){
  if(!calendar.days.includes(day.getUTCDay()))throw new Error(`O wipe do ${server === "trio" ? "Trio" : "Solo/Duo"} ocorre somente em ${wipeScheduleLabel(server)}.`);
  const slot=calendar.slots.find(slot=>slot.day===day.getUTCDay())!;
  const publicWipeAt=Date.UTC(y,m-1,d,slot.hour+3,slot.minute);
- return {publicWipeAt,voteEndsAt:publicWipeAt-30*60000,wipeAt:server === "trio" && day.getUTCDay() === 3 ? publicWipeAt : publicWipeAt-5*60000};
+ return {publicWipeAt,voteEndsAt:publicWipeAt-30*60000,wipeAt:publicWipeAt-5*60000};
+}
+export function nextWipeScheduleOnOrAfter(server:GuerraFriaServerId,startDate:string,minimumVoteEnd=Date.now()+5*60000){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate))throw new Error("Informe a data no formato AAAA-MM-DD.");
+ const [y,m,d]=startDate.split("-").map(Number),base=Date.UTC(y,m-1,d),start=new Date(base);
+ if(start.getUTCFullYear()!==y||start.getUTCMonth()!==m-1||start.getUTCDate()!==d)throw new Error("Data inválida.");
+ for(let offset=0;offset<=14;offset++){
+  const date=new Date(base+offset*86400000).toISOString().slice(0,10);
+  try{const schedule=datedWipeSchedule(server,date);if(schedule.voteEndsAt>minimumVoteEnd)return{...schedule,date};}catch{}
+ }
+ throw new Error("Não foi possível encontrar um próximo horário de wipe válido.");
 }
 export function serverWipeWindow(server:GuerraFriaServerId,now=new Date()){
  const date=localWipeDate(now),[y,m,d]=date.split("-").map(Number),base=Date.UTC(y,m-1,d);
